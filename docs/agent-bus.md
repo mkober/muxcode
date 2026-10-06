@@ -709,30 +709,35 @@ muxcode spawn clean
 
 | Subcommand | Description |
 |------------|-------------|
-| `start` | Create tmux window, seed inbox with task, launch agent, track |
-| `list` | Show running spawns (use `--all` to include completed/stopped). A graph run's worker held between iterations shows as **`parked`** (`SpawnDisplayStatus`: running, its run in flight, its current seed answered) — idle by design, not stuck. Stop its work by cancelling the run, not with `spawn stop`: a worker that ends before answering its seed is replaced on a fresh worker under the run's redrive cap (lifecycle `graph-spawn-replaced`; cap exhausted → the node fails "worker lost"). See [Architecture → Workers, stalls and the watchdog](architecture.md#graph-orchestration-control-plane) |
-| `status` | Detailed status for a single spawn — a held graph worker reads `parked` here too |
+| `start` | Hand the task to a worker by **the one road** (`bus.AcquireAgentWorker`, [MUX-195](requirements/completed/MUX-195-graph-runs-never-reuse-idle-workers.md)): the caller's own worker of that role and worktree kind — reseeded if idle, **queued** behind its current task if busy — else the session's idle worker **adopted**, else a fresh window within `MUXCODE_SPAWN_MAX_WORKERS`. The first output line says which (below). Never a second worker for an owner that already has one |
+| `list` | Show running spawns (use `--all` to include completed/stopped). A graph run's worker held between its own run's iterations shows as **`parked`** (`SpawnDisplayStatus`: running, its run in flight, its current seed answered) — idle by design, not stuck; a worker whose task is done and whose run has ended, or an agent's once it answers, shows as **`idle`** — held as its base role's one idle worker for the next run or `spawn start`, reaped after `MUXCODE_SPAWN_IDLE_SECS`. Stop a graph worker's work by cancelling the run, not with `spawn stop`: a worker that ends before answering its seed is replaced with the same task once its window is confirmed gone, under the run's redrive cap (lifecycle `graph-spawn-replaced`; cap exhausted → the node fails "worker lost"). See [Architecture → Workers, stalls and the watchdog](architecture.md#graph-orchestration-control-plane) |
+| `status` | Detailed status for a single spawn — `parked` and `idle` read as above; an idle worker prints `Idle: released by <run X node Y | agent Z> — held for the next run or spawn start, reaped after MUXCODE_SPAWN_IDLE_SECS` |
 | `result` | Get the last message sent by the spawned agent |
 | `stop` | Kill the tmux window and mark spawn as stopped |
 | `clean` | Remove finished entries and their inbox files |
 
 **How it works:**
 
-1. `spawn start research "What does bus/guard.go do?"` generates a unique spawn ID (e.g. `spawn-a1b2c3d4`)
-2. Creates a tmux window named `spawn-a1b2c3d4`, splits horizontally (agent in pane 1)
+1. `spawn start research "What does bus/guard.go do?"` looks for a worker before it builds one: the caller's own `research` worker (same worktree kind) is **reseeded** if idle or the task is **queued** on its inbox if busy; else the session's `idle` `research` worker is **adopted** — its context `/clear`ed when it last served a graph run or the active spec changed, a `spawn-adopted` lifecycle row naming old and new owner; else, within `MUXCODE_SPAWN_MAX_WORKERS`, a fresh worker is started. Past the cap `start` fails with the live worker list (exit 1, `spawn-cap-refused` row)
+2. A fresh worker gets a unique spawn ID (e.g. `spawn-a1b2c3d4`) and a tmux window of that name, split horizontally (agent in pane 1)
 3. Pre-seeds the spawn's inbox with the task message
 4. Launches `muxcode agent launch research` with `AGENT_ROLE=spawn-a1b2c3d4` — the base role (`research`) determines agent definition, tools, and prompts; the `AGENT_ROLE` env var (`spawn-a1b2c3d4`) determines the bus communication channel
 5. After 2s delay, notifies the spawn agent to read its inbox
-6. When the agent finishes and exits (tmux window closes), the daemon detects it and sends a `spawn-complete` event to the owner
+6. When the worker **answers** its task, the daemon sends a `spawn-complete` event to the owner (once per task) and holds the worker as the role's `idle` worker; it is reaped — window closed — after `MUXCODE_SPAWN_IDLE_SECS` unless a run or another `spawn start` adopts it first
 
 **Examples:**
 ```bash
-# Spawn a research agent
+# Spawn a research agent — the first line names which road the task took
 $ muxcode spawn start research "What does bus/guard.go do?"
 Started spawn: 1771900000-spawn-a1b2c3d4
   Role: research  Spawn Role: spawn-a1b2c3d4  Owner: edit
   Window: spawn-a1b2c3d4
   Task: What does bus/guard.go do?
+
+# The other three first lines `spawn start` can print:
+#   Reused your idle spawn: <id> (no new worker started)
+#   Queued on your busy spawn: <id> — this task runs after its current one (no new worker started)
+#   Adopted idle spawn: <id> (no new worker started)
 
 # Check running spawns
 $ muxcode spawn list
@@ -751,7 +756,7 @@ $ muxcode spawn clean
 Cleaned 1 finished spawn(s).
 ```
 
-**Daemon integration:** The bus daemon checks spawned agent windows on each poll cycle (2s). When a spawn's tmux window no longer exists, it marks the spawn as `completed`, extracts the last result message from `log.jsonl`, and sends a `spawn-complete` event to the owner agent with the result summary.
+**Daemon integration:** The bus daemon refreshes the spawn registry on each poll cycle (2s, `RefreshSpawnStatus`). An agent's worker that has answered its task raises the owner's `spawn-complete` event with the result summary and becomes the role's `idle` worker; a graph run's worker is `parked` while its run is in flight and `idle` once the run ends. Of several idle workers of one role the most recently released is kept and the others reaped as superseded; the kept one is reaped when its quiet window closes (`spawn-idle`, `spawn-reaped`). A window that vanishes marks its entry `completed`. Whether a worker answered is read from the seed's delivery record, falling back to the worker's own reply in `log.jsonl` when that record has been collected (MUX-135), so a finished run's worker no longer strands.
 
 **Pre-commit safeguard:** Running spawns block commits, same as running background processes. Use `--force` on the send command to bypass.
 
@@ -1657,6 +1662,8 @@ the close-out, pushes, opens the PR titled exactly `${spec_title}`); a refused c
 | `${failure_report}` | The latest failure edge's reply, verbatim (`expandFailureReport`) |
 | `${output:<node>}` | A named upstream node's reply (`expandNodeOutputRefs`) |
 | `${item}` | The current element of a `map` fan-out |
+
+A `map` node runs its items **serially on the run's single worker** by default ([MUX-195](requirements/completed/MUX-195-graph-runs-never-reuse-idle-workers.md) Decision 3); `"workers": N` on the node opts into N lanes, each taking the next item when its worker answers, capped by `MUXCODE_SPAWN_MAX_WORKERS` (fewer lanes, not a failure). A negative `workers` fails `graph validate`. Results are recorded in item order whatever the lane count, and the queue is persisted before any worker is seeded, so a daemon restart mid-dispatch neither loses nor double-runs an item.
 
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages

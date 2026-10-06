@@ -177,7 +177,7 @@ func TestCancelFailsClosedOnSurvivor(t *testing.T) {
 func TestCancelWithoutSpawnsReportsSuccess(t *testing.T) {
 	run := createTestRun(t, linearGraph())
 	f := fakeLiveSpawns(t)
-	other, err := graphSpawnFn(runTestSession, "edit", "other work", graphSender, "other-run", "w")
+	other, err := graphSpawnFn(runTestSession, "edit", "other work", graphSender, "other-run", "w", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestCancelWithoutSpawnsReportsSuccess(t *testing.T) {
 // found" and the replacement kept running while named "still live".
 func TestReplacementFailClosedStopsByRole(t *testing.T) {
 	g := &Graph{Name: "map-lost", Start: "m",
-		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: "one,two", Message: "handle ${item}"}}}
+		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: "one,two", Workers: 2, Message: "handle ${item}"}}}
 	run := createTestRun(t, g)
 	f := fakeLiveSpawns(t)
 	f.distinctIDs = true
@@ -211,6 +211,7 @@ func TestReplacementFailClosedStopsByRole(t *testing.T) {
 	step(t, runTestSession, run.ID)
 	st, _ := ReadNodeStatus(runTestSession, run.ID, "m")
 	for _, role := range strings.Split(st.TaskID, ",") {
+		f.deadWindows[role] = true
 		e, _ := findSpawnByRole(runTestSession, role)
 		if err := UpdateSpawnEntry(runTestSession, e.ID, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
 			t.Fatal(err)
@@ -218,12 +219,12 @@ func TestReplacementFailClosedStopsByRole(t *testing.T) {
 	}
 	inner := graphSpawnFn
 	starts := 0
-	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, seedID string) (string, error) {
 		starts++
 		if starts == 2 {
 			return "", errors.New("tmux new-window: no server")
 		}
-		return inner(sess, role, task, owner, runID, nodeID)
+		return inner(sess, role, task, owner, runID, nodeID, seedID)
 	}
 
 	step(t, runTestSession, run.ID)
@@ -248,7 +249,7 @@ func cancelInsideNextSpawn(t *testing.T, runID string) <-chan error {
 	inner := graphSpawnFn
 	done := make(chan error, 1)
 	fired := false
-	graphSpawnFn = func(sess, role, task, owner, rid, nid string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, rid, nid, seedID string) (string, error) {
 		if !fired {
 			fired = true
 			go func() { done <- CancelGraphRun(sess, runID) }()
@@ -259,7 +260,7 @@ func cancelInsideNextSpawn(t *testing.T, runID string) <-chan error {
 			case <-time.After(200 * time.Millisecond):
 			}
 		}
-		return inner(sess, role, task, owner, rid, nid)
+		return inner(sess, role, task, owner, rid, nid, seedID)
 	}
 	return done
 }
@@ -308,6 +309,7 @@ func TestCancelWaitsOutReplacement(t *testing.T) {
 	step(t, runTestSession, run.ID)
 	st, _ := ReadNodeStatus(runTestSession, run.ID, "w")
 	lost, _ := findSpawnByRole(runTestSession, st.TaskID)
+	f.deadWindows[lost.SpawnRole] = true
 	if err := UpdateSpawnEntry(runTestSession, lost.ID, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
 		t.Fatal(err)
 	}
@@ -520,12 +522,13 @@ func TestCancelFailsClosedOnUnexpirableNodeTask(t *testing.T) {
 // it as one fails with ENAMETOOLONG on every cancel (review must-fix,
 // 2026-09-24). The cancel must complete, and a re-cancel is clean.
 func TestCancelLargeMapIsNotATaskID(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_MAX_WORKERS", "0") // twenty lanes, past the default per-role cap
 	items := make([]string, 20)
 	for i := range items {
 		items[i] = fmt.Sprintf("item%d", i)
 	}
 	g := &Graph{Name: "cancel-map", Start: "m",
-		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: strings.Join(items, ","), Message: "handle ${item}"}}}
+		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: strings.Join(items, ","), Workers: len(items), Message: "handle ${item}"}}}
 	run := createTestRun(t, g)
 	f := fakeLiveSpawns(t)
 	f.distinctIDs = true

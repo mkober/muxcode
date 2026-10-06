@@ -46,6 +46,7 @@ type Node struct {
 	Join       string         `json:"join,omitempty"`       // join: all|any|quorum
 	Quorum     int            `json:"quorum,omitempty"`     // join: required count when policy is quorum
 	Items      string         `json:"items,omitempty"`      // map: item-list source expression
+	Workers    int            `json:"workers,omitempty"`    // map: items in flight at once; 0 or 1 = serial on the run's one worker (MUX-195)
 	Event      string         `json:"event,omitempty"`      // wait_event: bus event name to wait for
 	Guard      string         `json:"guard,omitempty"`      // send/spawn: dispatch-time predicate evaluated by the daemon (see knownNodeGuards)
 	TimeoutSec int            `json:"timeout_secs,omitempty"`
@@ -356,6 +357,9 @@ func (g *Graph) validateNode(n *Node, v *GraphValidation) {
 		requireMessage()
 		if n.Items == "" {
 			v.errf("map node %q requires an items source", n.ID)
+		}
+		if n.Workers < 0 {
+			v.errf("map node %q: workers must not be negative", n.ID)
 		}
 	case NodeCondition:
 		if len(n.Conditions) == 0 {

@@ -370,11 +370,11 @@ here: the user's 2026-09-03 decision that graph spawns take **no worktree** and 
 MUX-178 observed on top of that — a node completing in **two seconds** with `success` — is a real
 defect, but it is the worker-never-worked shape
 ([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) /
-[MUX-195](../backlog/MUX-195-graph-runs-never-reuse-idle-workers.md)), not the worktree's absence.
+[MUX-195](./MUX-195-graph-runs-never-reuse-idle-workers.md)), not the worktree's absence.
 Whoever picks up MUX-178 should start from that; a pointer was added there on 2026-09-30.
 
 Also since filing: [MUX-182](./MUX-182-cancelled-run-keeps-working-provenance-unreadable.md)
-and [MUX-195](../backlog/MUX-195-graph-runs-never-reuse-idle-workers.md) changed how workers are
+and [MUX-195](./MUX-195-graph-runs-never-reuse-idle-workers.md) changed how workers are
 stopped and reused, without touching the delegation guard or the tree question.
 
 ## Implementation

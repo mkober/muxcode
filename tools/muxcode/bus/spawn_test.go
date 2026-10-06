@@ -386,6 +386,32 @@ func TestFormatSpawnParked(t *testing.T) {
 	}
 }
 
+// TestFormatSpawnIdle: an idle worker reads distinctly from parked — it names
+// whoever released it, a run or an agent, not an iteration it awaits
+// (MUX-195).
+func TestFormatSpawnIdle(t *testing.T) {
+	entry := SpawnEntry{
+		ID: "s1", Role: "edit", SpawnRole: "spawn-a1b2c3d4", Status: "running", Display: "idle",
+		Owner: "daemon", Window: "spawn-a1b2c3d4", Task: "implement", StartedAt: time.Now().Unix(),
+		RunID: "run-1", NodeID: "implement",
+	}
+
+	out := FormatSpawnStatus(entry)
+	for _, want := range []string{"Status:     idle", "released by run run-1 node implement"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in status view, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Parked:") {
+		t.Errorf("idle must not render the parked line, got:\n%s", out)
+	}
+
+	entry.RunID, entry.NodeID, entry.Owner = "", "", "edit"
+	if out := FormatSpawnStatus(entry); !strings.Contains(out, "released by agent edit") {
+		t.Errorf("an agent's idle worker must name the agent, got:\n%s", out)
+	}
+}
+
 func TestSpawnWorktreeBase(t *testing.T) {
 	base := SpawnWorktreeBase("test-session")
 	if !strings.Contains(base, "muxcode-spawn-test-session") {
@@ -701,6 +727,7 @@ func stubSpawnWindow(t *testing.T) *[]string {
 }
 
 func TestRefreshSpawnStatus_ReapsRespondedWorker(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "0") // reap on answer; the MUX-195 idle hold is tested in spawn_reuse_test.go
 	useTempBusDir(t)
 	session := testSession(t)
 	killed := stubSpawnWindow(t)
@@ -770,6 +797,7 @@ func TestRefreshSpawnStatus_LiveUnansweredWorkerNotReaped(t *testing.T) {
 }
 
 func TestRefreshSpawnStatus_KillFailureLeavesRunning(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "0") // reap on answer, so the kill is attempted
 	useTempBusDir(t)
 	session := testSession(t)
 

@@ -115,6 +115,7 @@ func TestValidateNodeTypeFields(t *testing.T) {
 	}{
 		{"spawn missing message", Node{ID: "b", Type: NodeSpawn, Role: "edit"}, "requires a message"},
 		{"map missing items", Node{ID: "b", Type: NodeMap, Role: "edit", Message: "go"}, "requires an items source"},
+		{"map negative workers", Node{ID: "b", Type: NodeMap, Role: "edit", Message: "go", Items: "x", Workers: -1}, "workers must not be negative"},
 		{"condition empty", Node{ID: "b", Type: NodeCondition}, "no conditions"},
 		{"condition unknown type", Node{ID: "b", Type: NodeCondition, Conditions: map[string]any{"bogus_cond": "x"}}, "unknown condition type"},
 		{"join missing policy", Node{ID: "b", Type: NodeJoin}, "requires a join policy"},

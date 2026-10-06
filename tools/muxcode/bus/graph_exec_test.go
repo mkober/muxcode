@@ -26,11 +26,14 @@ func fakeSpawns(t *testing.T, session string) *[]string {
 	var tasks []string
 	orig := graphSpawnFn
 	n := 0
-	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, seedID string) (string, error) {
 		n++
 		id := fmt.Sprintf("spawn-fake%04d", n)
 		tasks = append(tasks, role+": "+task)
 		seed := NewMessage(owner, id, "request", "spawn-task", task, "")
+		if seedID != "" {
+			seed.ID = seedID
+		}
 		if err := SendNoCC(sess, seed); err != nil {
 			t.Fatalf("seed send: %v", err)
 		}
@@ -51,11 +54,13 @@ func fakeSpawns(t *testing.T, session string) *[]string {
 	return &tasks
 }
 
-// appendSpawnEntry writes a spawn entry the way the spawn store expects.
+// appendSpawnEntry writes a spawn entry the way the spawn store expects,
+// under the registry lock as StartSpawnOwned does.
 func appendSpawnEntry(session string, e SpawnEntry) error {
-	entries, _ := ReadSpawnEntries(session)
-	entries = append(entries, e)
-	return WriteSpawnEntries(session, entries)
+	return withSpawnRegistryLock(session, func() error {
+		entries, _ := ReadSpawnEntries(session)
+		return WriteSpawnEntries(session, append(entries, e))
+	})
 }
 
 // completeSendNode fakes an agent answering a running send node: completes
@@ -2530,12 +2535,14 @@ func TestExecWaitEventRelease(t *testing.T) {
 	}
 }
 
+// TestExecMapNodeFansOutPerItem: a map that opts into workers: N runs its
+// items in parallel, one lane each (MUX-195 Decision 3 keeps the opt-in).
 func TestExecMapNodeFansOutPerItem(t *testing.T) {
 	g := &Graph{
 		Name:  "t",
 		Start: "m",
 		Nodes: []Node{
-			{ID: "m", Type: NodeMap, Role: "edit", Message: "process ${item}", Items: "one, two, three"},
+			{ID: "m", Type: NodeMap, Role: "edit", Message: "process ${item}", Items: "one, two, three", Workers: 3},
 		},
 	}
 	run := createTestRun(t, g)
@@ -3567,7 +3574,8 @@ func TestExecSpawnLostWorkerReplaced(t *testing.T) {
 		}
 		return st
 	}
-	stop := func(spawnRole string) {
+	stop := func(spawnRole string) { // as StopSpawn does: window gone, entry stopped
+		f.deadWindows[spawnRole] = true
 		if err := UpdateSpawnEntry(runTestSession, spawnRole, func(e *SpawnEntry) {
 			e.Status = "stopped"
 			e.FinishedAt = time.Now().Unix()
@@ -3658,7 +3666,7 @@ func TestExecSpawnLostWorkerReplaced(t *testing.T) {
 // names it (review must-fix 2026-09-09).
 func TestExecMapReplacementFailsClosed(t *testing.T) {
 	g := &Graph{Name: "map-lost", Start: "m",
-		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: "one,two", Message: "handle ${item}"}}}
+		Nodes: []Node{{ID: "m", Type: NodeMap, Role: "edit", Items: "one,two", Workers: 2, Message: "handle ${item}"}}}
 	run := createTestRun(t, g)
 	f := fakeLiveSpawns(t)
 
@@ -3669,6 +3677,7 @@ func TestExecMapReplacementFailsClosed(t *testing.T) {
 		t.Fatalf("two members expected: %q (%d starts)", st.TaskID, f.fresh)
 	}
 	for _, id := range members {
+		f.deadWindows[id] = true
 		if err := UpdateSpawnEntry(runTestSession, id, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
 			t.Fatal(err)
 		}
@@ -3677,12 +3686,12 @@ func TestExecMapReplacementFailsClosed(t *testing.T) {
 	// Second replacement start fails.
 	inner := graphSpawnFn
 	starts := 0
-	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, seedID string) (string, error) {
 		starts++
 		if starts == 2 {
 			return "", errors.New("tmux new-window: no server")
 		}
-		return inner(sess, role, task, owner, runID, nodeID)
+		return inner(sess, role, task, owner, runID, nodeID, seedID)
 	}
 
 	step(t, runTestSession, run.ID)
@@ -3718,17 +3727,18 @@ func TestExecMapReplacementFailsClosed(t *testing.T) {
 	step(t, runTestSession, run2.ID)
 	st2, _ := ReadNodeStatus(runTestSession, run2.ID, "m")
 	for _, id := range strings.Split(st2.TaskID, ",") {
+		f.deadWindows[id] = true
 		if err := UpdateSpawnEntry(runTestSession, id, func(e *SpawnEntry) { e.Status = "stopped" }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	starts = 0
-	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, seedID string) (string, error) {
 		starts++
 		if starts == 2 {
 			return "", errors.New("tmux new-window: no server")
 		}
-		return inner(sess, role, task, owner, runID, nodeID)
+		return inner(sess, role, task, owner, runID, nodeID, seedID)
 	}
 	f.killed = nil
 	spawnKillWindowFn = func(_, w string) error {
@@ -3804,8 +3814,12 @@ func TestSpawnDisplayStatusParked(t *testing.T) {
 		t.Fatalf("run state %q, want complete", r.State)
 	}
 	e, _ = GetSpawnEntry(runTestSession, st.TaskID)
-	if got := SpawnDisplayStatus(runTestSession, e); got == "parked" {
-		t.Fatal("a terminal run's worker must not read parked")
+	if got := SpawnDisplayStatus(runTestSession, e); got != "idle" {
+		t.Fatalf("a terminal run's answered worker reads %q, want idle — released, not parked", got)
+	}
+	entries, _ = ReadSpawnEntries(runTestSession)
+	if out := FormatSpawnList(AnnotateSpawnDisplay(runTestSession, entries), false); !strings.Contains(out, "idle") {
+		t.Fatalf("spawn list must show the idle worker:\n%s", out)
 	}
 }
 
@@ -3844,7 +3858,7 @@ func TestExecSpecGuardPostponesWhenRepoDirUnknown(t *testing.T) {
 
 // liveSpawnFake mirrors the real graphSpawnFn closely enough for the
 // reuse tests: a fresh worker gets a RUNNING entry, a real seeded inbox
-// message, and the run+node stamp, so FindLiveSpawn, ReseedSpawn, and
+// message, and the run+node stamp, so reserveRunWorker, ReseedSpawn, and
 // spawnGroupOutcome run their live paths without tmux. Windows listed in
 // deadWindows read as gone; kill attempts are recorded. distinctIDs gives
 // entries the production shape — ID differs from SpawnRole — which the
@@ -3876,12 +3890,11 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 		return !f.deadWindows[w], nil
 	}
 	spawnKillWindowFn = func(_, w string) error { f.killed = append(f.killed, w); return nil }
-	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
-		f.fresh++
-		id := fmt.Sprintf("spawn-live%04d", f.fresh)
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, seedID string) (string, error) {
+		id := fmt.Sprintf("spawn-live%04d", f.fresh+1)
 		msg := NewMessage(owner, id, "request", "spawn-task", task, "")
-		if err := Send(sess, msg); err != nil {
-			t.Fatalf("seed send: %v", err)
+		if seedID != "" {
+			msg.ID = seedID
 		}
 		entryID := id
 		if f.distinctIDs {
@@ -3890,8 +3903,12 @@ func fakeLiveSpawns(t *testing.T) *liveSpawnFake {
 		entry := SpawnEntry{ID: entryID, Role: role, SpawnRole: id, Owner: owner, Task: task,
 			Status: "running", Window: id, StartedAt: time.Now().Unix(),
 			SeedMsgID: msg.ID, RunID: runID, NodeID: nodeID}
-		if err := appendSpawnEntry(sess, entry); err != nil {
-			t.Fatalf("append spawn entry: %v", err)
+		if err := reserveSpawnSlot(sess, entry); err != nil { // the real start reserves under the cap first
+			return "", err
+		}
+		f.fresh++
+		if err := Send(sess, msg); err != nil {
+			t.Fatalf("seed send: %v", err)
 		}
 		return id, nil
 	}
@@ -3954,7 +3971,7 @@ func TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying(t *testing.T) {
 			useTempBusDir(t)
 			fakeLiveSpawns(t)
 
-			id, err := graphSpawnFn(runTestSession, "edit", "implement phase 3", graphSender, "run1", "implement")
+			id, err := graphSpawnFn(runTestSession, "edit", "implement phase 3", graphSender, "run1", "implement", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -3976,12 +3993,13 @@ func TestSpawnGroupOutcomeReadsTheReplyNotTheFactOfReplying(t *testing.T) {
 // correctly before Defect 3 and must not decay into holds. The group rows
 // pin the precedence — a hold must never mask another worker's failure.
 func TestSpawnGroupOutcomeKeepsFailureSemantics(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_MAX_WORKERS", "0") // four live workers at once; the cap is not under test here
 	useTempBusDir(t)
 	fakeLiveSpawns(t)
 
 	spawn := func(node string) string {
 		t.Helper()
-		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node)
+		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4041,7 +4059,7 @@ func TestSpawnGroupOutcomeUnansweredCompletedIsUnknown(t *testing.T) {
 
 	spawn := func(node string) string {
 		t.Helper()
-		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node)
+		id, err := graphSpawnFn(runTestSession, "edit", "work", graphSender, "run1", node, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4116,7 +4134,7 @@ func TestExecSpawnUnansweredWorkerHoldsNode(t *testing.T) {
 	const worker = "spawn-unanswered178"
 	orig := graphSpawnFn
 	t.Cleanup(func() { graphSpawnFn = orig })
-	graphSpawnFn = func(sess, role, task, owner, runID, nodeID string) (string, error) {
+	graphSpawnFn = func(sess, role, task, owner, runID, nodeID, _ string) (string, error) {
 		return worker, appendSpawnEntry(sess, SpawnEntry{ID: worker, Role: role, SpawnRole: worker,
 			Owner: owner, Task: task, Status: "completed", StartedAt: time.Now().Unix(),
 			RunID: runID, NodeID: nodeID})
@@ -4320,10 +4338,14 @@ func TestAcquireSpawnWorkerDeadWorkerFreshStart(t *testing.T) {
 	}
 }
 
-// TestAcquireSpawnWorkerDistinctNodesDistinctWorkers is the spec's other
-// negative control: reuse is keyed per run+node, never global — a second
-// node (and a second run) must not adopt the first node's worker.
-func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
+// TestAcquireSpawnWorkerSharesTheRunsWorker pins the MUX-195 key, which
+// reverses MUX-131's per-node one: once task a is answered, a second node of
+// the same run reseeds the run's worker and moves its NodeID with the seed,
+// while another run, finding that worker busy, gets its own. The negative
+// control comes first: before task a is answered the second node is refused
+// and the worker keeps task a's seed — reseeded over, both nodes would
+// harvest task b's answer (review must-fix).
+func TestAcquireSpawnWorkerSharesTheRunsWorker(t *testing.T) {
 	useTempBusDir(t)
 	f := fakeLiveSpawns(t)
 
@@ -4331,7 +4353,16 @@ func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	idOtherNode, err := acquireSpawnWorker(runTestSession, "run-1", "fanout#0", "edit", "task b")
+	seedA, _ := GetSpawnEntry(runTestSession, id1)
+	if _, err := acquireSpawnWorker(runTestSession, "run-1", "fix", "edit", "task b"); !errors.Is(err, errRunWorkerBusy) {
+		t.Fatalf("a second node must wait while task a is unanswered, got %v", err)
+	}
+	if e, _ := GetSpawnEntry(runTestSession, id1); e.NodeID != "implement" || e.SeedMsgID != seedA.SeedMsgID || f.fresh != 1 {
+		t.Fatalf("the busy worker must keep task a: node %q seed %q (was %q), %d starts", e.NodeID, e.SeedMsgID, seedA.SeedMsgID, f.fresh)
+	}
+
+	answerSpawn(t, runTestSession, id1)
+	idOtherNode, err := acquireSpawnWorker(runTestSession, "run-1", "fix", "edit", "task b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4339,11 +4370,71 @@ func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id1 == idOtherNode || id1 == idOtherRun || idOtherNode == idOtherRun {
-		t.Fatalf("distinct nodes/runs must get distinct workers: %s %s %s", id1, idOtherNode, idOtherRun)
+	if idOtherNode != id1 {
+		t.Fatalf("a second node of the run must share its worker: %s, want %s", idOtherNode, id1)
 	}
-	if f.fresh != 3 {
-		t.Fatalf("expected 3 fresh workers, got %d", f.fresh)
+	if e, _ := GetSpawnEntry(runTestSession, id1); e.NodeID != "fix" || e.Task != "task b" {
+		t.Fatalf("the reseed must move the worker to the new node: node %q task %q", e.NodeID, e.Task)
+	}
+	if idOtherRun == id1 || f.fresh != 2 {
+		t.Fatalf("another run must not take a busy worker: got %s, %d starts", idOtherRun, f.fresh)
+	}
+}
+
+// TestFailedReseedNeverLeavesTwoLiveWorkers: a reseed that cannot be posted
+// has already re-reserved the run's worker for the new seed, so falling
+// through to a fresh start over it would give the run two live workers (PR
+// #152 review). The worker is stopped first; when even the stop fails, no
+// second worker starts. The inbox write fails for real — the worker's inbox
+// path is made a directory.
+func TestFailedReseedNeverLeavesTwoLiveWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		killFail bool
+	}{
+		{"stop succeeds, fresh worker starts", false},
+		{"stop fails, no second worker", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			f := fakeLiveSpawns(t)
+			id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "task a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			answerSpawn(t, runTestSession, id1)
+			inbox := InboxPath(runTestSession, id1)
+			if err := os.RemoveAll(inbox); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(inbox, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.killFail {
+				spawnKillWindowFn = func(string, string) error { return errors.New("kill refused") }
+			}
+
+			got, err := acquireSpawnWorker(runTestSession, "run-1", "fix", "edit", "task b")
+			live := 0
+			entries, _ := ReadSpawnEntries(runTestSession)
+			for _, e := range entries {
+				if e.RunID == "run-1" && e.Status == "running" {
+					live++
+				}
+			}
+			if live != 1 {
+				t.Fatalf("run-1 has %d live workers, want 1 (got %q, err %v)", live, got, err)
+			}
+			if tc.killFail {
+				if err == nil || f.fresh != 1 {
+					t.Fatalf("a failed stop must refuse a second worker: err %v, %d starts", err, f.fresh)
+				}
+				return
+			}
+			if err != nil || got == id1 || f.fresh != 2 {
+				t.Fatalf("a stopped worker must be replaced: got %q (was %q), err %v, %d starts", got, id1, err, f.fresh)
+			}
+		})
 	}
 }
 
@@ -4351,8 +4442,9 @@ func TestAcquireSpawnWorkerDistinctNodesDistinctWorkers(t *testing.T) {
 // one worker serves both iterations (the assertion that would have caught
 // the three-worker run in the MUX-131 report), the worker survives
 // RefreshSpawnStatus mid-run, and is released by it once the run is
-// terminal.
+// terminal — reaped at once with the MUX-195 idle hold off (window 0).
 func TestExecSpawnLoopReusesWorker(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "0")
 	g := &Graph{Name: "spawn-loop", Start: "w",
 		Nodes: []Node{
 			{ID: "w", Type: NodeSpawn, Role: "edit", Message: "implement"},
@@ -4579,7 +4671,7 @@ func TestExecMapTaskCarriesOwnership(t *testing.T) {
 		Name:  "t",
 		Start: "fan",
 		Nodes: []Node{
-			{ID: "fan", Type: NodeMap, Role: "edit", Items: "one,two", Message: "Handle ${item}"},
+			{ID: "fan", Type: NodeMap, Role: "edit", Items: "one,two", Workers: 2, Message: "Handle ${item}"},
 			{ID: "review", Type: NodeSend, Role: "review", Action: "review", Message: "go"},
 		},
 		Edges: []Edge{{From: "fan", To: "review"}},

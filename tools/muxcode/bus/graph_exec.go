@@ -9,6 +9,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,29 +44,47 @@ import (
 const graphSender = "daemon"
 
 // graphSpawnFn starts a FRESH worker for spawn/map nodes and stamps it
-// with the run+node reuse key. Package variable so unit tests can run
+// with its run and node, the ownership reuse reads. Package variable so unit tests can run
 // graphs without tmux — StartSpawn creates real tmux windows. Reuse of an
 // existing worker is acquireSpawnWorker's job, deliberately outside this
 // seam so tests that stub it still exercise the reuse decision. The key
 // is stamped after StartSpawn returns so its CLI-shared signature stays
 // put; a failed stamp only disables reuse for this one worker, degrading
-// to the pre-MUX-131 fresh-start-per-iteration behavior.
-var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (string, error) {
+// to the pre-MUX-131 fresh-start-per-iteration behavior. seedID, when set,
+// is the id the seed is sent under (StartSpawnOwned).
+var graphSpawnFn = func(session, role, task, owner, runID, nodeID, seedID string) (string, error) {
 	// Ownership rides the entry from birth (StartSpawnOwned) — a
 	// post-creation stamp had a race window and a swallowed error path.
-	entry, err := StartSpawnOwned(session, role, task, owner, false, runID, nodeID)
+	entry, err := StartSpawnOwned(session, role, task, owner, false, runID, nodeID, seedID)
 	if err != nil {
 		return "", err
 	}
 	return entry.SpawnRole, nil
 }
 
-// acquireSpawnWorker reuses the run+node's live worker when one exists,
-// falling back to a fresh spawn (MUX-131 Defect B: an unconditional
-// StartSpawn built a new worker per loop re-entry — three workers, one
-// task, one run — discarding each predecessor's context and re-paying
-// boot cost). A reseed failure also falls back: a fresh worker beats a
-// wedged node.
+// acquireSpawnWorker is the one road to a graph worker, so a run holds one
+// worker for all its spawn and map nodes (MUX-195; MUX-131 Defect B fixed
+// the per-iteration case, three workers for one task). In order:
+//
+//  1. the run's own live worker of the base role is reserved and reseeded —
+//     implement and fix share it, and the reservation moves its NodeID with
+//     the seed id (reserveRunWorker);
+//  2. else the session's idle worker of the base role, released by a
+//     finished run or an agent, is adopted (adoptIdleWorker);
+//  3. else a fresh worker is launched within SpawnMaxWorkers — the slot is
+//     reserved before the launch (StartSpawnOwned); at the cap the error
+//     wraps errSpawnCap and the caller waits as for a busy worker.
+//
+// A run worker another of the run's nodes still holds is never seeded over:
+// the error wraps errRunWorkerBusy and the caller defers the dispatch. That
+// holds whenever exclude is empty; exclude names workers already holding
+// other lanes of the same map, whose template declared workers: N, so an
+// extra lane falls through to steps 2 and 3 instead. A reseed or adoption
+// failure falls through too — a fresh worker beats a wedged node — but a
+// failed reseed first stops the run's worker, already re-reserved for the
+// new seed, and reports an error if that stop fails: falling through over a
+// live worker would leave the run two. Every cold start skipped is a full
+// boot of the agent definition and context saved.
 //
 // Graph workers are never isolated in their own worktree. Worktrees are
 // cut with `git worktree add --detach HEAD`, so a fix node — whose whole
@@ -76,18 +95,86 @@ var graphSpawnFn = func(session, role, task, owner, runID, nodeID string) (strin
 // a third tree again. Workers run in the session checkout instead, the
 // one tree build, test, review and commit already operate on, which is
 // what removes the need to harvest anything between nodes.
-func acquireSpawnWorker(session, runID, nodeID, role, task string) (string, error) {
-	if entry, ok := FindLiveSpawn(session, runID, nodeID); ok {
-		_, err := ReseedSpawn(session, entry, task)
-		if err == nil {
-			LogLifecycle(session, "info", "daemon", "graph-spawn-reuse",
-				fmt.Sprintf("%s: %s reused worker %s", runID, nodeID, entry.SpawnRole))
-			return entry.SpawnRole, nil
-		}
-		LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
-			fmt.Sprintf("%s: %s reseed of %s failed (%v) — starting fresh", runID, nodeID, entry.SpawnRole, err))
+func acquireSpawnWorker(session, runID, nodeID, role, task string, exclude ...string) (string, error) {
+	return acquireSeededWorker(session, runID, nodeID, role, task, "", exclude...)
+}
+
+// acquireSeededWorker is acquireSpawnWorker with the seed's id chosen by the
+// caller (seedID; generated when empty), so a caller that persisted it before
+// dispatching can find the worker it went to after a restart — whichever of
+// the three roads took it.
+func acquireSeededWorker(session, runID, nodeID, role, task, seedID string, exclude ...string) (string, error) {
+	if seedID == "" {
+		seedID = NewMsgID(graphSender)
 	}
-	return graphSpawnFn(session, role, task, graphSender, runID, nodeID)
+	spec := ReadActiveSpec(session)
+	prev, err := reserveRunWorker(session, runID, nodeID, role, exclude, func(e *SpawnEntry) {
+		e.NodeID, e.SeedMsgID, e.Task, e.Spec = nodeID, seedID, task, spec
+		oweNotice(e, seedID)
+	})
+	switch {
+	case err == nil:
+		spawnAdvanceWorktreeFn(session, prev)
+		msg := NewMessage(graphSender, prev.SpawnRole, "request", "spawn-task", task, "")
+		msg.ID = seedID
+		if _, err := sendSpawnSeed(session, prev, msg); err != nil {
+			if _, stopErr := stopSpawnRole(session, prev.SpawnRole); stopErr != nil {
+				LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
+					fmt.Sprintf("%s: %s reseed of %s failed (%v) and it could not be stopped (%v) — not starting a second worker", runID, nodeID, prev.SpawnRole, err, stopErr))
+				return "", fmt.Errorf("reseed of %s failed (%v) and stopping it failed: %w", prev.SpawnRole, err, stopErr)
+			}
+			LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
+				fmt.Sprintf("%s: %s reseed of %s failed (%v) — worker stopped, starting fresh", runID, nodeID, prev.SpawnRole, err))
+			break
+		}
+		LogLifecycle(session, "info", "daemon", "graph-spawn-reuse",
+			fmt.Sprintf("%s: %s reused worker %s (last node %s)", runID, nodeID, prev.SpawnRole, prev.NodeID))
+		return prev.SpawnRole, nil
+	case errors.Is(err, errRunWorkerBusy) && len(exclude) == 0:
+		return "", err
+	case !errors.Is(err, errNoRunWorker) && !errors.Is(err, errRunWorkerBusy):
+		LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
+			fmt.Sprintf("%s: %s run worker lookup failed (%v) — trying the idle pool", runID, nodeID, err))
+	}
+	id, ok, err := adoptIdleWorker(session, runID, nodeID, role, task, unusedSeedID(session, seedID))
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return id, nil
+	}
+	return graphSpawnFn(session, role, task, graphSender, runID, nodeID, unusedSeedID(session, seedID))
+}
+
+// unusedSeedID returns seedID unless a registry entry already carries it —
+// a road that failed after reserving it keeps it — and a fresh id then: a
+// seed id names one worker's task, and two entries sharing one would read
+// each other's answer as their own.
+func unusedSeedID(session, seedID string) string {
+	entries, _ := ReadSpawnEntries(session)
+	for _, e := range entries {
+		if e.SeedMsgID == seedID {
+			return NewMsgID(graphSender)
+		}
+	}
+	return seedID
+}
+
+// adoptIdleWorker hands the session's idle worker of a base role to a run
+// and reports the worker it seeded, with adoptWorkerFor's error contract.
+// Only a worker without a worktree qualifies: graph workers run in the
+// session checkout (MUX-178).
+func adoptIdleWorker(session, runID, nodeID, role, task, seedID string) (string, bool, error) {
+	cand, ok := findIdleWorker(session, role, false)
+	if !ok {
+		return "", false, nil
+	}
+	return adoptWorker(session, cand, runID, nodeID, task, seedID)
+}
+
+// adoptWorker is adoptWorkerFor with a run's node as the new owner.
+func adoptWorker(session string, cand SpawnEntry, runID, nodeID, task, seedID string) (string, bool, error) {
+	return adoptWorkerFor(session, cand, workerOwner{RunID: runID, NodeID: nodeID, Owner: graphSender}, task, seedID, "graph-spawn-adopt")
 }
 
 // unverifiedHoldReason marks a pending approval that an unknown outcome
@@ -270,7 +357,7 @@ func StepGraphRun(session, runID string) error {
 		}
 		switch st.State {
 		case GraphNodeRunning:
-			harvestRunningNode(session, run, n, st)
+			harvestRunningNode(session, run, g, n, st)
 		case GraphNodeWaiting:
 			harvestWaitingNode(session, run, n, st)
 		}
@@ -1136,6 +1223,10 @@ func unverifiedHoldReleased(session string, run *GraphRun, nodeID string) bool {
 // keyed to the QUEUED duplicate's message ID, not the unsent one — the
 // agent answers the queued id, and a task keyed to the unsent id sits
 // in-flight forever (PR #38 Copilot finding).
+//
+// A spawn or map node whose run worker another node still holds stays ready
+// (deferDispatch) and is retried each tick; its start row is written on the
+// first attempt only, so a long wait does not flood the lifecycle log.
 func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) {
 	if n == nil {
 		return
@@ -1143,8 +1234,10 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 	if !guardAllowsDispatch(session, run, n) {
 		return
 	}
-	LogLifecycle(session, "info", "daemon", "graph-node-start",
-		fmt.Sprintf("%s: %s (%s)", run.ID, n.ID, n.Type))
+	if st.DeferredOn == "" {
+		LogLifecycle(session, "info", "daemon", "graph-node-start",
+			fmt.Sprintf("%s: %s (%s)", run.ID, n.ID, n.Type))
+	}
 
 	switch n.Type {
 	case NodeSend:
@@ -1182,6 +1275,10 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		msg := graphWorkerTask(g, run.ID, n.ID,
 			interpolateGraphMessage(session, run, expandFailureReport(session, run, g, n), ""))
 		spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, msg)
+		if errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap) {
+			deferDispatch(session, run, n, st, err)
+			return
+		}
 		if err != nil {
 			finishNode(session, run, n, OutcomeFailure, "spawn failed: "+err.Error())
 			return
@@ -1191,26 +1288,37 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		})
 
 	case NodeMap:
-		// One worker per literal item; reuse keyed per item index so distinct members never share a worker.
 		items := splitMapItems(n.Items)
 		if len(items) == 0 {
 			finishNode(session, run, n, OutcomeFailure, "map node has no items")
 			return
 		}
+		lanes := mapLaneCount(n, len(items))
 		var ids []string
-		for i, item := range items {
-			nodeKey := fmt.Sprintf("%s#%d", n.ID, i)
-			msg := graphWorkerTask(g, run.ID, n.ID,
-				interpolateGraphMessage(session, run, n.Message, item))
-			spawnID, err := acquireSpawnWorker(session, run.ID, nodeKey, n.Role, msg)
+		laneItems := make([]int, lanes)
+		for li := range laneItems {
+			spawnID, err := acquireSpawnWorker(session, run.ID, n.ID, n.Role, mapItemTask(session, run, g, n, items[li]), ids...)
+			if li == 0 && (errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap)) {
+				deferDispatch(session, run, n, st, err)
+				return
+			}
+			if errors.Is(err, errSpawnCap) {
+				LogLifecycle(session, "warn", "daemon", "spawn-cap-refused",
+					fmt.Sprintf("%s: %s runs %d of %d lanes — %v", run.ID, n.ID, li, lanes, err))
+				laneItems, lanes = laneItems[:li], li // the queue serves every item on the lanes it has
+				break
+			}
 			if err != nil {
 				finishNode(session, run, n, OutcomeFailure, "map spawn failed: "+err.Error())
 				return
 			}
 			ids = append(ids, spawnID)
+			laneItems[li] = li
 		}
 		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeRunning, func(s *GraphNodeStatus) {
 			s.TaskID = strings.Join(ids, ",")
+			s.MapLanes, s.MapNext, s.MapResults = laneItems, lanes, make([]MapItemResult, len(items))
+			s.MapPending = nil
 		})
 
 	case NodeCondition:
@@ -1264,6 +1372,26 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		// Parked — harvestWaitingNode releases it on the node's event action.
 		_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeWaiting, nil)
 	}
+}
+
+// deferDispatch leaves a ready spawn or map node ready while another node of
+// its run holds the run's worker (errRunWorkerBusy) — the competing nodes run
+// one after the other on the one worker, each harvesting its own seed — or
+// while a fresh worker would pass the per-role cap (errSpawnCap), until one
+// frees. The graph-spawn-deferred row, and spawn-cap-refused for the cap, is
+// written once per reason, not every tick.
+func deferDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, err error) {
+	reason := err.Error()
+	if st.DeferredOn == reason {
+		return
+	}
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) { s.DeferredOn = reason })
+	st.DeferredOn = reason
+	if errors.Is(err, errSpawnCap) {
+		LogLifecycle(session, "warn", "daemon", "spawn-cap-refused", fmt.Sprintf("%s: %s — %s", run.ID, n.ID, reason))
+	}
+	LogLifecycle(session, "info", "daemon", "graph-spawn-deferred",
+		fmt.Sprintf("%s: %s waits — %s", run.ID, n.ID, reason))
 }
 
 // splitMapItems parses a map node's item list (comma-separated literal).
@@ -1365,8 +1493,13 @@ func finishNode(session string, run *GraphRun, n *Node, outcome, output string) 
 // worker that ended without answering its seed is replaced rather than
 // harvested — see replaceLostWorkers. A worker whose stop is still owed
 // (retryPendingStops) outranks every other road, the node timeout included:
-// any of them finishing or replacing first would orphan a live worker.
-func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeStatus) {
+// any of them finishing or replacing first would orphan a live worker. A
+// map node advances its work queue here (advanceMapLanes) and finishes once
+// every item is recorded. Its pending dispatches are settled ahead of the
+// replace and resume roads, so those roads only ever act on settled lanes:
+// replaced first, a lane's replacement was then pointed back at the dead
+// worker its interrupted dispatch had reached (MUX-195 review must-fix).
+func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) {
 	now := time.Now().Unix()
 	if (n.Type == NodeSpawn || n.Type == NodeMap) && retryPendingStops(session, run, n, st.TaskID) {
 		return
@@ -1406,15 +1539,34 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 
 	case NodeSpawn, NodeMap:
 		_, _ = RefreshSpawnStatus(session)
+		if err := settleMapDispatches(session, run, g, n, st); err != nil {
+			finishNode(session, run, n, OutcomeFailure, "map: "+err.Error())
+			return
+		}
 		if replaceLostWorkers(session, run, n, st, now) || resumeDeadWorkers(session, run, n, st, now) {
 			return
 		}
-		outcome, done := spawnGroupOutcome(session, st.TaskID)
-		if !done {
-			redriveStalledSpawns(session, run, n, st, now)
-			return
+		var outcome, output string
+		mapQueue := n.Type == NodeMap && len(st.MapLanes) > 0
+		if mapQueue {
+			done, err := advanceMapLanes(session, run, g, n, st)
+			if err != nil {
+				finishNode(session, run, n, OutcomeFailure, "map: "+err.Error())
+				return
+			}
+			if !done {
+				redriveStalledSpawns(session, run, n, st, now)
+				return
+			}
+			outcome, output = mapResult(st.MapResults)
+		} else {
+			var done bool
+			if outcome, done = spawnGroupOutcome(session, st.TaskID); !done {
+				redriveStalledSpawns(session, run, n, st, now)
+				return
+			}
+			output = spawnGroupReports(session, st.TaskID)
 		}
-		output := spawnGroupReports(session, st.TaskID)
 		// Ported on anything but failure: a held node's work must reach the
 		// checkout uncommitted, or the human asked to judge it cannot see it.
 		if outcome != OutcomeFailure {
@@ -1434,22 +1586,225 @@ func harvestRunningNode(session string, run *GraphRun, n *Node, st *GraphNodeSta
 			LogLifecycle(session, "info", "daemon", "graph-harvest",
 				fmt.Sprintf("%s: %s — %s", run.ID, n.ID, summary))
 		}
-		if silent := unattributedWorkers(session, st.TaskID); len(silent) > 0 {
-			LogLifecycle(session, "warn", "daemon", "graph-outcome-unattributed",
-				fmt.Sprintf("%s: %s answered without a verdict token: %s",
-					run.ID, n.ID, strings.Join(silent, ",")))
-			output += fmt.Sprintf("\n[no verdict token from %s — outcome not established]",
-				strings.Join(silent, ","))
-		}
-		if ended := unansweredWorkers(session, st.TaskID); len(ended) > 0 {
-			LogLifecycle(session, "warn", "daemon", "graph-spawn-unanswered",
-				fmt.Sprintf("%s: %s worker ended without answering its seed: %s",
-					run.ID, n.ID, strings.Join(ended, ", ")))
-			output += fmt.Sprintf("\n[worker ended without answering its seed: %s — outcome not established]",
-				strings.Join(ended, ", "))
+		if !mapQueue {
+			output += spawnAnnotations(session, run, n, st.TaskID) // a map annotates per item
 		}
 		finishNode(session, run, n, outcome, output)
 	}
+}
+
+// spawnAnnotations names the workers of a group whose answer established no
+// outcome — replied without a verdict token, or ended without answering —
+// logs a lifecycle row for each kind, and returns the note the node's output
+// carries. A sentinel road only works if omitting the sentinel is loud: the
+// hold is the alarm, and the note tells the human which worker to ask.
+func spawnAnnotations(session string, run *GraphRun, n *Node, taskIDs string) string {
+	var note string
+	if silent := unattributedWorkers(session, taskIDs); len(silent) > 0 {
+		LogLifecycle(session, "warn", "daemon", "graph-outcome-unattributed",
+			fmt.Sprintf("%s: %s answered without a verdict token: %s",
+				run.ID, n.ID, strings.Join(silent, ",")))
+		note += fmt.Sprintf("\n[no verdict token from %s — outcome not established]",
+			strings.Join(silent, ","))
+	}
+	if ended := unansweredWorkers(session, taskIDs); len(ended) > 0 {
+		LogLifecycle(session, "warn", "daemon", "graph-spawn-unanswered",
+			fmt.Sprintf("%s: %s worker ended without answering its seed: %s",
+				run.ID, n.ID, strings.Join(ended, ", ")))
+		note += fmt.Sprintf("\n[worker ended without answering its seed: %s — outcome not established]",
+			strings.Join(ended, ", "))
+	}
+	return note
+}
+
+// mapLaneCount is how many of a map node's items are in flight at once: one,
+// on the run's single worker, unless the template sets workers (Decision 3),
+// and never more than there are items.
+func mapLaneCount(n *Node, items int) int {
+	return min(max(n.Workers, 1), items)
+}
+
+func mapItemTask(session string, run *GraphRun, g *Graph, n *Node, item string) string {
+	return graphWorkerTask(g, run.ID, n.ID, interpolateGraphMessage(session, run, n.Message, item))
+}
+
+// advanceMapLanes runs a map node's work queue (MUX-195 Decision 3): each
+// lane whose worker has finished its item records the result and takes the
+// next unassigned item — acquireSpawnWorker hands it the run's live worker,
+// which for a serial map is the same one — and a lane with nothing left
+// retires. It reports whether every lane has retired.
+//
+// Nothing moves a worker on before it is persisted: finished items' results,
+// each lane's next item and the id its seed will carry (MapPending) are
+// written first, and settleMapDispatches then carries the pending dispatches
+// onto workers. Recorded after the reseed instead, a restart in between left
+// the lane on its old item while the worker carried the next one's seed: the
+// next harvest recorded item two's answer as item one's, lost item one's
+// verdict, and could run item two twice (MUX-195 review must-fix). A lane
+// with a dispatch pending is never harvested — its worker still carries the
+// previous item's answer.
+func advanceMapLanes(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) (bool, error) {
+	items := splitMapItems(n.Items)
+	lanes := strings.Split(st.TaskID, ",")
+	if len(lanes) != len(st.MapLanes) || len(st.MapResults) != len(items) {
+		return false, fmt.Errorf("queue state names %d lanes and %d results for %d workers and %d items",
+			len(st.MapLanes), len(st.MapResults), len(lanes), len(items))
+	}
+	changed := false
+	for li, role := range lanes {
+		item := st.MapLanes[li]
+		if item < 0 || slices.ContainsFunc(st.MapPending, func(d MapDispatch) bool { return d.Lane == li }) {
+			continue
+		}
+		outcome, done := spawnGroupOutcome(session, role)
+		if !done {
+			continue
+		}
+		report := strings.TrimPrefix(spawnGroupReports(session, role)+spawnAnnotations(session, run, n, role), "\n")
+		st.MapResults[item] = MapItemResult{Done: true, Outcome: outcome, Report: report}
+		st.MapLanes[li] = -1
+		changed = true
+		if st.MapNext < len(items) {
+			st.MapLanes[li] = st.MapNext
+			st.MapPending = append(st.MapPending, MapDispatch{Lane: li, Item: st.MapNext, Seed: NewMsgID(graphSender)})
+			st.MapNext++
+		}
+	}
+	if changed {
+		if err := persistMapQueue(session, run, n, st, lanes); err != nil {
+			return false, err
+		}
+	}
+	if err := settleMapDispatches(session, run, g, n, st); err != nil {
+		return false, err
+	}
+	for _, item := range st.MapLanes {
+		if item >= 0 {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// persistMapQueue writes a map node's queue state — lanes, results and
+// pending dispatches — in one node-status write.
+func persistMapQueue(session string, run *GraphRun, n *Node, st *GraphNodeStatus, lanes []string) error {
+	st.TaskID = strings.Join(lanes, ",")
+	return MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.TaskID, s.MapLanes, s.MapNext, s.MapResults, s.MapPending = st.TaskID, st.MapLanes, st.MapNext, st.MapResults, st.MapPending
+	})
+}
+
+// settleMapDispatches carries each persisted lane dispatch (MapPending) onto
+// a worker and points its lane there, persisting each as it lands — the one
+// road from a pending dispatch to a lane. A worker already carrying the
+// dispatch's seed id took it before a restart, and the lane is pointed at it
+// whatever became of it since: answered, its result is harvested like any
+// other; lost, replaceLostWorkers replaces it once, holding the window-gone
+// precondition and the redrive cap. Its seed is re-sent only while it runs
+// and only if the seed never reached the bus, so a restart never runs an
+// item twice. With no such worker the item is dispatched now under that id.
+// A dispatch whose run worker another node holds stays pending for a later
+// tick. Seed identity implies ownership: a worker handed to another owner
+// carries that owner's seed.
+func settleMapDispatches(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) error {
+	if len(st.MapPending) == 0 {
+		return nil
+	}
+	items := splitMapItems(n.Items)
+	lanes := strings.Split(st.TaskID, ",")
+	if len(lanes) != len(st.MapLanes) {
+		return fmt.Errorf("queue state names %d lanes for %d workers", len(st.MapLanes), len(lanes))
+	}
+	for _, d := range slices.Clone(st.MapPending) {
+		if d.Lane < 0 || d.Lane >= len(lanes) || d.Item < 0 || d.Item >= len(items) {
+			return fmt.Errorf("pending dispatch names lane %d item %d of %d lanes and %d items", d.Lane, d.Item, len(lanes), len(items))
+		}
+		w, ok := workerCarryingSeed(session, d.Seed)
+		if ok {
+			if w.Status == "running" {
+				if err := resendMissingSeed(session, w, d.Seed); err != nil {
+					return fmt.Errorf("item %d: %v", d.Item, err)
+				}
+			}
+			LogLifecycle(session, "warn", "daemon", "graph-map-dispatch-recovered",
+				fmt.Sprintf("%s: %s item %d found on %s (%s) under seed %s after an interrupted dispatch",
+					run.ID, n.ID, d.Item, w.SpawnRole, w.Status, d.Seed))
+		} else {
+			role, err := acquireSeededWorker(session, run.ID, n.ID, n.Role, mapItemTask(session, run, g, n, items[d.Item]), d.Seed,
+				activeLaneWorkers(lanes, st.MapLanes, d.Lane)...)
+			if errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("item %d: %v", d.Item, err)
+			}
+			w.SpawnRole = role
+		}
+		lanes[d.Lane] = w.SpawnRole
+		st.MapPending = slices.DeleteFunc(st.MapPending, func(p MapDispatch) bool { return p.Seed == d.Seed })
+		if err := persistMapQueue(session, run, n, st, lanes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// workerCarryingSeed returns the newest worker whose current seed id is
+// seedID.
+func workerCarryingSeed(session, seedID string) (SpawnEntry, bool) {
+	entries, _ := ReadSpawnEntries(session)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].SeedMsgID == seedID {
+			return entries[i], true
+		}
+	}
+	return SpawnEntry{}, false
+}
+
+// resendMissingSeed sends w its reserved seed under seedID unless the seed
+// already reached the bus — Send appends to the inbox, then the log — which
+// is the case for every interruption but one between reservation and send.
+func resendMissingSeed(session string, w SpawnEntry, seedID string) error {
+	if _, found := FindMessageByID(session, seedID); found {
+		return nil
+	}
+	if pending, _ := Peek(session, w.SpawnRole); slices.ContainsFunc(pending, func(m Message) bool { return m.ID == seedID }) {
+		return nil
+	}
+	msg := NewMessage(graphSender, w.SpawnRole, "request", "spawn-task", w.Task, "")
+	msg.ID = seedID
+	_, err := sendSpawnSeed(session, w, msg)
+	return err
+}
+
+// activeLaneWorkers lists the workers holding items on a map's other lanes.
+func activeLaneWorkers(lanes []string, laneItems []int, skip int) []string {
+	var busy []string
+	for i, role := range lanes {
+		if i != skip && laneItems[i] >= 0 {
+			busy = append(busy, role)
+		}
+	}
+	return busy
+}
+
+// mapResult folds a finished map's items into the node's outcome — failure
+// over unknown over success, as for a spawn group — and its reports in item
+// order.
+func mapResult(results []MapItemResult) (string, string) {
+	outcome := OutcomeSuccess
+	var reports []string
+	for _, r := range results {
+		if !r.Done {
+			r.Outcome = OutcomeUnknown
+		}
+		outcome = worseOutcome(outcome, r.Outcome)
+		if r.Report != "" {
+			reports = append(reports, r.Report)
+		}
+	}
+	return outcome, strings.Join(reports, "\n")
 }
 
 // redriveStalledSpawns is the spawn/map side of executor stall
@@ -1858,8 +2213,12 @@ func lostSpawnWorkers(session, taskIDs string) []SpawnEntry {
 }
 
 // replaceLostWorkers re-dispatches a spawn or map node's lost workers
-// (lostSpawnWorkers) on fresh workers seeded with the same current task,
-// and reports whether it acted. A lost worker is a delivery failure, not
+// (lostSpawnWorkers) with the same current task, and reports whether it
+// acted. The replacement comes from acquireSpawnWorker — another live worker
+// of the run, the session's idle worker, or a fresh one — and only once
+// lostWindowsGone has seen the lost window gone, so a redrive never leaves
+// the run two live workers (MUX-195); a run worker another node holds is
+// waited for the same way. A lost worker is a delivery failure, not
 // a verdict: on 2026-09-09 the parked implement worker of a spec-to-pr run
 // was stopped as a leftover seconds after the loop re-seeded it for the
 // next phase, spawnGroupOutcome read the stopped entry as failure, and
@@ -1875,7 +2234,7 @@ func lostSpawnWorkers(session, taskIDs string) []SpawnEntry {
 // under a node that no longer names it (review must-fix 2026-09-09). A
 // replacement that could not be stopped is named in the node's output
 // as still live, so the failure never implies a cleanup it could not
-// verify. launched holds spawn roles (graphSpawnFn's return), so the
+// verify. launched holds spawn roles (acquireSpawnWorker's return), so the
 // stop goes through stopSpawnRole: StopSpawn keys on the entry ID, and
 // every role handed to it once failed "spawn not found" while the
 // replacement kept running (MUX-182 Phase 1).
@@ -1891,6 +2250,9 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	if st.Redrives >= graphRedriveMax {
 		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf(
 			"worker lost: %s ended before answering, %d replacements exhausted", strings.Join(names, ","), graphRedriveMax))
+		return true
+	}
+	if !lostWindowsGone(session, run, n, lost) {
 		return true
 	}
 	ids := strings.Split(st.TaskID, ",")
@@ -1910,7 +2272,13 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 		return true
 	}
 	for _, e := range lost {
-		fresh, err := graphSpawnFn(session, e.Role, e.Task, graphSender, e.RunID, e.NodeID)
+		others := slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return id == e.SpawnRole })
+		fresh, err := acquireSpawnWorker(session, run.ID, n.ID, e.Role, e.Task, others...)
+		if (errors.Is(err, errRunWorkerBusy) || errors.Is(err, errSpawnCap)) && len(launched) == 0 {
+			LogLifecycle(session, "warn", "daemon", "graph-spawn-replace-held",
+				fmt.Sprintf("%s: %s lost worker %s: replacement waits — %v", run.ID, n.ID, e.SpawnRole, err))
+			return true
+		}
 		if err != nil {
 			return failClosed(err.Error())
 		}
@@ -1938,6 +2306,33 @@ func replaceLostWorkers(session string, run *GraphRun, n *Node, st *GraphNodeSta
 	st.Redrives++
 	st.LastRedrive = now
 	return true
+}
+
+// lostWindowsGone reports whether every lost worker's window is proven gone,
+// the precondition for replacing it (MUX-195): a replacement launched beside
+// a window still live would give the run a second worker. A live window is
+// killed and the replacement waits for a later tick to see it gone; a lookup
+// that fails proves nothing and waits too. The wait spends no replacement.
+func lostWindowsGone(session string, run *GraphRun, n *Node, lost []SpawnEntry) bool {
+	gone := true
+	for _, e := range lost {
+		live, err := spawnWindowLookupFn(session, e.Window)
+		if err == nil && !live {
+			continue
+		}
+		gone = false
+		state := "unconfirmed (" + fmt.Sprint(err) + ")"
+		if err == nil {
+			state = "still live — killed"
+			if kerr := spawnKillWindowFn(session, e.Window); kerr != nil {
+				state = "still live — kill failed: " + kerr.Error()
+			}
+		}
+		LogLifecycle(session, "warn", "daemon", "graph-spawn-replace-held",
+			fmt.Sprintf("%s: %s lost worker %s (%s): window %s; replacement waits until it is gone",
+				run.ID, n.ID, e.SpawnRole, e.Status, state))
+	}
+	return gone
 }
 
 // sendResponseIsNonResult reports whether a completed task's recorded response

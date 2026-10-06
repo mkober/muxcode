@@ -175,16 +175,45 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 
 ```
 1. Agent runs: muxcode spawn start research "What does guard.go do?"
-2. Bus generates spawn role (spawn-a1b2c3d4), creates tmux window
-3. Task message pre-seeded in spawn's inbox
-4. Launches: muxcode agent launch research (with AGENT_ROLE=spawn-a1b2c3d4)
+2. AcquireAgentWorker takes the one road to a worker (MUX-195):
+     a. the caller's own research worker (same worktree kind): reseed if idle,
+        queue the task on its inbox if busy — never a second worker
+     b. else the session's idle research worker: adopted (claim first, see below)
+     c. else, within MUXCODE_SPAWN_MAX_WORKERS (3): a fresh spawn role
+        (spawn-a1b2c3d4) and tmux window; past the cap, refused (spawn-cap-refused)
+3. Task message seeded in the worker's inbox (fresh: pre-seeded before launch)
+4. Fresh only: launches muxcode agent launch research (AGENT_ROLE=spawn-a1b2c3d4)
 5. After 2s delay, bus notifies spawn agent to read inbox
 6. Spawn agent works on task, sends messages back to owner via bus
-7. Spawn agent completes, exits (tmux window closes)
-8. Daemon detects window death via checkSpawns()
-9. Daemon sends spawn-complete event to owner with last result
-10. Owner retrieves result: muxcode spawn result <id>
+7. Worker answers its seed; daemon sends spawn-complete to owner with the result
+   (once per task) and holds the worker as the role's one idle worker (spawn-idle)
+8. Owner retrieves result: muxcode spawn result <id>
+9. Idle worker adopted by the next run or spawn start, or reaped after
+   MUXCODE_SPAWN_IDLE_SECS (600) — spawn-reaped; window closed, entry completed
 ```
+
+**One worker per run, one per agent** (MUX-195). `acquireSpawnWorker` (graph nodes) and
+`AcquireAgentWorker` (`spawn start`) are the only roads to a worker. Graph order: the run's own worker
+(`reserveRunWorker`, keyed on run + base role, so `implement` and `fix` share it; a worker another node of
+the run still holds defers the dispatch — the node stays `ready`, `graph-spawn-deferred`) → the session's
+idle worker adopted → fresh within the cap. Agent order: own worker reseeded (idle) or queued (busy) → idle
+worker adopted → fresh within the cap. **Adoption claims first**: ownership (`RunID`/`NodeID`/`Owner`) and
+the new seed id move in **one write** under the spawn-registry lock (`withSpawnRegistryLock`: process mutex
++ `flock` on `spawn.jsonl.lock`, held by every registry read-modify-write), re-checking the worker is still
+idle, so two adopters cannot share it and the loser touches nothing; then `/clear` if Decision 1 of the
+spec says so (the active spec changed, or the owner kind switched between run and agent), the previous
+owner's queued seeds are dropped, and the seed is sent opening with a hand-over line naming the new owner
+(`graph-spawn-adopted` / `spawn-adopted`; `-adopt-failed` on any step that fails, with the claim released).
+Worktree kinds never mix: a graph run adopts only checkout workers (MUX-178), an agent only its requested
+kind. The **idle pool** is one worker per base role: `RefreshSpawnStatus` holds a released worker
+(`spawn-idle`), the most recently released wins and the rest are reaped as superseded (`spawn-reaped`), and
+the kept one is reaped when `MUXCODE_SPAWN_IDLE_SECS` closes; `spawnHasResponded` falls back to the
+worker's own reply in `log.jsonl` when the seed's delivery record was collected (MUX-135), so a finished
+run's worker no longer strands. `MUXCODE_SPAWN_MAX_WORKERS` (3; `0` = none) caps live workers per role —
+only a fresh launch is refused, reuse and adoption never count. Lost-worker replacement routes through
+`acquireSpawnWorker` and launches only once the lost window is confirmed gone (`lostWindowsGone`), and a
+`map` node's work queue (`MapLanes`/`MapNext`/`MapResults`/`MapPending`) is persisted before any worker is
+touched, so a daemon restart mid-dispatch neither loses nor double-runs an item.
 
 ### Daemon identity
 
@@ -282,8 +311,8 @@ is interrupted only at human gates and terminal states.
 | Node type | Behavior |
 |-----------|----------|
 | `send` | `SendNoCC` + tracked task for correlation |
-| `spawn` | A persistent worker in the **session checkout** — the one tree build, test, review and commit operate on (`graphSpawnFn` → `StartSpawnOwned` with `worktree=false`; a detached worktree once handed a fix node a tree without the previous node's work, 2026-09-03, see `acquireSpawnWorker`). It persists across iterations (`parked` between seeds, reused by `ReseedSpawn`) and is released when the run ends — see *Workers, stalls and the watchdog* below. Only a standalone `muxcode spawn start` cuts its own worktree (its default; `--no-worktree` opts out) |
-| `map` | Dynamic fan-out: one spawn per item in the item list |
+| `spawn` | A persistent worker in the **session checkout** — the one tree build, test, review and commit operate on (`graphSpawnFn` → `StartSpawnOwned` with `worktree=false`; a detached worktree once handed a fix node a tree without the previous node's work, 2026-09-03, see `acquireSpawnWorker`). It persists across iterations (`parked` between seeds, reused by `ReseedSpawn`) and is **the run's one worker**: every `spawn`/`map` node of the run shares it (`reserveRunWorker`, keyed on run + base role — MUX-195), a node whose worker another node still holds waits `ready`, and a new run adopts the session's `idle` worker before spawning. When the run ends the worker is held `idle` for `MUXCODE_SPAWN_IDLE_SECS` and then reaped — see *Workers, stalls and the watchdog* below and *Agent Spawn Flow* above. Only a standalone `muxcode spawn start` cuts its own worktree (its default; `--no-worktree` opts out) |
+| `map` | Dynamic fan-out over the item list — **serial by default**: items run one at a time on the run's single worker, results recorded in item order. `"workers": N` opts into N lanes, each taking the next item when its worker answers, capped by `MUXCODE_SPAWN_MAX_WORKERS` (fewer lanes, not a failure); negative `workers` fails validation. The queue (`MapLanes`/`MapNext`/`MapResults`/`MapPending`) is persisted before any worker is touched, so a restart mid-dispatch neither loses nor double-runs an item |
 | `join` | Fan-in barrier — `all` / `any` / `quorum` |
 | `condition` | Routes via `EvaluateConditions()` — the chain engine verbatim, no second dialect |
 | `wait_human` | Blocks until `muxcode graph approve` releases it |
@@ -296,7 +325,8 @@ is interrupted only at human gates and terminal states.
 3. Daemon poll loop: checkGraphRuns() -> bus.StepGraphRuns(session)
    (runs right after checkTrackedTasks so completions correlated this tick
     route their edges on the same tick)
-4. Ready nodes dispatch: send -> SendNoCC + CreateTask; spawn/map -> StartSpawn
+4. Ready nodes dispatch: send -> SendNoCC + CreateTask; spawn/map -> acquireSpawnWorker
+   (the run's own worker, else an adopted idle worker, else StartSpawnOwned within the cap)
 5. Completion harvested via task/receipt correlation; outcome extracted
 6. Outcome-keyed edge routed; join barriers evaluated; loop budgets decremented
 7. State persisted before and after every transition

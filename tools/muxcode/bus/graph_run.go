@@ -98,14 +98,36 @@ type GraphNodeStatus struct {
 	// Stall-redrive bookkeeping (MUX-123): persisted here so it survives
 	// daemon restarts — the watchdog's in-memory debounce reset on every
 	// build-triggered restart, which is how live stalls outlived it.
-	Redrives    int   `json:"redrives,omitempty"`
-	LastRedrive int64 `json:"last_redrive,omitempty"`
-	StartedAt   int64 `json:"started_at,omitempty"`
-	DoneAt      int64 `json:"done_at,omitempty"`
-	UpdatedAt   int64 `json:"updated_at"`
+	Redrives    int             `json:"redrives,omitempty"`
+	LastRedrive int64           `json:"last_redrive,omitempty"`
+	StartedAt   int64           `json:"started_at,omitempty"`
+	DoneAt      int64           `json:"done_at,omitempty"`
+	UpdatedAt   int64           `json:"updated_at"`
+	MapLanes    []int           `json:"map_lanes,omitempty"`   // map work queue (MUX-195): per TaskID lane, the item its worker is on; -1 once retired
+	MapNext     int             `json:"map_next,omitempty"`    // map: next unassigned item
+	MapResults  []MapItemResult `json:"map_results,omitempty"` // map: each item's recorded result, in item order
+	MapPending  []MapDispatch   `json:"map_pending,omitempty"` // map: lane dispatches persisted but not yet confirmed on a worker
+	DeferredOn  string          `json:"deferred_on,omitempty"` // ready spawn/map node waiting on the run's busy worker: why (MUX-195)
 	// Branched marks a condition's false branch for JSON consumers —
 	// render-time only, never persisted; see ConditionTookBranch.
 	Branched bool `json:"branched,omitempty"`
+}
+
+// MapItemResult is one map item's recorded outcome and worker report.
+type MapItemResult struct {
+	Done    bool   `json:"done,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	Report  string `json:"report,omitempty"`
+}
+
+// MapDispatch is a map lane's next item, persisted with the id its seed will
+// carry before any worker is touched, so a restart mid-dispatch can find the
+// worker that took it — or learn none did — instead of reading the lane's
+// previous answer as this item's (MUX-195).
+type MapDispatch struct {
+	Lane int    `json:"lane"`
+	Item int    `json:"item"`
+	Seed string `json:"seed"`
 }
 
 // legalNodeTransitions defines the allowed node state machine. done/failed/
@@ -519,6 +541,7 @@ func TransitionGraphNode(session, runID, nodeID, newState string, mutate func(*G
 	switch newState {
 	case GraphNodeRunning:
 		st.StartedAt = now
+		st.DeferredOn = ""
 	case GraphNodeDone, GraphNodeFailed:
 		st.DoneAt = now
 	case GraphNodeReady:
@@ -531,6 +554,7 @@ func TransitionGraphNode(session, runID, nodeID, newState string, mutate func(*G
 		st.DoneAt = 0
 		st.Redrives = 0
 		st.LastRedrive = 0
+		st.DeferredOn = ""
 	}
 	if mutate != nil {
 		mutate(st)
