@@ -336,7 +336,7 @@ Both follow the standard resolution chain (env → config file).
 
 ### Spawn workers
 
-A session holds **one worker per graph run and one per spawning agent** ([MUX-195](requirements/backlog/MUX-195-graph-runs-never-reuse-idle-workers.md)): every `spawn`/`map` node of a run shares the run's worker, `muxcode spawn start` reseeds or queues on the caller's own worker, and a finished worker is held briefly as its base role's one `idle` worker for the next run or spawn to adopt. Two variables bound the pool.
+A session holds **one worker per graph run and one per spawning agent** ([MUX-195](requirements/completed/MUX-195-graph-runs-never-reuse-idle-workers.md)): every `spawn`/`map` node of a run shares the run's worker, `muxcode spawn start` reseeds or queues on the caller's own worker, and a finished worker is held briefly as its base role's one `idle` worker for the next run or spawn to adopt. Two variables bound the pool.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

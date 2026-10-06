@@ -3,7 +3,7 @@
 **Tracking:** [mkober/muxcode#97](https://github.com/mkober/muxcode/issues/97)
 
 **Priority: Critical — the user's call, 2026-10-05: *"this is the highest priority defect."*** Tier 0,
-rank 1 in [`backlog.md`](./backlog.md#defects--prioritized).
+rank 1 in [`backlog.md`](../backlog/backlog.md#defects--prioritized).
 
 muxcode spawns **more than one worker per graph run** and **a fresh worker on every agent-initiated
 spawn**, and the workers it spawns then **sit idle for hours**. Every worker is a full Claude process
@@ -90,7 +90,7 @@ Four roads, one symptom:
 2. **Agent road without reuse** — every `muxcode spawn start` is a cold start.
 3. **Replace/resume without a pool or a bound** — a redrive adds a worker rather than re-pointing one.
 4. **Terminal runs' workers stranded** when the seed's delivery record is gone — the
-   [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) mechanism (delivery-record GC
+   [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) mechanism (delivery-record GC
    strands a spawn) reaching the reaper, not only an in-flight iteration.
 
 ### Blast radius
@@ -102,10 +102,10 @@ Four roads, one symptom:
   `80-pr-review-fix`, `90-ci-fix`. Each run pays one cold start per spawn node; a spec walked across
   several runs pays it per run.
 - Stranded windows accumulate for the life of the session, each a live Claude process — the
-  footprint concern of [MUX-147](./MUX-147-process-leak-and-memory-footprint.md) and
-  [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md), from a different road.
+  footprint concern of [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md) and
+  [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md), from a different road.
 - F-key reach: spawn windows sit at index 11+, so only the first two are F-key reachable
-  ([MUX-128](./MUX-128-fkey-navigation-for-spawn-windows.md)); a pool that grows makes that worse.
+  ([MUX-128](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md)); a pool that grows makes that worse.
 - Cancel cost: a run with N workers needs N stops (`1791086572`, two `spawn-stop`s); a stop that fails
   on one of them keeps the node supervised (`stop_pending`) while the others are already gone.
 
@@ -188,7 +188,7 @@ precondition that the first worker is idle, so the fixing phase inverts the pin 
 test beside it. That is a sounder shape than the "pin red" wording above, which a suite cannot carry.
 **A passing run is not yet proven**: the graph's test node returned `unknown` in 11 s — the Codex test
 agent refused the suite (*"this review agent is restricted from executing tests/builds"*, the
-[MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) shape) — and the user released the hold by
+[MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) shape) — and the user released the hold by
 hand at 22:21:53. The review node passed; the file's helpers all exist in the package and both files
 are gofmt-clean. The five tests should be run green before Phase 2 builds on them. *Resolved 23:14 — run
 green by the run agent; see the [Phase 3 note](#phase-3-verification-note).*
@@ -330,19 +330,19 @@ runs on the lanes it got, and `muxcode spawn start` fails with the reason and th
 
 | Spec | Relationship |
 |------|--------------|
-| [MUX-131](../completed/MUX-131-spawn-implement-output-never-ported.md) | Predecessor, complete — stopped the worker being rebuilt **every iteration** within one node; this spec extends the same rule to the run, the session and the agent road |
-| [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Dependency — the delivery-record GC that makes `spawnHasResponded` lie is the stranding mechanism here; Phase 2's `reply_to` fallback closes this side of it |
-| [MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — a seeded worker never woken; not merged, a delivery defect rather than a count defect |
-| [MUX-188](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Same family — a side effect of each launch; fewer launches means fewer stray requests, but it is its own fix |
-| [MUX-128](./MUX-128-fkey-navigation-for-spawn-windows.md) | Fewer worker windows is what makes its F11/F12 question tractable |
-| [MUX-147](./MUX-147-process-leak-and-memory-footprint.md), [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) | Same footprint, different roads |
-| [MUX-178](../completed/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | Why a worker ends unanswered; graph workers run in the session checkout, so adoption does not cross trees |
+| [MUX-131](./MUX-131-spawn-implement-output-never-ported.md) | Predecessor, complete — stopped the worker being rebuilt **every iteration** within one node; this spec extends the same rule to the run, the session and the agent road |
+| [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) | Dependency — the delivery-record GC that makes `spawnHasResponded` lie is the stranding mechanism here; Phase 2's `reply_to` fallback closes this side of it |
+| [MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — a seeded worker never woken; not merged, a delivery defect rather than a count defect |
+| [MUX-188](../backlog/MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Same family — a side effect of each launch; fewer launches means fewer stray requests, but it is its own fix |
+| [MUX-128](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md) | Fewer worker windows is what makes its F11/F12 question tractable |
+| [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md), [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md) | Same footprint, different roads |
+| [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | Why a worker ends unanswered; graph workers run in the session checkout, so adoption does not cross trees |
 
 ## Out of scope
 
-- Worktree isolation for spawn nodes — [MUX-178](../completed/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md). Graph workers run in the session checkout today, so reuse does not cross trees within a session; if worktrees return, an adopted worker must advance or re-cut its tree on adoption (`advanceSpawnWorktree` already runs on reseed).
+- Worktree isolation for spawn nodes — [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md). Graph workers run in the session checkout today, so reuse does not cross trees within a session; if worktrees return, an adopted worker must advance or re-cut its tree on adoption (`advanceSpawnWorktree` already runs on reseed).
 - Cross-session reuse.
-- The wake and delivery defects of [MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md).
+- The wake and delivery defects of [MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md).
 
 ## Time Tracking
 
@@ -352,10 +352,11 @@ runs on the lanes it got, and `muxcode spawn start` fails with the reason and th
 
 ## Status
 
-Backlog — **all five phases implemented and verified 2026-10-06**; awaiting commit of Phase 5, PR and
-the move to `completed/` (a `git mv`, the user's call), at which point this reads `Complete`. Phases
-1–4 on `MUX-195-graph-runs-never-reuse-idle-workers` as `a8d3295`, `311bc3c`, `04761f9`, `98a4aec`
-(+ `61205e7`, muxcode defects the run exposed).
+Complete — 2026-10-06. All five phases and all 18 acceptance criteria verified; closed out the same day
+by the `50-spec-to-pr` run `1791295134` and moved to `completed/`. Phases on
+`MUX-195-graph-runs-never-reuse-idle-workers`: `a8d3295`, `311bc3c`, `04761f9`, `98a4aec`, `02c4754`
+(+ `61205e7`, muxcode defects the run exposed). Rank 1 / Tier 0 in the defects table until this close;
+the backlog index now carries it in the completed registry.
 
 Filed 2026-09-28 on the user's instruction relayed by edit; mechanism verified the same day against
 the live session (three worker windows, two stranded on a complete run). **Broadened 2026-10-05** by the
