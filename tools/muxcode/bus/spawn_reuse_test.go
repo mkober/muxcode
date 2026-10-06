@@ -786,6 +786,9 @@ func TestSpawnStartNeverSeedsOverAWorkerARunAdopted(t *testing.T) {
 		t.Fatal(err)
 	}
 	answerSpawn(t, runTestSession, first.Entry.SpawnRole)
+	if err := AckSpawnNotice(runTestSession, first.Entry.ID, first.Entry.SeedMsgID); err != nil {
+		t.Fatal(err) // the daemon's notice pass — an owed notice blocks adoption
+	}
 	stale := spawnByRole(t, first.Entry.SpawnRole)
 	if _, ok := adoptWorker(runTestSession, stale, "run-x", "implement", "graph task", NewMsgID(graphSender)); !ok {
 		t.Fatal("fixture: the run must adopt the idle worker")
@@ -1629,5 +1632,33 @@ func TestBusyWorkerNeverReused(t *testing.T) {
 				t.Fatalf("busy worker reaped or freed: status %q, idle since %d, display %q, killed %v", e.Status, e.IdleSince, display, f.killed)
 			}
 		})
+	}
+}
+
+// TestWorkerOwedNoticesIsNotAdopted: a completion notice goes to the entry's
+// current owner, so a worker whose owner is still owed one must not change
+// hands — adopted first, the old owner's result reached the new owner and the
+// old owner heard nothing (PR #152 review). Acknowledging the notice makes it
+// adoptable again, the negative control.
+func TestWorkerOwedNoticesIsNotAdopted(t *testing.T) {
+	t.Setenv("MUXCODE_SPAWN_IDLE_SECS", "600")
+	isolateLifecycle(t)
+	_, idle := finishedRunWorker(t)
+	refreshSpawns(t)
+	if _, ok := findIdleWorker(runTestSession, "edit", false); !ok {
+		t.Fatal("precondition: the finished run's worker is adoptable")
+	}
+	e := spawnByRole(t, idle)
+	if err := UpdateSpawnEntry(runTestSession, e.ID, func(x *SpawnEntry) { x.NoticesOwed = []string{"seed-old"} }); err != nil {
+		t.Fatal(err)
+	}
+	if w, ok := findIdleWorker(runTestSession, "edit", false); ok {
+		t.Fatalf("%s is owed a notice and must not be adoptable", w.SpawnRole)
+	}
+	if err := AckSpawnNotice(runTestSession, e.ID, "seed-old"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findIdleWorker(runTestSession, "edit", false); !ok {
+		t.Fatal("once the notice is acknowledged the worker is adoptable again")
 	}
 }

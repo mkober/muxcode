@@ -665,9 +665,12 @@ func runWorkerHolder(session string, w SpawnEntry, nodeID string, statuses map[s
 // answered. A busy worker is never adoptable — a new seed would queue behind
 // work in progress. The kind must match because a graph worker runs in the
 // session checkout (MUX-178) and an agent that asked for isolation must not
-// be handed the shared tree.
+// be handed the shared tree. Nor is a worker whose owner is still owed
+// completion notices: a notice is sent to the entry's current owner, so
+// adopting first would hand the old owner's result to the new one.
 func workerAdoptable(session string, e SpawnEntry, role string, worktree bool) bool {
 	return e.Status == "running" && e.Role == role && (e.Worktree != "") == worktree && idleEligible(e) &&
+		len(e.NoticesOwed) == 0 &&
 		!spawnPersistent(session, e) && spawnHasResponded(session, e) &&
 		spawnWindowExistsFn(session, e.Window)
 }

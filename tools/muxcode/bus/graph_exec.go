@@ -80,8 +80,11 @@ var graphSpawnFn = func(session, role, task, owner, runID, nodeID, seedID string
 // holds whenever exclude is empty; exclude names workers already holding
 // other lanes of the same map, whose template declared workers: N, so an
 // extra lane falls through to steps 2 and 3 instead. A reseed or adoption
-// failure falls through too: a fresh worker beats a wedged node. Every cold
-// start skipped is a full boot of the agent definition and context saved.
+// failure falls through too — a fresh worker beats a wedged node — but a
+// failed reseed first stops the run's worker, already re-reserved for the
+// new seed, and reports an error if that stop fails: falling through over a
+// live worker would leave the run two. Every cold start skipped is a full
+// boot of the agent definition and context saved.
 //
 // Graph workers are never isolated in their own worktree. Worktrees are
 // cut with `git worktree add --detach HEAD`, so a fix node — whose whole
@@ -115,8 +118,13 @@ func acquireSeededWorker(session, runID, nodeID, role, task, seedID string, excl
 		msg := NewMessage(graphSender, prev.SpawnRole, "request", "spawn-task", task, "")
 		msg.ID = seedID
 		if _, err := sendSpawnSeed(session, prev, msg); err != nil {
+			if _, stopErr := stopSpawnRole(session, prev.SpawnRole); stopErr != nil {
+				LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
+					fmt.Sprintf("%s: %s reseed of %s failed (%v) and it could not be stopped (%v) — not starting a second worker", runID, nodeID, prev.SpawnRole, err, stopErr))
+				return "", fmt.Errorf("reseed of %s failed (%v) and stopping it failed: %w", prev.SpawnRole, err, stopErr)
+			}
 			LogLifecycle(session, "warn", "daemon", "graph-spawn-reuse-failed",
-				fmt.Sprintf("%s: %s reseed of %s failed (%v) — starting fresh", runID, nodeID, prev.SpawnRole, err))
+				fmt.Sprintf("%s: %s reseed of %s failed (%v) — worker stopped, starting fresh", runID, nodeID, prev.SpawnRole, err))
 			break
 		}
 		LogLifecycle(session, "info", "daemon", "graph-spawn-reuse",

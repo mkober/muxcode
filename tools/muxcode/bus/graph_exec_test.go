@@ -4381,6 +4381,63 @@ func TestAcquireSpawnWorkerSharesTheRunsWorker(t *testing.T) {
 	}
 }
 
+// TestFailedReseedNeverLeavesTwoLiveWorkers: a reseed that cannot be posted
+// has already re-reserved the run's worker for the new seed, so falling
+// through to a fresh start over it would give the run two live workers (PR
+// #152 review). The worker is stopped first; when even the stop fails, no
+// second worker starts. The inbox write fails for real — the worker's inbox
+// path is made a directory.
+func TestFailedReseedNeverLeavesTwoLiveWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		killFail bool
+	}{
+		{"stop succeeds, fresh worker starts", false},
+		{"stop fails, no second worker", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			f := fakeLiveSpawns(t)
+			id1, err := acquireSpawnWorker(runTestSession, "run-1", "implement", "edit", "task a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			answerSpawn(t, runTestSession, id1)
+			inbox := InboxPath(runTestSession, id1)
+			if err := os.RemoveAll(inbox); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(inbox, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.killFail {
+				spawnKillWindowFn = func(string, string) error { return errors.New("kill refused") }
+			}
+
+			got, err := acquireSpawnWorker(runTestSession, "run-1", "fix", "edit", "task b")
+			live := 0
+			entries, _ := ReadSpawnEntries(runTestSession)
+			for _, e := range entries {
+				if e.RunID == "run-1" && e.Status == "running" {
+					live++
+				}
+			}
+			if live != 1 {
+				t.Fatalf("run-1 has %d live workers, want 1 (got %q, err %v)", live, got, err)
+			}
+			if tc.killFail {
+				if err == nil || f.fresh != 1 {
+					t.Fatalf("a failed stop must refuse a second worker: err %v, %d starts", err, f.fresh)
+				}
+				return
+			}
+			if err != nil || got == id1 || f.fresh != 2 {
+				t.Fatalf("a stopped worker must be replaced: got %q (was %q), err %v, %d starts", got, id1, err, f.fresh)
+			}
+		})
+	}
+}
+
 // TestExecSpawnLoopReusesWorker walks a loop over a spawn node end to end:
 // one worker serves both iterations (the assertion that would have caught
 // the three-worker run in the MUX-131 report), the worker survives
