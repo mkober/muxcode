@@ -206,6 +206,66 @@ func TestCheckPollHealth_RecoversOncePerGap(t *testing.T) {
 	}
 }
 
+// A graph worker that delegates and ends its turn moves only when the reply is
+// read. On 2026-10-05 a MUX-195 worker's replies stranded twice: the backstop
+// swept only KnownRoles and counted only requests. Reverting either half fails
+// the first case; the rest are its negative controls.
+func TestCheckPollHealth_RecoversSpawnWorkerOwedReply(t *testing.T) {
+	const worker = "spawn-a4928558"
+	own := "1791260007-" + worker + "-9e16c90b"
+	for _, tc := range []struct {
+		name    string
+		status  string
+		windows []string
+		replyTo string
+		want    bool
+	}{
+		{"owed reply on a live worker", "running", []string{worker}, own, true},
+		{"reply to another role's request", "running", []string{worker}, "1791260007-edit-9e16c90b", false},
+		{"stopped worker", "stopped", []string{worker}, own, false},
+		{"windowless worker", "running", []string{"edit"}, own, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := testSession(t)
+			d := New(session, 5, 8)
+			t.Setenv("MUXCODE_DELIVERY_ACK", "1")
+			t.Setenv("MUXCODE_DELIVERY_ACK_DISABLE", "")
+			d.agentAlive = allAlive
+			d.windowNames = func(_ string) ([]string, error) { return tc.windows, nil }
+			var targets []string
+			d.forceDeliver = func(_, role string, _ bool) (bus.DeliverResult, error) {
+				targets = append(targets, role)
+				return bus.DeliverResult{Delivered: 1}, nil
+			}
+			entry := bus.SpawnEntry{ID: "1791256717-" + worker, Role: "edit", SpawnRole: worker, Window: worker, Status: tc.status}
+			if err := bus.WriteSpawnEntries(session, []bus.SpawnEntry{entry}); err != nil {
+				t.Fatalf("WriteSpawnEntries: %v", err)
+			}
+			reply := bus.NewMessage("run", worker, "response", "run", "RESULT vet=0", tc.replyTo)
+			reply.TS = time.Now().Unix() - (pollHealthGapSecs + 30)
+			if err := bus.SendNoCC(session, reply); err != nil {
+				t.Fatalf("SendNoCC: %v", err)
+			}
+
+			d.lastPollHealthCheck = 0
+			d.checkPollHealth()
+			if got := len(targets) == 1 && targets[0] == worker; got != tc.want {
+				t.Fatalf("re-drive to %s = %v (targets %v), want %v", worker, got, targets, tc.want)
+			}
+			if !tc.want {
+				return
+			}
+
+			bus.WriteReceipt(session, reply.ID, worker, bus.ReceiptKindDelivered)
+			d.lastPollHealthCheck = 0
+			d.checkPollHealth()
+			if d.pollGapRecovered[worker] || d.pollGapSince[worker] != 0 {
+				t.Error("a receipt must clear the worker's gap and re-arm recovery")
+			}
+		})
+	}
+}
+
 // A skipped re-drive is not a re-drive: when recovery is withheld (a busy
 // pane, or ErrInjectionSkipped from a live prompt), the episode must stay
 // un-recovered so later polls retry. Recording the skip as a re-drive is how

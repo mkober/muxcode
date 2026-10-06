@@ -659,7 +659,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		_, _ = ReceiveDeliveredIDs(session, role, batchIDs)
 		return nil
 	}
-	prompt := strings.Join(parts, " | ")
+	prompt := CodexRoleIdentity(SpawnBaseRole(session, role)) + " — " + strings.Join(parts, " | ")
 
 	// Append reply instruction — Codex agents don't have hooks so they must
 	// be explicitly told to reply via the bus after completing the task.
@@ -756,10 +756,8 @@ func (p *CodexProvider) PaneIsEvidence() bool { return !p.hooks }
 // based on a single character.
 func (p *CodexProvider) IdlePromptChar() string { return "" }
 
-// WriteAgentConfig writes .codex/{role}/AGENTS.md with shared bus protocol
-// instructions and role-specific agent body content. Each role gets its own
-// subdirectory to prevent multiple Codex agents from overwriting each other's
-// instructions in a mixed or all-Codex session.
+// WriteAgentConfig writes the role's Codex instructions — see
+// writeCodexAgentConfig for the two files and which one is authoritative.
 func (p *CodexProvider) WriteAgentConfig(role string) error {
 	active, err := PrepareCodexHooks(BusSession(), role)
 	if err != nil {
@@ -901,17 +899,25 @@ func CodexAgentConfigDir(role string) string {
 	return filepath.Join(".codex", role)
 }
 
-// writeCodexAgentConfig generates .codex/AGENTS.md at the repo root with
-// shared bus protocol instructions and role-specific agent body content.
-// The file is written to .codex/AGENTS.md (not a per-role subdirectory)
-// because Codex discovers AGENTS.md relative to its working directory,
-// and we do NOT use -C (which would change the working root away from
-// the project). WriteAgentConfig is called before each agent launch, so
-// the file contains the correct role's instructions when Codex reads it
-// at startup. If multiple Codex agents run simultaneously, the last
-// writer's role instructions win — the core bus protocol is identical
-// across roles and role-specific behavior is also injected via SendWakeUp
-// prompts, so the AGENTS.md race is low-impact.
+// CodexRoleIdentity names the role and its own instructions file. Both roads
+// carry it: the prompt-submit hook prepends it to every hook-road prompt, and
+// the scrape road prefixes it to the payload it types. Pass the base role —
+// a spawn worker's instructions are written under it (SpawnBaseRole).
+//
+// Codex never auto-loads either file — .codex/ is off its root-to-cwd
+// AGENTS.md discovery path and no -C is passed — so an agent learns its role
+// only by reading one it finds. The shared .codex/AGENTS.md holds whichever
+// Codex role launched last: on 2026-10-05 a test agent found and read review's
+// copy and refused every test node of a MUX-195 graph run as "a review agent".
+func CodexRoleIdentity(role string) string {
+	return fmt.Sprintf("You are the **%s** agent. Your role instructions are in %s. %s is shared by every Codex role and may hold another role's instructions — ignore it.",
+		role, filepath.Join(CodexAgentConfigDir(role), "AGENTS.md"), filepath.Join(".codex", "AGENTS.md"))
+}
+
+// writeCodexAgentConfig writes the role's instructions — shared bus protocol
+// plus the role body — to .codex/{role}/AGENTS.md, which only this role
+// writes and CodexRoleIdentity points at, and to the legacy shared
+// .codex/AGENTS.md, where the last Codex role launched wins.
 //
 // hooks selects the role body: on the hook road the definition's chain and
 // guard references stand as written, because those hooks now fire for codex
@@ -1004,8 +1010,15 @@ func writeCodexAgentConfig(role string, hooks bool) error {
 		buf.WriteString("\n")
 	}
 
-	outPath := filepath.Join(dir, "AGENTS.md")
-	return os.WriteFile(outPath, []byte(buf.String()), 0o644)
+	content := []byte(buf.String())
+	roleDir := CodexAgentConfigDir(role)
+	if err := os.MkdirAll(roleDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", roleDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(roleDir, "AGENTS.md"), content, 0o644); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "AGENTS.md"), content, 0o644)
 }
 
 // resolveCodexModel returns the Codex model for a role.

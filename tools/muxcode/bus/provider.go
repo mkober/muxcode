@@ -236,6 +236,10 @@ func ResolveProvider(role string) Provider {
 // resolution (ResolveLaunchConfig, ReloadAgent) call LoadRuntimeOverrides
 // separately.
 func ResolveProviderCLI(role string) string {
+	// A spawn worker runs its base role's CLI (StartSpawnOwned launches it so).
+	if base := SpawnBaseRole(BusSession(), role); base != role {
+		return ResolveProviderCLI(base)
+	}
 	// Check runtime overrides first (highest priority).
 	// Read the override file directly — don't call os.Setenv, which would
 	// pollute the process environment and break concurrent test isolation.

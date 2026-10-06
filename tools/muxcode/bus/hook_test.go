@@ -251,6 +251,10 @@ func TestClassifyCommand(t *testing.T) {
 		{"cargo build --release", CmdBuild},
 		{"./test.sh", CmdTest},
 		{"go test ./...", CmdTest},
+		{"make test", CmdTest}, // 2026-10-05: recorded as a build, test node held
+		{"make test V=1", CmdTest},
+		{"go build -o muxcode-test .", CmdBuild}, // longer build pattern wins
+		{"make latest", CmdBuild},
 		{"jest --watch", CmdTest},
 		{"pytest -v", CmdTest},
 		{"npx jest", CmdTest},

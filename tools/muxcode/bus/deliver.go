@@ -62,7 +62,7 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 
 	// Gather messages to deliver.
 	unnotified := UnnotifiedMessages(session, role)
-	if len(unnotified) == 0 && force && HasActionableMessages(session, role) {
+	if len(unnotified) == 0 && force && (HasActionableMessages(session, role) || HasOwedReply(session, role)) {
 		// All messages are marked notified but the agent never processed them
 		// (a prior send-keys/Enter was dropped). Clear markers and retry.
 		ClearNotifiedIDs(session, role)

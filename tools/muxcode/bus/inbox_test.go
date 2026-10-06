@@ -29,6 +29,47 @@ func TestSendDropsSelfAddressed(t *testing.T) {
 	}
 }
 
+// TestHasOwedReply replays the 2026-10-05 strand: a graph worker's reply from
+// run sat unread because the poll-health backstop counted only requests.
+func TestHasOwedReply(t *testing.T) {
+	worker := "spawn-a4928558"
+	cases := []struct {
+		name string
+		msg  Message
+		want bool
+	}{
+		{"reply to the worker's own request", NewMessage("run", worker, "response", "run", "RESULT vet=0", "1791260007-spawn-a4928558-9e16c90b"), true},
+		{"reply to another role's request", NewMessage("run", worker, "response", "run", "cc", "1791260007-edit-9e16c90b"), false},
+		{"event", NewMessage("daemon", worker, "event", "notify", "x", ""), false},
+		{"response with no reply_to", NewMessage("run", worker, "response", "run", "x", ""), false},
+		{"malformed reply_to", NewMessage("run", worker, "response", "run", "x", "spawn-a4928558"), false},
+	}
+	for _, c := range cases {
+		session := testSession(t)
+		if err := SendNoCC(session, c.msg); err != nil {
+			t.Fatalf("%s: SendNoCC: %v", c.name, err)
+		}
+		if got := HasOwedReply(session, worker); got != c.want {
+			t.Errorf("%s: HasOwedReply = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestMessageIDSender(t *testing.T) {
+	for id, want := range map[string]string{
+		"1791260007-spawn-a4928558-9e16c90b": "spawn-a4928558",
+		"1791260007-pr-read-0a1b2c3d":        "pr-read",
+		"1791260007-edit-0a1b2c3d":           "edit",
+		"spawn-a4928558":                     "",
+		"nodash":                             "",
+		"1-x":                                "",
+	} {
+		if got := MessageIDSender(id); got != want {
+			t.Errorf("MessageIDSender(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
 func TestStartupSelfSendStillDelivered(t *testing.T) {
 	session := testSession(t)
 	// The startup bootstrap is a LEGITIMATE self-addressed request — it must be

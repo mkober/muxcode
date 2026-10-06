@@ -255,8 +255,12 @@ var DefaultBuildPatterns = []string{
 }
 
 // DefaultTestPatterns are the default patterns for detecting test commands.
+//
+// `make test` is listed because a test agent chooses its own command: on
+// 2026-10-05 a Codex test agent ran `make test` green, no verdict was recorded,
+// and the graph's test node held for a human approval it never needed.
 var DefaultTestPatterns = []string{
-	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "cargo*test", "vitest",
+	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "cargo*test", "vitest", "make test",
 }
 
 // DefaultTestPrecheckPatterns name the test-stage gates whose success is not
@@ -301,6 +305,9 @@ var DefaultGitPatterns = []string{
 // Returns the most specific match (deploy-apply > deploy, etc). The test
 // patterns are consulted before the precheck ones, so a command a user lists
 // in MUXCODE_TEST_PATTERNS is a full test run even if it is also a precheck.
+// A command matching both a build and a test pattern takes the longer
+// pattern, ties to build: `make test` is a test run although bare `make` is a
+// build pattern, while `go build -o x-test` stays a build.
 func ClassifyCommand(command string) CommandType {
 	// Skip bus commands
 	if strings.HasPrefix(command, "muxcode") || strings.HasPrefix(command, "agent-bus") {
@@ -312,10 +319,11 @@ func ClassifyCommand(command string) CommandType {
 
 	patterns := loadPatterns()
 
-	if matchPatterns(firstCmd, patterns.build, true) {
+	build, test := longestMatch(firstCmd, patterns.build), longestMatch(firstCmd, patterns.test)
+	if build > 0 && build >= test {
 		return CmdBuild
 	}
-	if matchPatterns(firstCmd, patterns.test, true) {
+	if test > 0 {
 		return CmdTest
 	}
 	if matchPatterns(firstCmd, patterns.testPrecheck, true) {
@@ -426,6 +434,18 @@ func isEnvVarName(s string) bool {
 // the outer `pnpm*test` glob match the wrapper itself, so `pnpm exec eslint
 // test.config.js` classified as a test run and fired the test→review chain off
 // a lint (PR #86 review, 2026-09-18).
+// longestMatch returns the length of the longest pattern matching cmd (with
+// wrappers), or 0 when none does.
+func longestMatch(cmd string, patterns []string) int {
+	best := 0
+	for _, p := range patterns {
+		if len(p) > best && matchPatterns(cmd, []string{p}, true) {
+			best = len(p)
+		}
+	}
+	return best
+}
+
 func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 	// A nested runner's verdict is final — see the doc comment.
 	if withWrappers {

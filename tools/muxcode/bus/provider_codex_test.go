@@ -643,6 +643,19 @@ func TestWriteCodexAgentConfig_LastWriterWins(t *testing.T) {
 	if strings.Contains(string(buildData), "**review**") {
 		t.Error("AGENTS.md should not contain review role after build overwrite")
 	}
+
+	// The per-role file survives the shared file's overwrite — the 2026-10-05
+	// test agent that read review's shared copy needed exactly this.
+	reviewOwn, err := os.ReadFile(filepath.Join(CodexAgentConfigDir("review"), "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read review's own AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(reviewOwn), "**review**") || strings.Contains(string(reviewOwn), "**build**") {
+		t.Error("review's own AGENTS.md must keep review's instructions after build writes")
+	}
+	if id := CodexRoleIdentity("test"); !strings.Contains(id, "**test**") || !strings.Contains(id, filepath.Join(".codex", "test", "AGENTS.md")) {
+		t.Errorf("CodexRoleIdentity(test) = %q, want the role and its own file", id)
+	}
 }
 
 func TestCodexAgentConfigDir(t *testing.T) {

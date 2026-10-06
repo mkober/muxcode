@@ -461,8 +461,9 @@ func hookStop() {
 // without a listener (Codex, MUX-159). The daemon wakes such an agent by
 // typing only the fixed sentence; when that prompt is submitted this hook
 // consumes the inbox in the agent's own process and returns the messages as
-// additional context — never as the prompt itself (MUX-009). Any other
-// prompt passes untouched.
+// additional context — never as the prompt itself (MUX-009). Every prompt,
+// wake or not, also carries CodexRoleIdentity; the prompt itself is never
+// rewritten.
 func hookPromptSubmit() {
 	session := hookSession()
 	if session == "" {
@@ -484,9 +485,11 @@ func hookPromptSubmit() {
 		return
 	}
 
-	if context, ok := bus.CodexPromptSubmitContext(session, role, ev.Prompt); ok {
-		fmt.Println(bus.FormatPromptContext(context))
+	context := bus.CodexRoleIdentity(bus.SpawnBaseRole(session, role))
+	if delivered, ok := bus.CodexPromptSubmitContext(session, role, ev.Prompt); ok {
+		context += "\n\n" + delivered
 	}
+	fmt.Println(bus.FormatPromptContext(context))
 }
 
 // hookRecord appends the raw event to <bus dir>/hook-capture.jsonl — a spike

@@ -2309,6 +2309,20 @@ func roleHasWindow(names []string, role string) bool {
 // task timeout (MUX-192). A skipped re-drive (busy pane, ErrInjectionSkipped)
 // does not count as attempted, so later polls retry (MUX-105), but its
 // delivery-gap-skip row is written once per episode, not per poll.
+//
+// Only a LIVE agent with genuinely stuck work is backstopped, mirroring the
+// checkInboxes delivery gate; a skipped role has its gap state reset so a
+// later real gap starts clean:
+//   - roleHasWindow: a role with no window in this session can never consume,
+//     so every message to it ages into a gap no recovery can clear. agentAlive
+//     cannot stand in — provider.IsAlive fail-safes to "alive" without a pane.
+//   - agentAlive: an agent crashed to a shell is checkAgentHealth's to restart.
+//   - HasActionableMessages / HasOwedReply: informational growth (CCs, events)
+//     is not a delivery failure; an un-consumed request, or a reply the role is
+//     waiting on, past the threshold is.
+//
+// A live agent that simply hasn't consumed yet is covered by the recover-once
+// guard.
 func (d *Daemon) checkPollHealth() {
 	if !d.ackDeliveryActive() {
 		return
@@ -2323,7 +2337,7 @@ func (d *Daemon) checkPollHealth() {
 	// inert cycle spawns no process at all.
 	windows := d.sessionWindows()
 
-	for _, role := range bus.KnownRoles {
+	for _, role := range d.pollHealthRoles() {
 		// Hosted roles share their host's pane/inbox — the host covers them.
 		if bus.WindowForRole(role) != role {
 			continue
@@ -2333,23 +2347,9 @@ func (d *Daemon) checkPollHealth() {
 			continue
 		}
 
-		// Only backstop a LIVE agent with a genuinely-stuck REQUEST. Three guards,
-		// mirroring the checkInboxes delivery gate:
-		//   - roleHasWindow: skip a role with no tmux window in this session (never
-		//     launched). Such a role can never consume, so every message to it
-		//     ages into a permanent gap that no recovery can clear — force-deliver
-		//     has no pane to target and fails. This guard is what agentAlive cannot
-		//     provide: provider.IsAlive fail-safes to "alive" when it cannot capture
-		//     a pane, so a phantom role reads as live.
-		//   - agentAlive: skip a role whose agent has crashed to a shell (nothing
-		//     to recover — checkAgentHealth handles restarts).
-		//   - HasActionableMessages: response-only / informational inbox growth is
-		//     not a delivery failure (checkInboxes never wakes on it either); only
-		//     an un-consumed request past the threshold signals a dead poll loop.
-		// A live agent that simply hasn't consumed yet (busy, or self-poll not yet
-		// relaunched) is still covered by the recover-once guard below.
-		// Reset any stale gap state when skipping so a later real gap starts clean.
-		if !roleHasWindow(windows, role) || !d.agentAlive(d.session, role) || !bus.HasActionableMessages(d.session, role) {
+		// Live agent with a stuck request or owed reply only — see doc comment.
+		if !roleHasWindow(windows, role) || !d.agentAlive(d.session, role) ||
+			(!bus.HasActionableMessages(d.session, role) && !bus.HasOwedReply(d.session, role)) {
 			d.pollGapSince[role] = 0
 			d.pollGapAlerted[role] = false
 			d.pollGapRecovered[role] = false
@@ -2415,6 +2415,23 @@ func (d *Daemon) checkPollHealth() {
 			_ = bus.SendNoCC(d.session, msg)
 		}
 	}
+}
+
+// pollHealthRoles is KnownRoles plus the session's running spawn workers. A
+// graph worker is a Claude agent with no listener; a reply it is owed strands
+// like any fixed role's, and before this it was outside the sweep entirely.
+func (d *Daemon) pollHealthRoles() []string {
+	roles := append([]string(nil), bus.KnownRoles...)
+	entries, err := bus.ReadSpawnEntries(d.session)
+	if err != nil {
+		return roles
+	}
+	for _, e := range entries {
+		if e.Status == "running" && e.SpawnRole != "" {
+			roles = append(roles, e.SpawnRole)
+		}
+	}
+	return roles
 }
 
 // listenerless reports whether a self-poll-capable agent currently has no
