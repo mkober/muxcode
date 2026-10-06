@@ -60,9 +60,9 @@ source tarball into a cache, not a `git pull` ([Decision 1](#decision-1--source-
 **Pipeline**
 
 - [x] `Check` reads the installed identity (`BuildInfo()`) and the latest release from GitHub (`GET /repos/mkober/muxcode/releases/latest`, stdlib `net/http`, 10 s timeout, `GITHUB_TOKEN`/`GH_TOKEN` sent when set to lift the unauthenticated rate limit); a network or API failure fails `Check` with the HTTP status and body excerpt and runs nothing else (Phase 1: `ReleaseClient.LatestRelease`, `CheckUpgrade`; the token is sent only to `api.github.com`, never to an overridden URL)
-- [ ] `Download` fetches the release tag's **source tarball** into `~/.cache/muxcode/upgrade/<tag>/` (`XDG_CACHE_HOME` honoured), records its size and SHA-256 in the step row and the lifecycle log, and **skips the fetch when the extracted tree for that tag is already present and complete** ([Decision 1](#decision-1--source-tarball-into-a-cache-not-a-git-pull))
-- [ ] `Build` runs `make install VERSION=<tag>` in the extracted tree with stdout+stderr captured to `<cache>/<tag>/build.log`; on failure the row shows the last lines and names the log; prerequisites (`go`, `make`, `tar`) are checked **before** `Download` so a machine without a toolchain fails at `Check` with a named missing tool and downloads nothing
-- [ ] `Verify` runs the **freshly installed** binary — `<BINDIR>/muxcode version --json` — and fails if its `version` is not the tag (a stale `PATH` entry or a different `BINDIR` must be caught here, not discovered later)
+- [x] `Download` fetches the release tag's **source tarball** into `~/.cache/muxcode/upgrade/<tag>/` (`XDG_CACHE_HOME` honoured), records its size and SHA-256 in the step row and the lifecycle log, and **skips the fetch when the extracted tree for that tag is already present and complete** ([Decision 1](#decision-1--source-tarball-into-a-cache-not-a-git-pull)) (Phase 2: `fetchSource`, `cachedSource`; the row reads `cache hit — <size>, sha256 <sum>` on reuse. `TestSelfUpgradeReusesCompleteCache`. Lifecycle rows arrive with the CLI wiring in Phase 3)
+- [x] `Build` runs `make install VERSION=<tag>` in the extracted tree with stdout+stderr captured to `<cache>/<tag>/build.log`; on failure the row shows the last lines and names the log; prerequisites (`go`, `make`, `tar`) are checked **before** `Download` so a machine without a toolchain fails at `Check` with a named missing tool and downloads nothing (Phase 2: `runBuildStep` + `runInstallStep` via `runMake`; `runCheckStep` fails on `ToolsErr()` before `Download`. `TestSelfUpgradeMissingToolFailsAtCheck`, `TestSelfUpgradeBuildFailureKeepsInstalledBinary`)
+- [x] `Verify` runs the **freshly installed** binary — `<BINDIR>/muxcode version --json` — and fails if its `version` is not the tag (a stale `PATH` entry or a different `BINDIR` must be caught here, not discovered later) (Phase 2: `runVerifyStep` — version by path, then `muxcode` on `PATH` must be the same file. `TestSelfUpgradeVerifyMismatchStopsPipeline`, `TestSelfUpgradeVerifyRefusesShadowedInstall`)
 - [ ] `Restart daemons` **executes the new binary's** `upgrade-daemons`, never the running process's `bus.UpgradeDaemons`: the modal is the old binary, whose `BuildInfo()` would read every daemon as current ([Decision 3](#decision-3--restart-every-sessions-daemon-through-the-new-binary)); each session is a sub-row with its `VersionDelta`; an unreadable `ps` fails the step with the exact error
 - [ ] `Reload tmux config` sources the reinstalled `~/.config/muxcode/tmux.conf` into the running tmux server; the done footer names the version delta and the follow-up the upgrade does **not** do: *agents keep running until restarted — `Restart Agents` (prefix + b, A)*
 - [ ] Every step writes a lifecycle row (`upgrade-check`, `upgrade-download`, `upgrade-build`, `upgrade-verify`, `upgrade-daemons`, `upgrade-tmux`, `upgrade-done` / `upgrade-failed`) with the installed and target versions
@@ -116,10 +116,25 @@ validation (one safe path component) closes a path-traversal shape the spec had 
 
 ### Phase 2: Download, build, install, verify
 
-- [ ] Cache dir under `XDG_CACHE_HOME`/`~/.cache/muxcode/upgrade/<tag>/`; streamed download to `.partial`, SHA-256 and size recorded; skip when the tree is complete
-- [ ] `make install VERSION=<tag>` in the extracted tree, log captured; `BINDIR`/`CONFIGDIR` passthrough
-- [ ] `Verify` via the installed binary's `version --json`; mismatch fails with both versions named
-- [ ] Tests: tarball from a local file URL, a fake `make` on `PATH` that records its args and writes a stub binary whose `version --json` the test controls; **negative control:** a build that fails leaves the previous binary bytes in place; a verify mismatch stops the pipeline
+- [x] Cache dir under `XDG_CACHE_HOME`/`~/.cache/muxcode/upgrade/<tag>/`; streamed download to `.partial`, SHA-256 and size recorded; skip when the tree is complete (`upgradePaths` — options, then `XDG_CACHE_HOME`/`BINDIR`/`PREFIX`/`CONFIGDIR`, then the Makefile's defaults, every path made absolute **before** anything mutates; `ReleaseClient.Download` streams to `.partial`, hashes as it writes, 5 min timeout, 256 MiB cap, no token; `fetchSource`/`extractSource` unpack through `src.partial` with `--strip-components=1` and refuse a tree with no top-level `Makefile`; `download.json` is removed first and written **last**, so a cache hit is exactly a completed extraction)
+- [x] `make install VERSION=<tag>` in the extracted tree, log captured; `BINDIR`/`CONFIGDIR` passthrough (`runMake`: `make build` then `make install`, each with `VERSION=`, `DATE=` (stamped once so install links what build compiled), `BINDIR=`, `CONFIGDIR=`; `build.log` truncated by build, appended by install, last 5 lines quoted on failure; `GIT_CEILING_DIRECTORIES` + `-buildvcs=false` so an enclosing repository cannot lend the binary its commit; 15 min timeout)
+- [x] `Verify` via the installed binary's `version --json`; mismatch fails with both versions named (`runVerifyStep` runs `<BINDIR>/muxcode` by path, 10 s; then requires `muxcode` on `PATH` to be that **same file** — a shadowing `PATH` entry fails here rather than as a daemon restart onto stale code; `BINDIR` absent from `PATH` is a note)
+- [x] Tests: tarball from a local file URL, a fake `make` on `PATH` that records its args and writes a stub binary whose `version --json` the test controls; **negative control:** a build that fails leaves the previous binary bytes in place; a verify mismatch stops the pipeline (`bus/selfupgrade_pipeline_test.go`, 10 tests: `TestSelfUpgradeInstallsNewerRelease`, `…ReusesCompleteCache`, `…StopsAtCheckUnlessNewerOrForced`, `…MissingToolFailsAtCheck`, `…BuildFailureKeepsInstalledBinary`, `…VerifyMismatchStopsPipeline`, `…VerifyRefusesShadowedInstall`, `…RefusesOverlappingRun`, `…RelativePathsResolveAgainstCaller`, `TestUpgradePathsFollowMakefileDefaults`)
+
+#### Phase 2 verification note
+
+Verified 2026-10-06 16:40 by plan from the working tree (run `1791315389`, retried from `build` by the
+user at 15:36; Phase 1 committed as `b143299`). The test node returned **success** on the full
+repository suite and review passed with 0 must-fix after one round that asked for a stable per-user
+lock, an overlap test and path normalisation — all in the tree: `lockSelfUpgrade` is one non-blocking
+`flock` at `~/.config/muxcode/upgrade.lock`, held from the first mutating step to the end, refused
+rather than waited on. Two additions beyond the spec, both kept: `Build` and `Install` are **separate
+steps** (`make build` then `make install`), so a tree that does not compile never reaches `install -m
+755`; and `Verify` checks `PATH` as well as the installed file. A side fix rode along: the Codex
+**test** role's sandbox now gets the Go caches (`codexWritableRoots`, `provider_codex.go`,
+`CLAUDE.md` bullet), because this phase's `archive/tar`-shaped imports made `go vet` fail "package
+… is not in std" on a read-only `GOCACHE` — MUX-160 Decision 1's shape. `muxcode upgrade` still
+refuses without `--check`; the full pipeline is wired in Phase 3.
 
 ### Phase 3: Daemon restart, tmux reload, CLI
 
@@ -202,7 +217,7 @@ the attach road. The modal runs in the user's tmux popup, not an agent sandbox, 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-202-self-upgrade-from-the-quick-menu | 8m | 2026-10-06 15:55 |
+| MUX-202-self-upgrade-from-the-quick-menu | 46m | 2026-10-06 16:35 |
 
 ## Status
 

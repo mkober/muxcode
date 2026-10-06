@@ -195,11 +195,40 @@ func mustResolve(t *testing.T, dir string) string {
 	return resolved
 }
 
+// Test compiles packages no build has cached — a test-only stdlib import — so
+// it needs the Go caches writable (2026-10-06, archive/tar). It must not get
+// build's install roots.
+func TestCodexBuildExecArgs_TestGetsGoCachesOnly(t *testing.T) {
+	p := &CodexProvider{}
+	base := t.TempDir()
+	cache, modcache := filepath.Join(base, "gocache"), filepath.Join(base, "gomodcache")
+	bin, config := filepath.Join(base, "fake-bin"), filepath.Join(base, "fake-config")
+	t.Setenv("GOCACHE", cache)
+	t.Setenv("GOMODCACHE", modcache)
+	t.Setenv("BINDIR", bin)
+	t.Setenv("CONFIGDIR", config)
+
+	args := strings.Join(p.argsFor(t, "test"), " ")
+	if !strings.Contains(args, "-s workspace-write") {
+		t.Errorf("test must select the workspace-write policy: %s", args)
+	}
+	for _, dir := range []string{cache, modcache} {
+		if want := "--add-dir " + mustResolve(t, dir); !strings.Contains(args, want) {
+			t.Errorf("test missing %q: %s", want, args)
+		}
+	}
+	for _, dir := range []string{bin, config} {
+		if strings.Contains(args, dir) {
+			t.Errorf("test must not be granted install root %q: %s", dir, args)
+		}
+	}
+}
+
 // Negative control: the grant is per-role, not a blanket widening. Without
-// this, granting every role would pass the test above.
+// this, granting every role would pass the tests above.
 func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 	p := &CodexProvider{}
-	for _, role := range []string{"review", "analyze", "test"} {
+	for _, role := range []string{"review", "analyze"} {
 		args := strings.Join(p.argsFor(t, role), " ")
 		if strings.Contains(args, "--add-dir") || strings.Contains(args, "workspace-write") {
 			t.Errorf("role %q must not be widened: %s", role, args)

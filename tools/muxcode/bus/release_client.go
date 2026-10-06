@@ -2,6 +2,8 @@ package bus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,8 +23,10 @@ const (
 
 	upgradeTarballURLFormat = "https://github.com/mkober/muxcode/archive/refs/tags/%s.tar.gz"
 	releaseCheckTimeout     = 10 * time.Second
+	releaseDownloadTimeout  = 5 * time.Minute
 	releaseBodyLimit        = 64 << 10
 	releaseExcerptRunes     = 200
+	maxTarballBytes         = 256 << 20
 )
 
 // releaseTagPattern admits a tag only when it is a single safe path
@@ -41,8 +45,9 @@ type Release struct {
 // ReleaseClient looks up the latest release.
 //
 // HTTP overrides the transport and is nil in production, where the client
-// carries the 10 s Check timeout and also serves file:// URLs, so the
-// integration script can point MUXCODE_UPGRADE_API_URL at a local JSON file.
+// carries the call's timeout — 10 s for the Check, 5 min for a download —
+// and also serves file:// URLs, so the integration script can point both URL
+// overrides at local files.
 // A test sets HTTP to reach a handler in-process instead of binding a socket,
 // which the Codex sandbox refuses (MUX-153).
 //
@@ -132,20 +137,69 @@ func (c ReleaseClient) LatestRelease(ctx context.Context) (Release, error) {
 	return Release{Tag: raw.TagName, TarballURL: tarball, PublishedAt: raw.PublishedAt}, nil
 }
 
-// httpClient is the Check's client: c.HTTP copied with the Check timeout
-// filled in when it has none, or the production client — a lookup must
-// never hang the modal or a cron poll on an unresponsive API.
+// Download streams url to dest and returns the size and SHA-256 of what was
+// written. The body lands in dest+".partial" and is renamed into place only
+// once complete, so an interrupted fetch never leaves a truncated dest; a
+// non-200 status, a body past maxTarballBytes or a write failure removes the
+// partial file. No token is sent — the source archive is public.
+func (c ReleaseClient) Download(ctx context.Context, rawURL, dest string) (int64, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, "", fmt.Errorf("download: %w", err)
+	}
+	req.Header.Set("User-Agent", "muxcode/"+BuildVersion())
+	resp, err := c.clientFor(releaseDownloadTimeout).Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("download %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, releaseBodyLimit))
+		return 0, "", fmt.Errorf("download %s: HTTP %d: %s", rawURL, resp.StatusCode, bodyExcerpt(body))
+	}
+
+	partial := dest + ".partial"
+	f, err := os.Create(partial)
+	if err != nil {
+		return 0, "", fmt.Errorf("download: %w", err)
+	}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(resp.Body, maxTarballBytes+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && n > maxTarballBytes {
+		err = fmt.Errorf("larger than %s", formatBytes(maxTarballBytes))
+	}
+	if err == nil {
+		err = os.Rename(partial, dest)
+	}
+	if err != nil {
+		os.Remove(partial)
+		return 0, "", fmt.Errorf("download %s: %w", rawURL, err)
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// httpClient is the Check's client — a lookup must never hang the modal or
+// a cron poll on an unresponsive API.
 func (c ReleaseClient) httpClient() *http.Client {
+	return c.clientFor(releaseCheckTimeout)
+}
+
+// clientFor is c.HTTP copied with timeout filled in when it has none, or the
+// production client, which also serves file:// URLs.
+func (c ReleaseClient) clientFor(timeout time.Duration) *http.Client {
 	if c.HTTP != nil {
 		hc := *c.HTTP
 		if hc.Timeout == 0 {
-			hc.Timeout = releaseCheckTimeout
+			hc.Timeout = timeout
 		}
 		return &hc
 	}
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.RegisterProtocol("file", http.NewFileTransport(http.Dir("/")))
-	return &http.Client{Timeout: releaseCheckTimeout, Transport: t}
+	return &http.Client{Timeout: timeout, Transport: t}
 }
 
 func isGitHubAPI(u *url.URL) bool {

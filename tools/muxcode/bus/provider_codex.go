@@ -110,10 +110,18 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 //
 // The paths track the Makefile's own PREFIX/BINDIR/CONFIGDIR variables, so a
 // non-default install prefix stays writable instead of silently regressing to
-// the failure this fixes. Only build is listed: it is the role whose failure
-// was observed. Add a role here when its work is shown to write outside the
-// workspace — never widen the policy itself.
+// the failure this fixes.
+//
+// test gets the Go caches alone, none of build's install roots: a compile it
+// cannot write to GOCACHE never lands, so on 2026-10-06 its `go vet` failed
+// "package archive/tar is not in std" on the first stdlib package no build had
+// cached (MUX-160 Decision 1, test only by the user's choice). Add a role here
+// when its work is shown to write outside the workspace — never widen the
+// policy itself.
 func codexWritableRoots(role string) []string {
+	if role == "test" {
+		return resolveWritableRoots(goToolchainRoots())
+	}
 	if role != "build" {
 		return nil
 	}
