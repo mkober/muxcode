@@ -209,7 +209,7 @@ revisit — the machinery then has no future consumer either.**
 | [`MUX-144`](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) | Unaffected — `auto` was the *suspected* actor, not the defect. The gate has no authority check regardless of who calls it | No change |
 
 **Gate consequence worth stating:** `MUX-141` is **gate 2 of 3** on
-[`MUX-139`](./MUX-139-claude-agent-auto-resume.md). If MUX-141 is withdrawn rather than rescoped,
+[`MUX-139`](../completed/MUX-139-claude-agent-auto-resume.md). If MUX-141 is withdrawn rather than rescoped,
 MUX-139 loses a gate and moves up the schedule. If it is rescoped, the gate stands. The choice
 therefore changes the defect ordering, not just this spec.
 
