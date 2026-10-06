@@ -290,9 +290,101 @@ func TmuxUnsetGlobalHook(hook string) error {
 	return TmuxRunQuiet("set-hook", "-gu", hook)
 }
 
-// TmuxCapturePaneLines captures the last N lines from a tmux pane.
+// TmuxCapturePaneLines captures the last N lines from a tmux pane as plain
+// text, with Claude Code's prompt suggestion removed from the composer line.
+//
+// The suggestion is dim ghost text Claude draws in an empty composer ("keep
+// going", "check inbox"). A plain capture renders it as typed input, so
+// HasPendingInput read every idle Claude agent as holding parked text: in a
+// focused window notifySendKeys held the wake "for next cycle", and a
+// response has no next cycle — on 2026-10-05 a MUX-195 graph worker stranded
+// two replies twice until a manual `deliver --force`. Faint runs are dropped
+// on ❯ composer lines only; dim text elsewhere in a pane is real output.
 func TmuxCapturePaneLines(target string, lines int) (string, error) {
-	return TmuxOutput("capture-pane", "-t", target, "-p", "-S", fmt.Sprintf("-%d", lines))
+	out, err := TmuxOutput("capture-pane", "-t", target, "-p", "-e", "-S", fmt.Sprintf("-%d", lines))
+	if err != nil {
+		return "", err
+	}
+	return stripComposerGhost(out), nil
+}
+
+// stripComposerGhost turns an escape-coded capture into plain text, dropping
+// faint (SGR 2) runs on lines whose visible text starts with the ❯ prompt.
+func stripComposerGhost(raw string) string {
+	lines := strings.Split(raw, "\n")
+	for i, line := range lines {
+		plain, unghosted := renderSGRLine(line)
+		if strings.HasPrefix(strings.TrimSpace(plain), idlePromptChar) {
+			lines[i] = strings.TrimRight(unghosted, " ")
+		} else {
+			lines[i] = plain
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderSGRLine strips escape sequences from line, returning all visible text
+// and the visible text minus faint runs. SGR 38/48/58 colour arguments are
+// skipped, so the 2 in a truecolor `38;2;r;g;b` is not read as faint.
+func renderSGRLine(line string) (plain, unghosted string) {
+	var all, kept strings.Builder
+	faint := false
+	for i := 0; i < len(line); {
+		if line[i] != 0x1b {
+			all.WriteByte(line[i])
+			if !faint {
+				kept.WriteByte(line[i])
+			}
+			i++
+			continue
+		}
+		if i+1 >= len(line) {
+			break
+		}
+		switch line[i+1] {
+		case '[':
+			j := i + 2
+			for j < len(line) && (line[j] < 0x40 || line[j] > 0x7e) {
+				j++
+			}
+			if j < len(line) && line[j] == 'm' {
+				faint = applySGRFaint(line[i+2:j], faint)
+			}
+			i = j + 1
+		case ']':
+			j := i + 2
+			for j < len(line) && line[j] != 0x07 && !(line[j] == 0x1b && j+1 < len(line) && line[j+1] == '\\') {
+				j++
+			}
+			if j < len(line) && line[j] == 0x1b {
+				j++
+			}
+			i = j + 1
+		default:
+			i += 2
+		}
+	}
+	return all.String(), kept.String()
+}
+
+// applySGRFaint returns the faint state after one SGR parameter list.
+func applySGRFaint(params string, faint bool) bool {
+	parts := strings.Split(params, ";")
+	for k := 0; k < len(parts); k++ {
+		switch parts[k] {
+		case "", "0", "22":
+			faint = false
+		case "2":
+			faint = true
+		case "38", "48", "58":
+			if k+1 < len(parts) && parts[k+1] == "5" {
+				k += 2
+			} else if k+1 < len(parts) && parts[k+1] == "2" {
+				k += 4
+			}
+		}
+	}
+	return faint
 }
 
 // TmuxIsWindowActive returns true if the given window is the active window

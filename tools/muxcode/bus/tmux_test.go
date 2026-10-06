@@ -406,3 +406,30 @@ func TestIdleSecondsFromActivity(t *testing.T) {
 		}
 	}
 }
+
+// TestStripComposerGhost uses composer lines captured with -e from live
+// Claude panes on 2026-10-05; the ghost case is the one that stranded a graph
+// worker's replies.
+func TestStripComposerGhost(t *testing.T) {
+	cases := []struct {
+		name, raw, want string
+		pending         bool
+	}{
+		{"ghost suggestion", "\x1b[39m❯ \x1b[2mkeep going\x1b[0m", "❯", false},
+		{"typed text kept", "\x1b[39m❯ push it\x1b[0m", "❯ push it", true},
+		{"typed then ghost", "\x1b[39m❯ ch\x1b[2meck inbox\x1b[0m", "❯ ch", true},
+		{"wake text on highlighted composer", "\x1b[38;5;246m\x1b[48;5;237m❯ \x1b[38;5;231mYou have new messages\x1b[39m", "❯ You have new messages", true},
+		{"truecolor is not faint", "\x1b[38;2;98;114;164m❯ \x1b[38;2;2;2;2mreal\x1b[0m", "❯ real", true},
+		{"dim output off the composer kept", "\x1b[2m  (disable recaps in /config)\x1b[0m", "  (disable recaps in /config)", false},
+		{"hyperlink stripped", "\x1b]8;;https://x\x1b\\link\x1b]8;;\x1b\\", "link", false},
+	}
+	for _, c := range cases {
+		got := stripComposerGhost(c.raw)
+		if got != c.want {
+			t.Errorf("%s: stripComposerGhost = %q, want %q", c.name, got, c.want)
+		}
+		if p := paneHasPendingInput(got); p != c.pending {
+			t.Errorf("%s: paneHasPendingInput = %v, want %v", c.name, p, c.pending)
+		}
+	}
+}

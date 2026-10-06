@@ -27,7 +27,7 @@ set -uo pipefail
 PASS=0
 FAIL=0
 LIVE_PASS=0
-EXPECTED_PASS=39
+EXPECTED_PASS=42
 
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
@@ -203,9 +203,13 @@ AGENT_ROLE=edit "$MUX" send build second-task "hermetic: second task" --no-notif
 out=$(ev user-prompt-submit-wake.json | AGENT_ROLE=build "$MUX" hook prompt-submit 2>/dev/null)
 jq -e '.hookSpecificOutput.hookEventName=="UserPromptSubmit"' <<<"$out" >/dev/null 2>&1 && ok "wake sentence answered with additionalContext" || fail "prompt-submit answer: ${out:-<empty>}"
 grep -q "hermetic: second task" <<<"$out" && ok "context carries the request" || fail "context lacks the payload"
+grep -q '\*\*build\*\* agent' <<<"$out" && ok "wake context names the role" || fail "wake context lacks the role identity"
 [ "$(inbox_lines build)" = "0" ] && ok "prompt-submit consumed the inbox" || fail "inbox not consumed"
+AGENT_ROLE=edit "$MUX" send build third-task "hermetic: third task" --no-notify >/dev/null 2>&1
 out=$(ev user-prompt-submit.json | AGENT_ROLE=build "$MUX" hook prompt-submit 2>/dev/null)
-[ -z "$out" ] && ok "an ordinary prompt passes untouched" || fail "ordinary prompt answered: $out"
+grep -q '\*\*build\*\* agent' <<<"$out" && grep -q '.codex/build/AGENTS.md' <<<"$out" && ok "an ordinary prompt carries the role identity" || fail "ordinary prompt lacks identity: ${out:-<empty>}"
+grep -q "hermetic: third task" <<<"$out" && fail "ordinary prompt consumed the inbox" || ok "an ordinary prompt delivers no payload"
+[ "$(inbox_lines build)" = "1" ] && ok "an ordinary prompt leaves the inbox alone" || fail "ordinary prompt consumed the inbox"
 
 # ── F: no-op outside a muxcode session ────────────────────────────
 echo "-- outside a session"

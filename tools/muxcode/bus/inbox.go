@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -742,6 +743,36 @@ func HasActionableMessages(session, role string) bool {
 		return true
 	}
 	return false
+}
+
+// HasOwedReply reports whether role's inbox holds a response to a request
+// role itself sent. Unlike a CC or an event, the sender is waiting on it: a
+// graph worker that delegates and ends its turn makes progress only when that
+// reply is read, so an unread one is a delivery failure, not noise.
+func HasOwedReply(session, role string) bool {
+	msgs, err := Peek(session, role)
+	if err != nil {
+		return false
+	}
+	for _, m := range msgs {
+		if m.Type == "response" && m.ReplyTo != "" && MessageIDSender(m.ReplyTo) == role {
+			return true
+		}
+	}
+	return false
+}
+
+// MessageIDSender returns the sender embedded in a message id
+// ("<unix>-<from>-<hex>"), or "" when id does not have that shape. Roles may
+// contain hyphens ("spawn-a4928558", "pr-read"), so only the first and last
+// segments are cut.
+func MessageIDSender(id string) string {
+	first := strings.Index(id, "-")
+	last := strings.LastIndex(id, "-")
+	if first < 0 || last <= first+1 {
+		return ""
+	}
+	return id[first+1 : last]
 }
 
 // InboxCount returns the number of messages in a role's inbox.

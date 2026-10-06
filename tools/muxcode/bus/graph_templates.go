@@ -19,7 +19,7 @@ var builtinGraphJSON = map[string]string{
   "start": "build",
   "nodes": [
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
-    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run ./test.sh (if the repo has none: make test, else its own suite command) as one standalone command, nothing chained, and report results"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"}
   ],
   "edges": [
@@ -39,7 +39,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "create-branch", "type": "send", "role": "commit", "action": "checkout", "message": "Create and switch to the branch for the active spec ${spec}: name it after the spec's filename without .md (its <id>-<slug>), branched from the current HEAD and carrying every uncommitted change (git switch -c <name>); if that branch already exists, switch to it instead. Do not commit or push. Report the branch name"},
     {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement the active requirements spec's ${current_phase} (run: ${spec}). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
-    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run ./test.sh (if the repo has none: make test, else its own suite command) as one standalone command, nothing chained, and report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} (run: ${spec}). A review failure means every must-fix and should-fix it lists — read its findings file when it names one. Verify the fix the way the reviewer will: run the phase's integration script through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id in your report. THE FAILURE TO FIX: ${failure_report}"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
     {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off completed criteria and steps of ${current_phase} — the commit gate follows, so the spec must reflect reality before it. The worker's report for this phase follows; if it names a handoff or decision file, read that file and record what it carries — a decision the user already made is not yours to re-open, and a phase whose work is a decision rather than code is verified from that record. WORKER REPORT: ${output:implement}"},
@@ -136,7 +136,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "fix-gate", "type": "wait_human", "message": "The PR has review comments to address — approve fixing them, committing and pushing the fixes to the PR branch, and replying to each comment"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Address the review comments on this branch's PR, listed by the PR read: ${output:read-comments}. For each comment either fix it in the code or decline it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it — carry earlier iterations forward, since the reply step reads only your latest report"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
-    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run ./test.sh (if the repo has none: make test, else its own suite command) as one standalone command, nothing chained, and report results"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's review comments"},
     {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR review-feedback changes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
     {"id": "reply", "type": "send", "role": "commit", "action": "comment", "message": "Reply to each PR review comment: cite the commit sha for every fix that was pushed, or give the reason for every comment declined. The push node reported: ${output:push-fixes}. The fix worker reported, per comment: ${output:fix}"}
@@ -217,7 +217,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "gate", "type": "wait_human", "message": "Approve fetching origin, rebasing this branch onto origin/main, and pushing the rebased branch with --force-with-lease"},
     {"id": "rebase", "type": "send", "role": "commit", "action": "rebase", "message": "Fetch origin and rebase the current branch onto origin/main. On a conflict run git rebase --abort, report the conflicting files and exit non-zero — never resolve a conflict yourself. Report the old and new base sha"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
-    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run ./test.sh (if the repo has none: make test, else its own suite command) as one standalone command, nothing chained, and report results"},
     {"id": "push", "type": "send", "role": "commit", "action": "push", "message": "Push the rebased branch with git push --force-with-lease and report the pushed sha"}
   ],
   "edges": [
@@ -259,7 +259,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "fix-gate", "type": "wait_human", "message": "The PR's CI is failing — approve fixing it, then committing and pushing the fixes to the PR branch"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the failing CI checks on this branch's PR, listed by the CI read: ${output:read-ci}. If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit or push: the graph does that after you report. Report what you changed for each failing check"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
-    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run tests and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run ./test.sh (if the repo has none: make test, else its own suite command) as one standalone command, nothing chained, and report results"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's failing CI checks"},
     {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the CI fixes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"}
   ],
