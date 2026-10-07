@@ -180,10 +180,27 @@ widening, but its own backlog defect, not a docs-phase change.
 
 ### Phase 5: Integration test
 
-- [ ] `scripts/test-pii-scrub-roles.sh`: a scratch agent emits a fake key; assert it is absent from `<role>-history.jsonl` and the pane
-- [ ] **Negative control:** a run with no secret leaves output unchanged
-- [ ] Coverage floor pinned to the exact pass count
-- [ ] Run through the run agent (**foreground**, per MUX-171) and record counts here
+- [x] `scripts/test-pii-scrub-roles.sh`: a scratch agent emits a fake key; assert it is absent from `<role>-history.jsonl` and the pane (172 lines, hermetic scratch bus through the installed binary; the scratch agent is its tool results and replies fed to the **real** writers — `muxcode hook bash`, `muxcode log`, and an edit `send --wait` that plan answers with `--reply-to`, the synthesized-reply road a `plan` diagnostic takes into `plan-history.jsonl`. Sections: a `run` `ps eww` key (row, notice, `muxcode console run --once` shows the placeholder); a label on the line the 15-line tail drops; a `plan` `git` output token (row, notice, commit pane); a `plan` self-report (output and summary, notice); a `plan` reply to `--wait` (request reached plan, row has no key, notice, summary is the reply line))
+- [x] **Negative control:** a run with no secret leaves output unchanged (three: clean `run` output byte-identical with no notice and shown in the pane; a commit author email byte-identical and rendered in the commit pane — so every pane check can fail; a clean self-report unchanged)
+- [x] Coverage floor pinned to the exact pass count (`EXPECTED_PASS=17`)
+- [x] Run through the run agent (**foreground**, per MUX-171) and record counts here (run agent, 2026-10-07 14:52, task `1791399107-spawn-bcff0029-fd095d59`: **17 passed, 0 failed, floor 17, exit 0**)
+
+#### Phase 5 verification note
+
+Verified 2026-10-07 15:00 by plan from the working tree (run `1791395671`; Phase 4 committed as
+`ac9958f`). Test node **success**; review 0/0/0 ("exercises real history writers and panes with clean
+controls and a 17-check floor"). The script's header states the one thing it does not cover — the
+agent's own conversation, which `PostToolUse` cannot reach — and points at *Coverage by road*. Not yet
+done: the script is absent from `CLAUDE.md`'s integration-test table, where every other `scripts/test-*.sh`
+is listed; a one-line addition for the worker or edit.
+
+**One box stays open after this phase: criterion 2.** Its history half is met and tested at every
+writer; its conversation half — "never reaches … the conversation unredacted" — is **not met**, and
+cannot be on this road. Phase 4 chose to correct the promise in `CLAUDE.md` rather than keep it. The
+criterion as written therefore cannot be ticked honestly, and `close-spec` will refuse on it. Two ways
+to close, both the user's call: narrow the criterion to the history row (what the spec actually
+delivered), or file the conversation half as its own defect — alongside the `Authorization: Bearer`
+gap from Phase 4 — and tick this box as deferred to it.
 
 ## Notes
 
@@ -220,7 +237,7 @@ covered by the credential half.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 43m | 2026-10-07 14:50 |
+| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 53m | 2026-10-07 15:00 |
 
 ## Status
 
