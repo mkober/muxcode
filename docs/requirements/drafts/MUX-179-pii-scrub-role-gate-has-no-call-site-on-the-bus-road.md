@@ -70,7 +70,7 @@ diagnosing it but is independent of it.
 - [x] **Negative control:** ordinary output with no secret is passed through **unchanged** — no banner, no truncation, no altered exit code (Phase 1: `TestProcessBashHook_SensitiveRoleCleanOutputUnchanged`, `TestGetScrubbedOutput_CleanMatchesGetOutput`)
 - [x] A test fails if the call site is removed — the current test passes with the feature gone (Phase 1: `TestProcessBashHook_SensitiveRoleRedactsSecret` drives `ProcessBashHook` end to end and reads the history row — it fails if the `IsPIISensitiveRole` gate is removed, which the membership-only `TestIsPIISensitiveRole_Bus` never did; Phase 2 replaced that test with `TestProcessBashHook_ScrubsExactlyTheSensitiveRoles`, which also fails on a membership change either way)
 - [x] The role list is reconsidered on evidence: the leak came from `plan`, which is not a member (Phase 3: reconsidered and **kept** — the leak was a credential, and credentials are now scrubbed for every role regardless of the list; PII stays gated on the roles that handle external data. [Decision 1](#decision-1--credentials-everywhere-pii-by-role))
-- [ ] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) state what is actually covered, per road
+- [x] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) state what is actually covered, per road (Phase 4: `CLAUDE.md:140`; `agents.md` *Coverage by road*; the uncovered roads named as plainly as the covered ones)
 
 ### Technical approach
 
@@ -161,8 +161,22 @@ the harness still scrubs by the role list alone (noted in `scrub.go`'s header).
 
 ### Phase 4: Docs
 
-- [ ] `CLAUDE.md` PII bullet and [`docs/agents.md`](../../agents.md): what is covered, on which road
-- [ ] Note the narrow-env-read idiom recorded on MUX-156 as the safe way to read another process's role
+- [x] `CLAUDE.md` PII bullet and [`docs/agents.md`](../../agents.md): what is covered, on which road (`CLAUDE.md:140` rewritten per road by edit; `docs/agents.md` § *PII scrubbing* by plan — the "equivalent filtering" sentence corrected to an opt-in pipe, and a **Coverage by road** subsection: a five-row table (harness conversation; history credentials for every role; history PII for the four roles; the agent's own conversation by instruction only; the uncovered copies), the reasoning for the split, the scrub order per writer, how `plan`'s key reached its history, the seven pinning tests. The `agents.md` feature-table row and `README.md`'s PII bullet made per-road honest; the worker fixed `README.md:181`, whose `watch` row claimed output is scrubbed before the model — false for an OpenCode `watch`)
+- [x] Note the narrow-env-read idiom recorded on MUX-156 as the safe way to read another process's role (`CLAUDE.md:140` and `agents.md` *Coverage by road*: `ps eww -p <pid> | tr ' ' '\n' | grep -E '^(AGENT_ROLE|BUS_SESSION)='` — never a bare `ps eww` or `env`, whose output reaches the conversation unscrubbed whatever the role; the 2026-09-11 leak cited, date checked against MUX-156)
+
+#### Phase 4 verification note
+
+Verified 2026-10-07 14:50 by plan from the working tree (run `1791395671`; Phase 3 committed as
+`78c9b9d`). Docs-only phase; test node **success**. First review pass raised **two should-fixes
+against plan's own text**: the credential set was overstated — "labelled `key=`" — when
+`piiGenericSecretRe` matches `api_key`, `api_secret`, `auth_token`, `token`, `secret`, `password`,
+`passwd` and `authorization` labels only; and "whole ANSI-stripped response before tail and clip" was
+claimed for every history writer when only hook capture strips ANSI and tails lines — synthesized rows
+and `muxcode log` store whole, `logBashToHistory` scrubs before its 8000-char cap. Both fixed in
+`agents.md` and `CLAUDE.md` with matching wording, and Decision 1 here aligned; second review pass
+0/0/0. **Follow-up surfaced, not fixed**: a bare `key=` and an `Authorization: Bearer <token>` header
+— the commonest header in API output, on a PII-sensitive role — survive every rule; a one-pattern
+widening, but its own backlog defect, not a docs-phase change.
 
 ### Phase 5: Integration test
 
@@ -190,7 +204,10 @@ same shape, one road up).
 `ScrubForRole`'s doc comment (`bus/scrub.go`).** The step offered two shapes — split the credential
 patterns from the PII patterns, or widen the role list — and the evidence chose the first. The leak
 that motivated this spec was a **credential**, from `plan`, a role outside the list; credentials (JWTs,
-AWS keys, `api_key=`/`token=`/`password=` pairs) match with high precision, so redacting them for every
+AWS keys, and a value after `=`/`:` whose label contains `api_key`, `api_secret`, `auth_token`, `token`,
+`secret`, `password`, `passwd` or `authorization` — `piiGenericSecretRe`; a bare `key=` and an
+`Authorization: Bearer <token>` header are **not** matched, a gap the Phase 4 review recorded as a
+follow-up) match with high precision, so redacting them for every
 role costs almost nothing. The PII patterns are different: an email matches a commit's author line, an
 SSN-shaped number matches an id in a test log — ordinary output agents reason over — so they stay gated
 on the roles that handle external data (`api`, `run`, `runner`, `watch`). `ScrubForRole` is that rule:
@@ -203,7 +220,7 @@ covered by the credential half.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 34m | 2026-10-07 14:40 |
+| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 43m | 2026-10-07 14:50 |
 
 ## Status
 
