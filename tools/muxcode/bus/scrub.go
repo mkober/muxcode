@@ -26,14 +26,15 @@ var (
 	// Phone: requires at least one separator or leading +/( to avoid matching bare digit runs
 	piiPhoneRe = regexp.MustCompile(`(?:\+\d{1,3}[-.\s])\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b|\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b`)
 
-	// AWS access key: AKIA followed by 16 alphanumeric chars
-	piiAWSKeyRe = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	// AWS access key id: AKIA (long-term) or ASIA (STS temporary) followed by 16 alphanumeric chars
+	piiAWSKeyRe = regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 
 	// AWS secret key: 40-char base64-like string after common key labels
 	piiAWSSecretRe = regexp.MustCompile(`(?i)(?:aws_secret_access_key|secret.?key|SecretAccessKey)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?`)
 
-	// Authorization header: one Bearer/Basic/Token token, or Digest's field list to end of line
-	piiAuthHeaderRe = regexp.MustCompile(`(?i)\bauthorization["']?\s*[=:]\s*["']?(?:(?:bearer|basic|token)\s+[^\s"',;]{8,}["']?|digest\s+[^\r\n]+)`)
+	// Authorization header: one Bearer/Basic/Token token of any length (Basic dTpw is u:p),
+	// or Digest's field list to end of line
+	piiAuthHeaderRe = regexp.MustCompile(`(?i)\bauthorization["']?\s*[=:]\s*["']?(?:(?:bearer|basic|token)\s+[^\s"',;]+["']?|digest\s+[^\r\n]+)`)
 
 	// Generic API key/token patterns (token=..., "password": "...")
 	piiGenericSecretRe = regexp.MustCompile(`(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|bearer|password|passwd|secret|token|authorization)["']?\s*[=:]\s*["']?([^\s"',;]{8,})["']?`)
@@ -216,11 +217,13 @@ func IsPIISensitiveRole(role string) bool {
 // with high precision, so redacting them everywhere costs little. The PII
 // patterns match ordinary output agents reason over — a commit's author email,
 // an SSN-shaped id in a test log — so they stay gated on the roles that
-// handle external data. ANSI escapes are stripped first on every writer: a
-// color code between a label and its = defeats every label=value pattern.
+// handle external data. A spawn worker (spawn-<id>) is judged by the base role
+// it was launched as (SpawnBaseRole), so a worker spawned as run scrubs PII as
+// run does. ANSI escapes are stripped first on every writer: a color code
+// between a label and its = defeats every label=value pattern.
 func ScrubForRole(role, text string) (string, int) {
 	text = StripANSI(text)
-	if IsPIISensitiveRole(role) {
+	if IsPIISensitiveRole(SpawnBaseRole(BusSession(), role)) {
 		return ScrubPII(text)
 	}
 	return ScrubSecrets(text)

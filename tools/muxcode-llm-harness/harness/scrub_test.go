@@ -80,14 +80,13 @@ func TestScrubPII_Phone(t *testing.T) {
 	}
 }
 
+// ASIA is the STS temporary-credential prefix, issued by every assumed role.
 func TestScrubPII_AWSKey(t *testing.T) {
-	input := "aws_access_key_id = AKIAIOSFODNN7EXAMPLE"
-	out, n := ScrubPII(input)
-	if n == 0 {
-		t.Fatal("expected redactions")
-	}
-	if strings.Contains(out, "AKIAIOSFODNN7EXAMPLE") {
-		t.Error("AWS key not redacted")
+	for _, key := range []string{"AKIAIOSFODNN7EXAMPLE", "ASIAIOSFODNN7EXAMPLE"} {
+		out, n := ScrubPII("aws_access_key_id = " + key)
+		if n != 1 || strings.Contains(out, key) {
+			t.Errorf("AWS key %s not redacted once (%d): %q", key, n, out)
+		}
 	}
 }
 
@@ -185,6 +184,7 @@ func TestScrubPII_HeaderQuotedLabelAndBareKey(t *testing.T) {
 	digest := `Authorization: Digest username="alice", nonce="abcdef0123456789", response="0123456789abcdef0123456789abcdef"`
 	redacted := map[string]string{
 		"Authorization: Bearer opaque0123456789abcdef":       "opaque0123456789abcdef",
+		"Authorization: Basic dTpw":                          "dTpw",
 		`{"Authorization": "Bearer opaque0123456789abcdef"}`: "opaque0123456789abcdef",
 		`{"user": "svc", "password": "hunter2secret"}`:       "hunter2secret",
 		"openssl enc --key=sk0123456789abcdefXYZ":            "sk0123456789abcdefXYZ",
@@ -207,6 +207,7 @@ func TestScrubPII_HeaderQuotedLabelAndBareKey(t *testing.T) {
 		"key=/etc/ssl/private/server.pem",
 		"partition_key=user_0123456789abcdef",
 		`{"token_type": "Bearer", "expires_in": 3600}`,
+		`{"Authorization": "Bearer "}`,
 	} {
 		if out, n := ScrubPII(input); n != 0 || out != input {
 			t.Errorf("lookalike redacted (%d): %q -> %q", n, input, out)

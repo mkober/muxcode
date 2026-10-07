@@ -87,14 +87,13 @@ func TestScrubPII_Phone(t *testing.T) {
 	}
 }
 
+// ASIA is the STS temporary-credential prefix, issued by every assumed role.
 func TestScrubPII_AWSKey(t *testing.T) {
-	input := "aws_access_key_id = AKIAIOSFODNN7EXAMPLE"
-	out, n := ScrubPII(input)
-	if n == 0 {
-		t.Fatal("expected redactions")
-	}
-	if strings.Contains(out, "AKIAIOSFODNN7EXAMPLE") {
-		t.Error("AWS key not redacted")
+	for _, key := range []string{"AKIAIOSFODNN7EXAMPLE", "ASIAIOSFODNN7EXAMPLE"} {
+		out, n := ScrubPII("aws_access_key_id = " + key)
+		if n != 1 || strings.Contains(out, key) {
+			t.Errorf("AWS key %s not redacted once (%d): %q", key, n, out)
+		}
 	}
 }
 
@@ -197,6 +196,7 @@ func TestScrubSecrets_HeaderQuotedLabelAndBareKey(t *testing.T) {
 	}{
 		{"bearer header", "Authorization: Bearer opaque0123456789abcdef", "opaque0123456789abcdef"},
 		{"basic header", `-H 'authorization: Basic dXNlcjpwYXNzd29yZDEyMw=='`, "dXNlcjpwYXNzd29yZDEyMw=="},
+		{"short basic header", "Authorization: Basic dTpw", "dTpw"},
 		{"json bearer header", `{"Authorization": "Bearer opaque0123456789abcdef"}`, "opaque0123456789abcdef"},
 		{"jwt in bearer header", "Authorization: Bearer " + jwt, "eyJhbGci"},
 		{"digest header", `Authorization: Digest username="alice", realm="example", nonce="abcdef0123456789", response="0123456789abcdef0123456789abcdef"`, "0123456789abcdef0123456789abcdef"},
@@ -226,6 +226,7 @@ func TestScrubSecrets_HeaderQuotedLabelAndBareKey(t *testing.T) {
 		"256 key: SHA256:AbCdEf0123456789AbCdEf0123456789 (ED25519)",
 		`{"token_type": "Bearer", "expires_in": 3600}`,
 		"Bearer tokens are documented in RFC 6750",
+		`{"Authorization": "Bearer "}`,
 	}
 	for _, input := range kept {
 		if out, n := ScrubSecrets(input); n != 0 || out != input {
@@ -257,6 +258,30 @@ func TestScrubForRole_ColoredLabelRedacted(t *testing.T) {
 	}
 	if out, n := ScrubForRole("plan", "\x1b[32mok\x1b[0m build passed"); n != 0 || out != "ok build passed" {
 		t.Errorf("clean colored output: got (%d) %q, want escapes stripped and nothing redacted", n, out)
+	}
+}
+
+// A spawn worker's bus role is spawn-<id>, so a worker spawned as run lost PII
+// scrubbing unless the rule choice resolves its base role. The edit spawn is
+// the negative control: its email must survive.
+func TestScrubForRole_SpawnWorkerUsesBaseRole(t *testing.T) {
+	session := testSession(t)
+	t.Setenv("BUS_SESSION", session)
+	entries := []SpawnEntry{
+		{ID: "1-spawn-a1b2c3d4", Role: "run", SpawnRole: "spawn-a1b2c3d4", Window: "spawn-a1b2c3d4", Status: "running"},
+		{ID: "2-spawn-e5f6a7b8", Role: "edit", SpawnRole: "spawn-e5f6a7b8", Window: "spawn-e5f6a7b8", Status: "running"},
+	}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+
+	const email = "jane.doe@example.com"
+	input := "Author: Jane Doe <" + email + ">"
+	if out, n := ScrubForRole("spawn-a1b2c3d4", input); n != 1 || strings.Contains(out, email) {
+		t.Errorf("run spawn: PII not scrubbed (%d): %q", n, out)
+	}
+	if out, n := ScrubForRole("spawn-e5f6a7b8", input); n != 0 || out != input {
+		t.Errorf("edit spawn: PII scrubbed (%d): %q", n, out)
 	}
 }
 

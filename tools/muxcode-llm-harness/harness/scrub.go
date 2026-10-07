@@ -25,14 +25,15 @@ var (
 	// +1-234-567-8901, (234) 567-8901, 234-567-8901, 234.567.8901
 	phoneRe = regexp.MustCompile(`(?:\+\d{1,3}[-.\s])\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b|\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b`)
 
-	// AWS access key: AKIA followed by 16 alphanumeric chars
-	awsKeyRe = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	// AWS access key id: AKIA (long-term) or ASIA (STS temporary) followed by 16 alphanumeric chars
+	awsKeyRe = regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 
 	// AWS secret key: 40-char base64-like string after common key labels
 	awsSecretRe = regexp.MustCompile(`(?i)(?:aws_secret_access_key|secret.?key|SecretAccessKey)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?`)
 
-	// Authorization header: one Bearer/Basic/Token token, or Digest's field list to end of line
-	authHeaderRe = regexp.MustCompile(`(?i)\bauthorization["']?\s*[=:]\s*["']?(?:(?:bearer|basic|token)\s+[^\s"',;]{8,}["']?|digest\s+[^\r\n]+)`)
+	// Authorization header: one Bearer/Basic/Token token of any length (Basic dTpw is u:p),
+	// or Digest's field list to end of line
+	authHeaderRe = regexp.MustCompile(`(?i)\bauthorization["']?\s*[=:]\s*["']?(?:(?:bearer|basic|token)\s+[^\s"',;]+["']?|digest\s+[^\r\n]+)`)
 
 	// Generic API key/token patterns (token=..., "password": "...")
 	genericSecretRe = regexp.MustCompile(`(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|bearer|password|passwd|secret|token|authorization)["']?\s*[=:]\s*["']?([^\s"',;]{8,})["']?`)

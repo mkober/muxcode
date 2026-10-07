@@ -194,9 +194,9 @@ codes (`TestScrubPII_HeaderQuotedLabelAndBareKey`, `TestScrubSecrets_HeaderQuote
 Verified 2026-10-07 15:00 by plan from the working tree (run `1791395671`; Phase 4 committed as
 `ac9958f`). Test node **success**; review 0/0/0 ("exercises real history writers and panes with clean
 controls and a 17-check floor"). The script's header states the one thing it does not cover — the
-agent's own conversation, which `PostToolUse` cannot reach — and points at *Coverage by road*. Not yet
-done: the script is absent from `CLAUDE.md`'s integration-test table, where every other `scripts/test-*.sh`
-is listed; a one-line addition for the worker or edit.
+agent's own conversation, which `PostToolUse` cannot reach — and points at *Coverage by road*. The script
+is listed in `CLAUDE.md`'s integration-test table with every other `scripts/test-*.sh` (added after this
+note was first written; Copilot 4211330106 caught the stale sentence on the PR).
 
 **One box stays open after this phase: criterion 2.** Its history half is met and tested at every
 writer; its conversation half — "never reaches … the conversation unredacted" — is **not met**, and

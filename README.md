@@ -247,7 +247,7 @@ Claude vs OpenCode, role by role:
 - **Scoped tool permissions** — Per-role tool profiles enforce what each agent can and can't do. Build can't edit files, commit can't deploy, edit can't run builds
 - **Loop detection** — Bus detects agents stuck in repetitive patterns and escalates to the edit agent
 - **Edit guard** — Sync hook blocks prohibited commands (build, test, git, deploy) in the edit window with delegation instructions
-- **PII scrubbing** — Automatic redaction of emails, SSNs, credit cards, AWS keys, JWTs, and other secrets from tool output in PII-sensitive roles (api, runner, watch) on the local-LLM road, and of credentials for every role in the bus history rows; an agent's own conversation is scrubbed only by piping through `muxcode pii-scrub` — see [Agents → PII scrubbing](docs/agents.md#pii-scrubbing)
+- **PII scrubbing** — Automatic redaction of emails, SSNs, credit cards, AWS keys, JWTs, and other secrets from tool output in PII-sensitive roles (api, run, runner, watch) on the local-LLM road, and of credentials for every role in the bus history rows; an agent's own conversation is scrubbed only by piping through `muxcode pii-scrub` — see [Agents → PII scrubbing](docs/agents.md#pii-scrubbing)
 - **Daemon self-monitoring** — Keepalive heartbeat with companion monitor process (`watch --monitor`) — auto-restarts the daemon if it hangs
 
 See the [Architecture](docs/architecture.md) and [Agent Bus](docs/agent-bus.md) docs for the full details.
