@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-195 closed 2026-10-06; the next active spec is the user's call_ | — | — |
+| — | _None — MUX-202 closed 2026-10-07; the next active spec is the user's call_ | — | — |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -323,6 +323,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-148`](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) | A Node Outcome Reads "a Command Ran" as "the Task Was Done" |
 | [`MUX-187`](../completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments |
 | [`MUX-198`](../completed/MUX-198-graph-requests-carry-literal-verdicts-an-echo-satisfies.md) | Builtin Graph Requests Carry Literal Verdicts an Echoed Request Satisfies |
+| [`MUX-202`](../completed/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons |
 | [`MUX-139`](../completed/MUX-139-claude-agent-auto-resume.md) | Claude Agent Auto-Resume After Mass Exit |
 | [`MUX-141`](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | Auto Agent Restarts Relaunch Autonomous Graph Runs |
 | [`MUX-142`](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned Worker Delegates Build/Test Into the Wrong Tree |

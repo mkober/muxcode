@@ -378,6 +378,26 @@ A build with no stamp is not broken: `bus/version.go` falls back to Go's embedde
 **unrankable** by `--at-least`, which exits `2` rather than `1` — see
 `scripts/lib/muxcode-version.sh` for the shared way integration scripts handle that third state.
 
+### Self-upgrade
+
+`muxcode upgrade` and the **Check for Updates** modal (`prefix + b`, `U`) install the latest GitHub release from its source tarball ([MUX-202](requirements/completed/MUX-202-self-upgrade-from-the-quick-menu.md); verb reference in [Agent Bus CLI](agent-bus.md#muxcode-upgrade)). Every knob is an environment variable; none is required.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_UPGRADE_API_URL` | `https://api.github.com/repos/mkober/muxcode/releases/latest` | Where `Check` reads the latest release. A `file://` URL works, which is how the hermetic integration test runs without a network |
+| `MUXCODE_UPGRADE_TARBALL_URL` | `https://github.com/mkober/muxcode/archive/refs/tags/<tag>.tar.gz` | Where `Download` fetches the release source. `file://` works here too |
+| `GITHUB_TOKEN`, else `GH_TOKEN` | (unset) | Sent as a Bearer token **only** to `https://api.github.com` — never to an override host or over plain `http` — to lift the unauthenticated rate limit. A `403`/`429` without one names this fix |
+| `XDG_CACHE_HOME` | `~/.cache` | The upgrade cache lives at `<XDG_CACHE_HOME>/muxcode/upgrade`; per the XDG spec only an absolute value is honoured |
+| `BINDIR` / `PREFIX` / `CONFIGDIR` | `~/.local/bin`, `~/.config/muxcode` | Resolved the way the Makefile resolves them (`BINDIR`, else `$PREFIX/bin`, else `~/.local/bin`), made absolute against the caller's directory, and passed to `make` explicitly — so `Install` and `Verify` use one place |
+
+**Cache layout** — `<cache>/<tag>/`: `source.tar.gz` (streamed through `.partial`), `src/` (extracted through `src.partial`), `download.json` (size and SHA-256, written **last** — its presence is what makes the next run a cache hit) and `build.log` (`make build` + `make install` output). `<cache>/runs/run-*.jsonl` are the modal's events files, pruned after 24 h.
+
+**Lock** — `~/.config/muxcode/upgrade.lock`, one per user and independent of every override above, taken before the first mutating step and held to the end. A second run finding it held fails at `Download` having touched nothing; it is refused, not queued, because a build can take minutes.
+
+**Limits** — `Check` 10 s; `Download` 5 min and 256 MiB; `make` 15 min; `upgrade-daemons` 2 min.
+
+**Lifecycle rows** (source `upgrade`) — `upgrade-check`, `upgrade-download`, `upgrade-build`, `upgrade-install`, `upgrade-verify`, `upgrade-daemons`, `upgrade-tmux`, then `upgrade-done` or `upgrade-failed`; every detail starts `installed=<version> target=<tag>`, so the log alone says which upgrade a row belongs to.
+
 ### Releases
 
 Releases are cut by two GitHub workflows; neither takes a runtime setting, but the way they connect is

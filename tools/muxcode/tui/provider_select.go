@@ -138,9 +138,12 @@ func (ui *ProviderSelectUI) selectedAgentRoles() []string {
 	return roles
 }
 
-// failureRowIndent is the visible prefix of a failure row ("    ✗ " plus the
-// 10-column role field), which continuation lines align under.
-const failureRowIndent = 17
+// agentNameWidth is an agent row's name column.
+const agentNameWidth = 10
+
+// failureRowIndent is the visible prefix of an agent failure row ("    ✗ "
+// plus the name column), which continuation lines align under.
+const failureRowIndent = 4 + 2 + agentNameWidth + 1
 
 // renderFailureRow renders a failed agent row, wrapping the error across lines
 // that fit width.
@@ -151,20 +154,52 @@ const failureRowIndent = 17
 // straight through the modal's border (2026-09-08). Wrapping belongs here
 // rather than at the frame because only this row is unbounded in length.
 func renderFailureRow(role string, cause error, width int) string {
-	avail := width - failureRowIndent - 1
-	if avail < 20 {
-		avail = 20
+	return renderFailureRowIn("    ", role, cause, agentNameWidth, width)
+}
+
+// renderFailureRowIn is renderFailureRow for any row: indent before the
+// glyph, a nameWidth name column — widened to a name longer than it — and the
+// cause wrapped under itself. When the columns leave the cause under 20
+// columns it moves below the name instead, and a word wider than its line — a
+// log path — is cut into line-sized pieces: an overflowing line breaks the
+// modal's border, which is worse than a path split across lines.
+func renderFailureRowIn(indent, name string, cause error, nameWidth, width int) string {
+	lead := VisibleWidth(indent) + 2 + max(nameWidth, VisibleWidth(name)) + 1
+	stacked := width-lead-1 < 20
+	if stacked {
+		lead = VisibleWidth(indent) + 2
+	}
+	avail := width - lead - 1
+	if avail < 1 {
+		avail = 1
 	}
 	var b strings.Builder
-	lines := wrapWords(fmt.Sprint(cause), avail)
-	for i, line := range lines {
-		if i == 0 {
-			b.WriteString(fmt.Sprintf("    %s✗%s %-10s %s%s%s\n", Red, RST, role, Red, line, RST))
+	if stacked {
+		b.WriteString(fmt.Sprintf("%s%s✗%s %s\n", indent, Red, RST, name))
+	}
+	for i, line := range wrapCause(fmt.Sprint(cause), avail) {
+		if i == 0 && !stacked {
+			b.WriteString(fmt.Sprintf("%s%s✗%s %-*s %s%s%s\n", indent, Red, RST, nameWidth, name, Red, line, RST))
 			continue
 		}
-		b.WriteString(fmt.Sprintf("%s%s%s%s\n", strings.Repeat(" ", failureRowIndent), Red, line, RST))
+		b.WriteString(fmt.Sprintf("%s%s%s%s\n", strings.Repeat(" ", lead), Red, line, RST))
 	}
 	return b.String()
+}
+
+// wrapCause is wrapWords with any line still wider than width cut into
+// width-sized pieces.
+func wrapCause(s string, width int) []string {
+	var out []string
+	for _, line := range wrapWords(s, width) {
+		r := []rune(line)
+		for len(r) > width {
+			out = append(out, string(r[:width]))
+			r = r[width:]
+		}
+		out = append(out, string(r))
+	}
+	return out
 }
 
 // wrapWords breaks s into lines of at most width visible characters, splitting
@@ -938,43 +973,9 @@ func (ui *ProviderSelectUI) renderProgress() string {
 // statement of what q does while it runs. Pure — snapshot in, string out.
 func renderBatchProgress(roles []string, results []bus.ReloadResult, total int, done bool, verb, pendingFooter string, width int) string {
 	var b strings.Builder
-	completed := len(results)
-
 	b.WriteString(fmt.Sprintf("  %s%s── Progress ─────────────────────%s\n", Bold, Purple, RST))
 	b.WriteString("\n")
-
-	resultMap := make(map[string]*bus.ReloadResult)
-	for i := range results {
-		resultMap[results[i].Role] = &results[i]
-	}
-	currentRole := ""
-	if completed < total && completed < len(roles) {
-		currentRole = roles[completed]
-	}
-
-	for _, role := range roles {
-		r, ok := resultMap[role]
-		switch {
-		case ok && !r.Success:
-			b.WriteString(renderFailureRow(r.Role, r.Error, width))
-		case ok:
-			b.WriteString(fmt.Sprintf("    %s✓%s %-10s %s  %s\n",
-				Green, RST, r.Role, successNote(r), r.Duration.Round(time.Second)))
-		case role == currentRole:
-			b.WriteString(fmt.Sprintf("    %s⟳%s %-10s %s...\n", Yellow, RST, role, Comment))
-		default:
-			b.WriteString(fmt.Sprintf("    %s○%s %-10s\n", Comment, RST, role))
-		}
-	}
-	b.WriteString("\n")
-
-	barWidth := 30
-	filled := 0
-	if total > 0 {
-		filled = (completed * barWidth) / total
-	}
-	bar := strings.Repeat("━", filled) + strings.Repeat("░", barWidth-filled)
-	b.WriteString(fmt.Sprintf("  %s%s%s  %d/%d\n", Green, bar, RST, completed, total))
+	b.WriteString(renderBatchRows(roles, reloadRows(results), total, !done, agentNameWidth, width))
 	b.WriteString("\n")
 
 	if done {
@@ -995,6 +996,86 @@ func renderBatchProgress(roles []string, results []bus.ReloadResult, total int, 
 		b.WriteString(fmt.Sprintf("  %s%s%s\n", Comment, pendingFooter, RST))
 	}
 	return b.String()
+}
+
+// batchRow is one finished row of the shared progress body — an agent's
+// reload or restart, or a self-upgrade step. Note is the success text, styled
+// by its adapter; Sub rows render indented beneath their row.
+type batchRow struct {
+	Name     string
+	Success  bool
+	Err      error
+	Note     string
+	Duration time.Duration
+	Sub      []batchRow
+}
+
+func reloadRows(results []bus.ReloadResult) []batchRow {
+	rows := make([]batchRow, len(results))
+	for i := range results {
+		r := &results[i]
+		rows[i] = batchRow{Name: r.Role, Success: r.Success, Err: r.Error, Note: successNote(r), Duration: r.Duration}
+	}
+	return rows
+}
+
+// renderBatchRows is the row list and bar every progress view shares: one row
+// per name — ✓ or ✗ once in rows, ⟳ for the next while running, ○ pending —
+// sub-rows indented under theirs, then the completion bar. A success row is
+// cut to width; a failure wraps. Pure — snapshot in, string out.
+func renderBatchRows(names []string, rows []batchRow, total int, running bool, nameWidth, width int) string {
+	var b strings.Builder
+	byName := make(map[string]*batchRow, len(rows))
+	for i := range rows {
+		byName[rows[i].Name] = &rows[i]
+	}
+	current := ""
+	if running && len(rows) < total && len(rows) < len(names) {
+		current = names[len(rows)]
+	}
+	for _, name := range names {
+		r, ok := byName[name]
+		switch {
+		case ok:
+			b.WriteString(renderBatchRow(*r, "    ", nameWidth, width))
+		case name == current:
+			b.WriteString(TruncateAnsi(fmt.Sprintf("    %s⟳%s %-*s %s...%s", Yellow, RST, nameWidth, name, Comment, RST), width) + "\n")
+		default:
+			b.WriteString(TruncateAnsi(fmt.Sprintf("    %s○%s %-*s", Comment, RST, nameWidth, name), width) + "\n")
+		}
+	}
+	b.WriteString("\n")
+
+	barWidth := 30
+	if barWidth > width-12 {
+		barWidth = max(width-12, 1)
+	}
+	filled := 0
+	if total > 0 {
+		filled = min(len(rows), total) * barWidth / total
+	}
+	bar := strings.Repeat("━", filled) + strings.Repeat("░", barWidth-filled)
+	b.WriteString(fmt.Sprintf("  %s%s%s  %d/%d\n", Green, bar, RST, len(rows), total))
+	return b.String()
+}
+
+func renderBatchRow(r batchRow, indent string, nameWidth, width int) string {
+	if !r.Success {
+		out := renderFailureRowIn(indent, r.Name, r.Err, nameWidth, width)
+		for _, sub := range r.Sub {
+			out += renderBatchRow(sub, indent+"  ", nameWidth-2, width)
+		}
+		return out
+	}
+	line := fmt.Sprintf("%s%s✓%s %-*s %s", indent, Green, RST, nameWidth, r.Name, r.Note)
+	if r.Duration > 0 {
+		line += "  " + r.Duration.Round(time.Second).String()
+	}
+	out := TruncateAnsi(line, width) + "\n"
+	for _, sub := range r.Sub {
+		out += renderBatchRow(sub, indent+"  ", nameWidth-2, width)
+	}
+	return out
 }
 
 // successNote describes a completed row: how a restart came back (resumed

@@ -1065,14 +1065,22 @@ back — the **scrape road** itself is unchanged.
 `read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
 beside the workspace, and network access is controlled separately and restricted by default.
 `BuildExecArgs` (`bus/provider_codex.go`) passes `-s workspace-write` plus one `--add-dir` per root
-**only for the `build` role** — `codexWritableRoots` returns `~/.local/bin`, `~/.config/muxcode`,
-`~/.claude/commands` and the Go toolchain caches, resolved to physical paths because Codex refuses a
-writable root containing a symlink component — and nothing for any other role. So every other Codex
-agent inherits the default policy: writes inside the workspace succeed, writes outside are refused
+**only for the `build` and `test` roles** — `codexWritableRoots` returns, for build, `~/.local/bin`,
+`~/.config/muxcode`, `~/.claude/commands` and the Go toolchain caches; for test, the **Go caches alone**
+(`GOCACHE`, `GOMODCACHE`) and none of build's install roots, because a test-only stdlib import no build
+had cached could not compile into a read-only cache — on 2026-10-06 `go vet` failed "package
+archive/tar is not in std" (user decision; `TestCodexBuildExecArgs_TestGetsGoCachesOnly`; whether `run`
+should get the same grant is left open under MUX-160 Decision 1). Every root is resolved to a physical
+path because Codex refuses a writable root containing a symlink component — and nothing is granted to
+any other role. So every other Codex agent inherits the default policy: writes inside the workspace succeed, writes outside are refused
 with `Operation not permitted`, which is why `./build.sh` used to die at `make install` on a Codex
 build agent. Two consequences follow. A role whose work ends in a write outside the repo (commit's
-`.git` and remote pushes) needs the same treatment as build, not a different provider. And **no
-flag lifts network for any role**, so a Codex `test` agent cannot bind the loopback socket
+`.git` and remote pushes) needs the same treatment as build, not a different provider. And network
+stays off for every role **except `watch`**: `codexNeedsNetwork` (`bus/provider_codex.go`) adds `-c
+sandbox_workspace_write.network_access=true` for the one role whose work *is* network traffic — `gh pr
+checks` and log tails — after a `110-pr-merge` run failed at `ci-watch` on 2026-10-07 with "error
+connecting to api.github.com" (`TestCodexBuildExecArgs_WatchGetsNetworkOnly`; merged in PR 154 as
+`a1ee602`). No other role gets it, so a Codex `test` agent still cannot bind the loopback socket
 `httptest.NewServer` needs and structurally cannot run this repo's suite
 ([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
@@ -1268,6 +1276,31 @@ A session is launched once but attached many times, so attaching is the only roa
 | Other road | `build.sh` runs an unscoped `muxcode upgrade-daemons` after `make install`. That call runs inside the build agent's sandbox where `ps` is denied (MUX-161), so the attach check — run in the user's own terminal — is the road that still works there |
 
 Core code: `refreshSessionDaemon()` in `cmd/launcher.go`, `EnsureSessionDaemonCurrent()` and `AutoUpgradeDaemonsDisabled()` in `bus/upgrade.go`
+
+### Self-upgrade flow
+
+`muxcode upgrade` and the **Check for Updates** modal ([MUX-202](requirements/completed/MUX-202-self-upgrade-from-the-quick-menu.md)) bring a machine onto the latest GitHub release without a checkout, and end by running the daemon-upgrade contract above on the binary they just installed.
+
+```
+Check → Download → Build → Install → Verify → Restart daemons → Reload tmux config
+```
+
+The run stops at the first failure; an unforced up-to-date run stops after `Check` and touches no file. The pipeline lives in `bus/selfupgrade.go` as a list of steps driven by `RunSelfUpgrade` with a per-step progress callback — the `ReloadBatch` shape — so the CLI prints one line per step and the modal renders one row per step from the same results.
+
+| Step | What it does, and why that way |
+|------|--------------------------------|
+| `Check` | Installed `BuildInfo()` against the latest release (`bus/release_client.go`, stdlib HTTP, 10 s). `CompareSemver` makes a `git describe` build past the tag read **ahead**, so a hot fix never downgrades a tree ahead of the release. Probes `go`, `make`, `tar` so a machine without a toolchain fails here and downloads nothing |
+| `Download` | The release's **source tarball** into `<cache>/<tag>/` — not a `git pull` (nothing records where a checkout lives, and the user's may be dirty) and not the prebuilt binary (`make install` is what also installs agents, skills, configs and `tmux.conf`). Streamed through `.partial`, hashed as written, recorded in `download.json` only after extraction, so an interrupted run refetches |
+| `Build`, `Install` | **Two** `make` calls with one `VERSION` and `DATE`: a tree that does not compile never reaches `install -m 755`, and install's rebuild of the phony `build` target is a Go cache hit. `GIT_CEILING_DIRECTORIES` and `-buildvcs=false` stop an enclosing git repository — a `$HOME` under git — from stamping or breaking the build |
+| `Verify` | Runs `<BINDIR>/muxcode version --json` and requires the tag, **and** requires `muxcode` on `PATH` to be that same file — a `PATH` entry ahead of `BINDIR` would keep every later call, tmux bindings and daemon relaunches included, on the old build. `BINDIR` absent from `PATH` is only a note |
+| `Restart daemons` | Execs the **new** binary's `upgrade-daemons`, never `bus.UpgradeDaemons` in-process: the running process is the old build, whose `BuildInfo()` would read every daemon as current and skip them all. `BINDIR` goes first on that child's `PATH`, because `upgrade-daemons` relaunches each daemon as bare `muxcode` via `LookPath` — with `BINDIR` off `PATH` it would kill the daemons and relaunch the old build, or nothing |
+| `Reload tmux config` | `tmux source-file` on the reinstalled `tmux.conf`; no server or no tmux is a skip with a note |
+
+**One lock, at the boundary.** A per-user `flock` (`~/.config/muxcode/upgrade.lock`), independent of the cache and install overrides, is taken before the first mutating step and held to the end, so an overlapping run fails at `Download` having touched nothing — and two runs with different cache roots but one `BINDIR` cannot install over each other and invalidate the other's `Verify`.
+
+**The modal's run is detached and bound to the confirm.** `muxcode upgrade-ui` re-reads the release and the daemon list on `⏎`/`f` and starts nothing if either changed; it then starts `muxcode upgrade --events <file> --expect-tag <tag> --expect-session <s>…` as its own process (`bus/selfupgrade_run.go`) and follows the events file, so closing the modal never stops the upgrade. The bound run (`UpgradeConfirmation`) refuses at `Check` any release but the confirmed one and restarts exactly the confirmed sessions — a daemon started after the confirm is named, not restarted. The user is never shown one target and handed another.
+
+**Negative controls held by tests**: an up-to-date run touches nothing; a failed `Build` leaves the installed binary byte-identical and never runs `install`; a failed `Verify` never restarts a daemon; a confirmed run refuses a release other than the confirmed one. Lifecycle rows per step (`upgrade-check` … `upgrade-tmux`, then `upgrade-done`/`upgrade-failed`) carry `installed=` and `target=`; the knobs, cache layout and limits are in [Configuration → Self-upgrade](configuration.md#self-upgrade).
 
 ## Session re-init
 

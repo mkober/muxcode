@@ -29,6 +29,13 @@ const (
 
 	// ClearEOL erases from cursor to end of line.
 	ClearEOL = "\033[K"
+
+	// Screen control for a redraw loop: home the cursor, clear the screen or
+	// everything below the cursor, hide the cursor.
+	CursorHome  = "\033[H"
+	ClearScreen = "\033[2J"
+	ClearBelow  = "\033[J"
+	HideCursor  = "\033[?25l"
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)

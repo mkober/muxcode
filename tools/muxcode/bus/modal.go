@@ -200,6 +200,17 @@ func DefaultModalConfigs() []ModalConfig {
 				"full":    {"60%", "70%"},
 			},
 		},
+		{
+			Name:    "upgrade",
+			Title:   " Check for Updates ",
+			Width:   "50%",
+			Height:  "60%",
+			Command: "muxcode upgrade-ui",
+			Sizes: map[string][2]string{
+				"compact": {"40%", "50%"},
+				"full":    {"60%", "70%"},
+			},
+		},
 	}
 }
 

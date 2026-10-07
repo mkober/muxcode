@@ -195,14 +195,64 @@ func mustResolve(t *testing.T, dir string) string {
 	return resolved
 }
 
+// Test compiles packages no build has cached — a test-only stdlib import — so
+// it needs the Go caches writable (2026-10-06, archive/tar). It must not get
+// build's install roots.
+func TestCodexBuildExecArgs_TestGetsGoCachesOnly(t *testing.T) {
+	p := &CodexProvider{}
+	base := t.TempDir()
+	cache, modcache := filepath.Join(base, "gocache"), filepath.Join(base, "gomodcache")
+	bin, config := filepath.Join(base, "fake-bin"), filepath.Join(base, "fake-config")
+	t.Setenv("GOCACHE", cache)
+	t.Setenv("GOMODCACHE", modcache)
+	t.Setenv("BINDIR", bin)
+	t.Setenv("CONFIGDIR", config)
+
+	args := strings.Join(p.argsFor(t, "test"), " ")
+	if !strings.Contains(args, "-s workspace-write") {
+		t.Errorf("test must select the workspace-write policy: %s", args)
+	}
+	for _, dir := range []string{cache, modcache} {
+		if want := "--add-dir " + mustResolve(t, dir); !strings.Contains(args, want) {
+			t.Errorf("test missing %q: %s", want, args)
+		}
+	}
+	for _, dir := range []string{bin, config} {
+		if strings.Contains(args, dir) {
+			t.Errorf("test must not be granted install root %q: %s", dir, args)
+		}
+	}
+}
+
+// Watch's work is network traffic (gh pr checks, log tails); on 2026-10-07 a
+// merge run's ci-watch died on "error connecting to api.github.com". It gets
+// network and nothing else — no writable roots.
+func TestCodexBuildExecArgs_WatchGetsNetworkOnly(t *testing.T) {
+	p := &CodexProvider{}
+	args := strings.Join(p.argsFor(t, "watch"), " ")
+	for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("watch missing %q: %s", want, args)
+		}
+	}
+	if strings.Contains(args, "--add-dir") {
+		t.Errorf("watch must not be granted writable roots: %s", args)
+	}
+}
+
 // Negative control: the grant is per-role, not a blanket widening. Without
-// this, granting every role would pass the test above.
+// this, granting every role would pass the tests above.
 func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 	p := &CodexProvider{}
-	for _, role := range []string{"review", "analyze", "test"} {
+	for _, role := range []string{"review", "analyze"} {
 		args := strings.Join(p.argsFor(t, role), " ")
 		if strings.Contains(args, "--add-dir") || strings.Contains(args, "workspace-write") {
 			t.Errorf("role %q must not be widened: %s", role, args)
+		}
+	}
+	for _, role := range []string{"review", "analyze", "build", "test"} {
+		if args := strings.Join(p.argsFor(t, role), " "); strings.Contains(args, "network_access") {
+			t.Errorf("role %q must not get network access: %s", role, args)
 		}
 	}
 }

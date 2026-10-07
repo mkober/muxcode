@@ -397,6 +397,21 @@ muxcode upgrade-daemons --dry-run            # show what would cycle
 
 Daemons already on the installed build are skipped, so this is safe to re-run.
 
+To upgrade from the latest GitHub release — no checkout needed — use **Check for Updates** in the quick
+menu (`Prefix + b`, then `U`). It checks the release, shows what it will install and which daemons it
+will restart, and on confirm downloads the source, rebuilds, installs, verifies the new binary,
+restarts the daemons and reloads the tmux config, one row per step. Closing the modal leaves the
+upgrade running. The same pipeline runs from a shell:
+
+```bash
+muxcode upgrade --check     # exit 0 current, 10 newer release available, 1 error
+muxcode upgrade             # run it, one line per step
+muxcode upgrade --force     # rebuild and reinstall the latest release even when current
+```
+
+A dev build past the latest tag reads as **ahead** and is never downgraded unless forced. Running
+agents keep the old build until restarted — **Restart Agents** (`Prefix + b`, then `A`).
+
 ### Launch
 
 ```bash
@@ -668,7 +683,7 @@ Useful keybindings for navigating your MuxCode session:
 | `Prefix + a` | Cycle edit-window agents from any window |
 | `Prefix + R` | Open provider selector (hot reload) |
 | `Prefix + i` | Open API testing modal |
-| `Prefix + b` | Open MuxCode quick menu |
+| `Prefix + b` | Open MuxCode quick menu — sessions, API testing, Provider, Restart Agents (`A`), compact, memory, cleanup, config, Check for Updates (`U`) |
 
 Every agent window also carries the **control pane** — a fixed full-width strip at the bottom hosting the graph TUI (prompt, launcher, runs, pending gates; `Tab` cycles, and the selected surface stays consistent across all windows). It is on by default; `MUXCODE_CONTROL_PANE_EXCLUDE` names windows to opt out, `MUXCODE_CONTROL_PANE_DISABLE=1` turns it off wholesale, `MUXCODE_CONTROL_PANE_HEIGHT` sets its rows (default 18), and `MUXCODE_CONTROL_PANE_SURFACE` picks the starting surface (`runs`/`gates`/`prompt`/`launcher`). A waiting `wait_human` gate switches every pane to Pending Gates by itself; the daemon respawns a killed pane and recycles panes onto a freshly installed binary. The graph popups and menu entries were retired with the pane's arrival — `muxcode graph ui` remains for ad-hoc use.
 
