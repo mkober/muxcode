@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -101,6 +102,24 @@ func (c UpgradeCheck) Summary() string {
 		return fmt.Sprintf("installed %s is current (latest %s)", have, latest)
 	}
 	return fmt.Sprintf("installed %s cannot be compared with the latest release %s: %s", have, latest, c.Reason)
+}
+
+// devBuildSuffix matches a `git describe` build past its tag
+// (v0.1.20-16-gfeb4a13) and a dirty tree's marker.
+var devBuildSuffix = regexp.MustCompile(`-\d+-g[0-9a-f]+(-dirty)?$|-dirty$`)
+
+// DevBuildWarning warns that the installed binary is an unreleased build —
+// commits past its tag, a dirty tree, or no rank at all — which an upgrade
+// replaces with the release, dropping whatever the release lacks. Version
+// order alone cannot see this: on 2026-10-07 a branch build ahead of v0.1.21
+// in features but behind it in version was replaced without a word, and the
+// feature under test vanished with it. Empty for an exact release tag.
+func (c UpgradeCheck) DevBuildWarning() string {
+	v := c.Installed.Version
+	if v == "" || (c.Verdict != UpgradeUnknown && !devBuildSuffix.MatchString(v)) {
+		return ""
+	}
+	return fmt.Sprintf("installed %s is an unreleased dev build — upgrading replaces it with release %s and drops any changes that release does not have", v, c.Latest.Tag)
 }
 
 // ToolsErr names the build tools Check found missing, or is nil.
@@ -359,6 +378,9 @@ func runCheckStep(ctx context.Context, s *UpgradeState) (string, error) {
 		}
 		s.Stopped = true
 		return note, nil
+	}
+	if w := check.DevBuildWarning(); w != "" {
+		note += " — warning: " + w
 	}
 	if err := check.ToolsErr(); err != nil {
 		return note, err

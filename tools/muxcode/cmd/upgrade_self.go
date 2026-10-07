@@ -118,8 +118,8 @@ func Upgrade(args []string) {
 	}
 }
 
-// UpgradeUI handles "muxcode upgrade-ui", the TUI behind the `Upgrade
-// MuxCode` modal (prefix + b menu); `muxcode upgrade` is its
+// UpgradeUI handles "muxcode upgrade-ui", the TUI behind the `Check for
+// Updates` modal (prefix + b menu); `muxcode upgrade` is its
 // non-interactive form.
 func UpgradeUI(args []string) {
 	if len(args) > 0 {
@@ -220,6 +220,9 @@ func writeUpgradeCheck(stdout, stderr io.Writer, c bus.UpgradeCheck, err error, 
 		return
 	}
 	fmt.Fprintf(stdout, "Check: %s\n", c.Summary())
+	if w := c.DevBuildWarning(); w != "" {
+		fmt.Fprintf(stderr, "Check: warning — %s\n", w)
+	}
 	if terr := c.ToolsErr(); terr != nil {
 		label := "note"
 		if c.Verdict == bus.UpgradeNewer {

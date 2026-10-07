@@ -293,3 +293,34 @@ func TestCheckUpgradeProbesBuildTools(t *testing.T) {
 		t.Errorf("all tools present: MissingTools = %v, ToolsErr = %v, want none", got.MissingTools, got.ToolsErr())
 	}
 }
+
+// TestDevBuildWarning replays 2026-10-07: v0.1.20-16-gfeb4a13-dirty carried
+// an unreleased feature, read as older than v0.1.21, and was replaced
+// silently. Exact release tags — a pre-release included — are the negative
+// controls and must stay quiet.
+func TestDevBuildWarning(t *testing.T) {
+	for _, c := range []struct {
+		installed string
+		verdict   UpgradeVerdict
+		warn      bool
+	}{
+		{"v0.1.20-16-gfeb4a13-dirty", UpgradeNewer, true},
+		{"v0.1.20-16-gfeb4a13", UpgradeNewer, true},
+		{"v0.1.21-dirty", UpgradeCurrent, true},
+		{"v0.1.21-9-g7d339be", UpgradeAhead, true},
+		{"devel", UpgradeUnknown, true},
+		{"v0.1.20", UpgradeNewer, false},
+		{"v0.1.21", UpgradeCurrent, false},
+		{"v0.2.0-rc.1", UpgradeAhead, false},
+	} {
+		check := UpgradeCheck{Installed: Info{Version: c.installed}, Latest: Release{Tag: "v0.1.21"}, Verdict: c.verdict}
+		w := check.DevBuildWarning()
+		if got := w != ""; got != c.warn {
+			t.Errorf("%s: warning %q, want warn=%v", c.installed, w, c.warn)
+			continue
+		}
+		if c.warn && (!strings.Contains(w, c.installed) || !strings.Contains(w, "v0.1.21") || !strings.Contains(w, "unreleased dev build")) {
+			t.Errorf("%s: warning must name the build, the release and what is lost: %q", c.installed, w)
+		}
+	}
+}

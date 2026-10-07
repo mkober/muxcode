@@ -62,6 +62,30 @@ func stubUpgradeSeams(t *testing.T, checks ...bus.UpgradeCheck) *upgradeStarts {
 	return starts
 }
 
+// The confirm screen warns before ⏎ replaces an unreleased dev build — the
+// 2026-10-07 upgrade that silently dropped the feature being tested. A
+// release build is the negative control: no warning.
+func TestRenderUpgradeConfirm_WarnsBeforeReplacingDevBuild(t *testing.T) {
+	for _, c := range []struct {
+		installed string
+		warn      bool
+	}{
+		{"v0.1.20-16-gfeb4a13-dirty", true},
+		{"v0.1.20", false},
+	} {
+		v := upgradeConfirmView{Reading: upgradeReading{Check: upgradeCheckOf(c.installed, "v0.1.21", bus.UpgradeNewer), Target: upgradeTestTarget}}
+		frame := renderUpgradeConfirm(v, 200, 30)
+		plain := StripAnsi(frame)
+		if got := strings.Contains(plain, "⚠ installed "+c.installed+" is an unreleased dev build"); got != c.warn {
+			t.Errorf("%s: dev-build warning shown = %v, want %v:\n%s", c.installed, got, c.warn, plain)
+		}
+		if !strings.Contains(plain, "⏎ Upgrade") {
+			t.Errorf("%s: the warning must not remove ⏎ Upgrade:\n%s", c.installed, plain)
+		}
+		assertUpgradeFrameFits(t, frame, 200, 30)
+	}
+}
+
 // Nothing newer is an explicit state with the header and a footer naming only
 // the keys it takes; a newer release is the half that states the full
 // consequence and offers ⏎.

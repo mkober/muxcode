@@ -383,6 +383,9 @@ func confirmBody(v upgradeConfirmView, compact bool, width int) ([]string, strin
 		footer = "⏎ Re-check  q Quit"
 	default:
 		body = append(body, verdictLines(r.Check, width)...)
+		if w := r.Check.DevBuildWarning(); w != "" {
+			body = append(body, wrapStyled("  ", Yellow, "⚠ "+w, width)...)
+		}
 		body = append(body, "")
 		switch {
 		case r.TargetErr != nil:
