@@ -25,11 +25,11 @@ var ErrModelNotFound = errors.New("model not found")
 // Codex sandbox refuses — a socket-bound test panics before any assertion and
 // takes every later module with it (MUX-153).
 type OllamaConfig struct {
-	BaseURL     string  // default "http://localhost:11434"
-	Model       string  // default "qwen3:4b" (must support tool calling)
-	Temperature float64 // default 0.1
-	Timeout     int     // seconds, default 120
-	MaxTokens   int     // default 4096
+	BaseURL     string       // default "http://localhost:11434"
+	Model       string       // default "qwen3:4b" (must support tool calling)
+	Temperature float64      // default 0.1
+	Timeout     int          // seconds, default 120
+	MaxTokens   int          // default 4096
 	HTTPClient  *http.Client // nil in production; see the type doc
 }
 
