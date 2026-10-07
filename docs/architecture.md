@@ -1075,8 +1075,12 @@ path because Codex refuses a writable root containing a symlink component — an
 any other role. So every other Codex agent inherits the default policy: writes inside the workspace succeed, writes outside are refused
 with `Operation not permitted`, which is why `./build.sh` used to die at `make install` on a Codex
 build agent. Two consequences follow. A role whose work ends in a write outside the repo (commit's
-`.git` and remote pushes) needs the same treatment as build, not a different provider. And **no
-flag lifts network for any role**, so a Codex `test` agent cannot bind the loopback socket
+`.git` and remote pushes) needs the same treatment as build, not a different provider. And network
+stays off for every role **except `watch`**: `codexNeedsNetwork` (`bus/provider_codex.go`) adds `-c
+sandbox_workspace_write.network_access=true` for the one role whose work *is* network traffic — `gh pr
+checks` and log tails — after a `110-pr-merge` run failed at `ci-watch` on 2026-10-07 with "error
+connecting to api.github.com" (`TestCodexBuildExecArgs_WatchGetsNetworkOnly`; merged in PR 154 as
+`a1ee602`). No other role gets it, so a Codex `test` agent still cannot bind the loopback socket
 `httptest.NewServer` needs and structurally cannot run this repo's suite
 ([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
