@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-202 closed 2026-10-07; the next active spec is the user's call_ | — | — |
+| [`MUX-179`](../drafts/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII Scrub Role Gate Is Dead Code on the Bus Road | 2026-10-07 | In Progress — moved to `drafts/` and set as the active spec on the user's instruction; next defect by rank |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -46,7 +46,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-179`](./MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII scrub role gate is dead code on the bus road | High | — |
+| 1 | 1 | [`MUX-179`](../drafts/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII scrub role gate is dead code on the bus road | High | — |
 | 2 | 1 | [`MUX-174`](./MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) | `./test.sh` exits 1 repo-wide on the `test` role | High | — |
 | 3 | 1 | [`MUX-176`](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | The run chain fires `success` for a call that has not finished | High | ⇄ [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) |
 | 4 | 1 | [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The watch chain fires on every bash call and pastes the raw command into the message | Medium | ⇄ [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) |

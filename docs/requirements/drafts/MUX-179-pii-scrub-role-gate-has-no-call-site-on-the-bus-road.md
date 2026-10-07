@@ -3,7 +3,7 @@
 **Tracking:** [mkober/muxcode#137](https://github.com/mkober/muxcode/issues/137)
 
 **Provenance:** filed 2026-09-11 by plan on the user's request relayed by commit (`1789143390`), from a
-credential leak plan caused while diagnosing [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md).
+credential leak plan caused while diagnosing [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md).
 Verified in code before filing.
 
 `CLAUDE.md` states that `api`, `run` and `watch` output is redacted before it enters the conversation.
@@ -65,10 +65,10 @@ diagnosing it but is independent of it.
 
 ### Acceptance criteria
 
-- [ ] Tool output from a sensitive role is scrubbed **on the bus road**, not only in the harness
-- [ ] A secret in a diagnostic command's output never reaches `<role>-history.jsonl` or the conversation unredacted
-- [ ] **Negative control:** ordinary output with no secret is passed through **unchanged** — no banner, no truncation, no altered exit code
-- [ ] A test fails if the call site is removed — the current test passes with the feature gone
+- [x] Tool output from a sensitive role is scrubbed **on the bus road**, not only in the harness (Phase 1: `ProcessBashHook` → `GetScrubbedOutput`; `TestProcessBashHook_SensitiveRoleRedactsSecret`)
+- [ ] A secret in a diagnostic command's output never reaches `<role>-history.jsonl` or the conversation unredacted (**history half met** in Phase 1 — `TestProcessBashHook_SensitiveRoleRedactsSecret`, `…RedactsSecretAcrossTail`, `TestGetScrubbedOutput_RedactsBeforeClip`; the history row's `Command`/`Description` fields are still unscrubbed. **The conversation half is not**: `PostToolUse` fires after the provider has already shown the agent the raw output, so this road cannot redact what the agent sees — a different mechanism, or a narrowed promise, is for [Phase 3](#phase-3-decide-coverage) to decide)
+- [x] **Negative control:** ordinary output with no secret is passed through **unchanged** — no banner, no truncation, no altered exit code (Phase 1: `TestProcessBashHook_SensitiveRoleCleanOutputUnchanged`, `TestGetScrubbedOutput_CleanMatchesGetOutput`)
+- [x] A test fails if the call site is removed — the current test passes with the feature gone (Phase 1: `TestProcessBashHook_SensitiveRoleRedactsSecret` drives `ProcessBashHook` end to end and reads the history row — it fails if the `IsPIISensitiveRole` gate is removed, which the membership-only `TestIsPIISensitiveRole_Bus` never did)
 - [ ] The role list is reconsidered on evidence: the leak came from `plan`, which is not a member
 - [ ] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) state what is actually covered, per road
 
@@ -106,14 +106,29 @@ a redaction must announce itself so a placeholder is never mistaken for data.
 
 ### Phase 1: Wire the gate
 
-- [ ] Call `IsPIISensitiveRole` on the bus-side tool-output path, mirroring `loop.go:133`
-- [ ] Unit test: sensitive-role output containing a key is redacted with the banner
-- [ ] **Negative control:** non-secret output is byte-identical after the call
+- [x] Call `IsPIISensitiveRole` on the bus-side tool-output path, mirroring `loop.go:133` (`ProcessBashHook`, `bus/hook.go`: a PII-sensitive role's output is captured through `GetScrubbedOutput`, which runs `ScrubPII` on the **whole ANSI-stripped response before both** the line tail and the `maxChars` clip — each limit can split a secret from what identifies it — then applies the limits through the one shared `clipOutput(text, maxLines, maxChars)`, then prepends the `PIIScrubNotice` banner counting every redaction. `GetOutput`'s output is unchanged. Covers `api`, `run`, `runner`, `watch` — the current `IsPIISensitiveRole` set)
+- [x] Unit test: sensitive-role output containing a key is redacted with the banner (`TestProcessBashHook_SensitiveRoleRedactsSecret` — a `ps eww` environment dump carrying an API key, the shape of the original leak; the history row holds the placeholder under the `[muxcode pii-scrub:` banner; `TestGetScrubbedOutput_RedactsBeforeClip` for the straddling key)
+- [x] **Negative control:** non-secret output is byte-identical after the call (`TestProcessBashHook_SensitiveRoleCleanOutputUnchanged` — no banner, no truncation, exit code and outcome untouched; `TestGetScrubbedOutput_CleanMatchesGetOutput` — tailed and clipped clean output equals `GetOutput`'s)
+
+#### Phase 1 verification note
+
+Verified 2026-10-07 14:15 by plan from the working tree (run `1791395671`, user-launched). First pass:
+review **failed** with one must-fix — `GetScrubbedOutput` scrubbed the *tail*: `outputTail` kept the last
+`maxLines` lines first, so a `password=` label on a discarded line with `SuperSecret123` on a kept line
+stored the secret unredacted, the scrubber never seeing the label it matches on. Second pass, after the
+`fix` worker: the scrub runs on the whole stripped response before both limits, `outputTail` is gone in
+favour of one `clipOutput` shared with `GetOutput`, and `TestProcessBashHook_SensitiveRoleRedactsSecretAcrossTail`
+pins the exact shape — label on the 16th-from-last line, value on the first kept one, a fixture guard
+proving the unscrubbed tail would drop the label and keep the value. Test node **success** on the full
+suite both passes; review 0 must-fix. The worker's own follow-ups, carried to Phase 3: the conversation
+half of criterion 2 needs another mechanism (`PostToolUse` is too late); the history row's `Command` and
+`Description` fields are unscrubbed; `plan`, `edit`, `commit` and `build` stay unscrubbed pending the
+coverage decision — the original leak came from `plan`.
 
 ### Phase 2: Make the test non-vacuous
 
 - [ ] Replace/augment `TestIsPIISensitiveRole_Bus` so it fails when the call site is removed
-- [ ] Assert the *behaviour* (output redacted) rather than the map's membership
+- [x] Assert the *behaviour* (output redacted) rather than the map's membership (already met by Phase 1's `TestProcessBashHook_SensitiveRoleRedactsSecret` and `…AcrossTail`, which drive `ProcessBashHook` and read the history row; the membership-only `TestIsPIISensitiveRole_Bus` is the step above's to replace or keep)
 
 ### Phase 3: Decide coverage
 
@@ -139,10 +154,17 @@ scrubber should have caught it and found the gate unwired. Recorded that way bec
 `ps eww … | grep -E '^(AGENT_ROLE|BUS_SESSION)='` idiom now on MUX-156 is a workaround for a missing
 control, not a fix.
 
-**Related:** [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (where the leak is
-recorded); [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) (a rule with no enforcement — the
+**Related:** [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (where the leak is
+recorded); [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) (a rule with no enforcement — the
 same shape, one road up).
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 10m | 2026-10-07 14:15 |
 
 ## Status
 
-Backlog
+In Progress — moved from `backlog/` to `drafts/` and set as the active spec on the user's instruction,
+2026-10-07 (next defect by rank, 1 / Tier 1).
