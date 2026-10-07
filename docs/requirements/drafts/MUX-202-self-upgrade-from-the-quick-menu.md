@@ -71,12 +71,12 @@ source tarball into a cache, not a `git pull` ([Decision 1](#decision-1--source-
 **CLI twin**
 
 - [x] `muxcode upgrade [--check] [--force] [--json]` runs the same pipeline non-interactively, printing one line per step; `--check` stops after `Check` with exit 0 (current), 10 (newer available) or 1 (error) so a cron or a script can poll it; `--force` rebuilds and reinstalls the latest release even when current (Phases 1 + 3: `cmd/upgrade_self.go`; a full run exits 0 on success or an up-to-date install and 1 on a failed step; `--json` is `UpgradeCheck` with `--check`, else `upgradeReport`. `TestUpgradeCheckExit`, `TestWriteStepResult`, `TestWriteUpgradeReport`)
-- [ ] `muxcode upgrade-ui` is the modal's command (the `provider-select`/`restart-select` shape)
+- [x] `muxcode upgrade-ui` is the modal's command (the `provider-select`/`restart-select` shape) (Phase 4: `cmd.UpgradeUI` → `tui.NewUpgradeUI().Run()`, wired in `main.go`; `bus/modal.go` `upgrade` entry's `Command` is `muxcode upgrade-ui` — overlooked when Phase 4 was ticked, corrected 2026-10-07 09:28)
 
 **Docs and test**
 
 - [x] Docs: [`docs/agent-bus.md`](../../agent-bus.md#muxcode-upgrade) (`muxcode upgrade`, `upgrade-ui`, the modal), [`docs/configuration.md`](../../configuration.md#self-upgrade) (`MUXCODE_UPGRADE_*` overrides, cache dir, token), [`docs/architecture.md`](../../architecture.md#self-upgrade-flow) (self-upgrade flow beside the daemon-upgrade contract), `CLAUDE.md` build/install table row, `README.md` quick-menu list (Phase 5, 2026-10-07)
-- [ ] `bash scripts/test-self-upgrade.sh` passes — hermetic, no network ([Phase 6](#phase-6-integration-test))
+- [x] `bash scripts/test-self-upgrade.sh` passes — hermetic, no network ([Phase 6](#phase-6-integration-test)) (run agent 2026-10-07: 46 passed, 0 failed, floor 46, exit 0)
 
 ### Technical approach
 
@@ -180,14 +180,22 @@ recorded there. Screen escape sequences moved into `tui/styles.go`, per the TUI 
 
 ### Phase 6: Integration test
 
-- [ ] Create `scripts/test-self-upgrade.sh` — hermetic: scratch `HOME`, `XDG_CACHE_HOME`, `BINDIR`, `CONFIGDIR` and `BUS_SESSION`; a local tarball and a local `releases/latest` JSON served through the URL overrides (no network); a scratch daemon on the current binary
-- [ ] Test: `muxcode upgrade --check` exits 10 against a newer fake tag, 0 against the installed version, and 1 when the API file is missing
-- [ ] Test: full `muxcode upgrade` against the fake tag → tarball cached with recorded SHA-256, `make install VERSION=<tag>` ran in the extracted tree (fake `make` log), `Verify` passed against the stub binary, the scratch daemon was restarted onto it, lifecycle rows `upgrade-check … upgrade-done` present
-- [ ] **Negative control:** an up-to-date check runs no download and leaves `BINDIR` untouched (mtime unchanged)
-- [ ] **Negative control:** a tarball whose `make install` exits 1 leaves the installed binary byte-identical and the daemon unrestarted; `upgrade-failed` names the build step and the log path
-- [ ] **Negative control:** a stub binary reporting the wrong version fails `Verify` and the daemon is not restarted
-- [ ] Test: a second run against the same tag skips the download (cache hit noted in the row)
-- [ ] Coverage floor set to the maximum achievable count; run the script and record counts here
+- [x] Create `scripts/test-self-upgrade.sh` — hermetic: scratch `HOME`, `XDG_CACHE_HOME`, `BINDIR`, `CONFIGDIR` and `BUS_SESSION`; a local tarball and a local `releases/latest` JSON served through the URL overrides (no network); a scratch daemon on the current binary (281 lines. Two binaries are built from this checkout with explicit `-X` stamps — `v0.0.1-test` as the "installed" build that runs the CLI and the scratch daemon, `v0.0.2-test` as the "release" — so no tag need exist and the real installed muxcode is never run; a fake `make` on `PATH` records each call and, for `install`, copies the chosen binary into `BINDIR` with a marker `tmux.conf`; the tmux server is private (`TMUX_TMPDIR`); every run that can reach `Restart daemons` is bound with `--expect-tag`/`--expect-session` so live daemons are never touched, and a last section proves it. Skips exit 2, not 0; listed in `CLAUDE.md`)
+- [x] Test: `muxcode upgrade --check` exits 10 against a newer fake tag, 0 against the installed version, and 1 when the API file is missing (section 1)
+- [x] Test: full `muxcode upgrade` against the fake tag → tarball cached with recorded SHA-256, `make install VERSION=<tag>` ran in the extracted tree (fake `make` log), `Verify` passed against the stub binary, the scratch daemon was restarted onto it, lifecycle rows `upgrade-check … upgrade-done` present (section 6: the run is a cache hit after the earlier sections' downloads, `make` ran in the extracted tree, `Verify` passed, the scratch daemon's command now names the `BINDIR` binary, tmux reloaded, `upgrade-check … upgrade-done` in order)
+- [x] **Negative control:** an up-to-date check runs no download and leaves `BINDIR` untouched (mtime unchanged) (section 2)
+- [x] **Negative control:** a tarball whose `make install` exits 1 leaves the installed binary byte-identical and the daemon unrestarted; `upgrade-failed` names the build step and the log path (sections 3 **and** 4 — a failed `make build` and a failed `make install` each leave the binary byte-identical and the daemon on its old pid, and `upgrade-failed` names the step and the log)
+- [x] **Negative control:** a stub binary reporting the wrong version fails `Verify` and the daemon is not restarted (section 5)
+- [x] Test: a second run against the same tag skips the download (cache hit noted in the row) (section 6's run reports `cache hit` for `v0.0.2-test`, already extracted by the earlier sections)
+- [x] Coverage floor set to the maximum achievable count; run the script and record counts here (floor **46** = every check. Run agent, 2026-10-07: first run **45 passed, 1 failed, exit 1** — the other-daemons snapshot compared against the wrong session name, a bug in the script itself, caught by its own last section; fixed, re-run task `1791379078-spawn-c59824d4-753f6a55`: **46 passed, 0 failed, exit 0**)
+
+#### Phase 6 verification note
+
+Verified 2026-10-07 09:25 by plan from the working tree (run `1791315389`; Phase 5 committed as
+`2e70186`). The run agent executed the script twice — the first run's single failure was in the
+script's own "no other daemon was touched" check, which is the right kind of failure for that check to
+have had — and the second passed every check at the floor. Review 0 must-fix; test node success on the
+full suite. With this, every acceptance criterion (22) and every phase step in the spec is ticked.
 
 ## Decisions
 
@@ -246,10 +254,11 @@ no `--expect-tag`) still restarts every session on the machine, as above.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-202-self-upgrade-from-the-quick-menu | 1h 33m | 2026-10-07 09:12 |
+| MUX-202-self-upgrade-from-the-quick-menu | 1h 42m | 2026-10-07 09:25 |
 
 ## Status
 
-In Progress — filed 2026-10-06 on the user's request, to be worked on now; active spec set the same
-day. Phase 1 (release check) implemented and verified 2026-10-06 on
-`MUX-202-self-upgrade-from-the-quick-menu`.
+In Progress — **all six phases implemented and verified 2026-10-07**; awaiting the Phase 6 commit and
+the run's close-out (Status → `Complete`, move to `completed/`). Filed 2026-10-06 on the user's request,
+active spec the same day; phases on `MUX-202-self-upgrade-from-the-quick-menu`: `b143299`, `2b74024`,
+`f3d2d12`, `1c13460`, `2e70186`.
