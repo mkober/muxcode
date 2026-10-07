@@ -224,6 +224,22 @@ func TestCodexBuildExecArgs_TestGetsGoCachesOnly(t *testing.T) {
 	}
 }
 
+// Watch's work is network traffic (gh pr checks, log tails); on 2026-10-07 a
+// merge run's ci-watch died on "error connecting to api.github.com". It gets
+// network and nothing else — no writable roots.
+func TestCodexBuildExecArgs_WatchGetsNetworkOnly(t *testing.T) {
+	p := &CodexProvider{}
+	args := strings.Join(p.argsFor(t, "watch"), " ")
+	for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("watch missing %q: %s", want, args)
+		}
+	}
+	if strings.Contains(args, "--add-dir") {
+		t.Errorf("watch must not be granted writable roots: %s", args)
+	}
+}
+
 // Negative control: the grant is per-role, not a blanket widening. Without
 // this, granting every role would pass the tests above.
 func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
@@ -232,6 +248,11 @@ func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 		args := strings.Join(p.argsFor(t, role), " ")
 		if strings.Contains(args, "--add-dir") || strings.Contains(args, "workspace-write") {
 			t.Errorf("role %q must not be widened: %s", role, args)
+		}
+	}
+	for _, role := range []string{"review", "analyze", "build", "test"} {
+		if args := strings.Join(p.argsFor(t, role), " "); strings.Contains(args, "network_access") {
+			t.Errorf("role %q must not get network access: %s", role, args)
 		}
 	}
 }

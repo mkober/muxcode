@@ -75,13 +75,17 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		args = append(args, "-a", "never")
 	}
 
-	// Roles whose work ends outside the workspace need those roots granted
-	// explicitly; the default policy refuses them.
-	if roots := codexWritableRoots(cfg.Role); len(roots) > 0 {
+	// Roles whose work ends outside the workspace or off the machine need it
+	// granted explicitly; the default policy refuses both.
+	roots, network := codexWritableRoots(cfg.Role), codexNeedsNetwork(cfg.Role)
+	if len(roots) > 0 || network {
 		args = append(args, "-s", "workspace-write")
 		for _, dir := range roots {
 			args = append(args, "--add-dir", dir)
 		}
+	}
+	if network {
+		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
 	}
 
 	// Hook trust: only a hooks.json that still hashes to what muxcode wrote
@@ -137,6 +141,17 @@ func codexWritableRoots(role string) []string {
 		filepath.Join(home, ".claude", "commands"),
 	}
 	return resolveWritableRoots(append(roots, goToolchainRoots()...))
+}
+
+// codexNeedsNetwork reports whether a role's work is network traffic, granted
+// under workspace-write with sandbox_workspace_write.network_access. Watch
+// alone: its job is `gh pr checks`, cloud log tails and health probes, all
+// refused by Codex's default no-network sandbox — on 2026-10-07 a 110-pr-merge
+// run failed at ci-watch with "error connecting to api.github.com" on a PR
+// whose CI was fine. Like the writable roots, a role is listed only once its
+// failure is observed.
+func codexNeedsNetwork(role string) bool {
+	return role == "watch"
 }
 
 // resolveWritableRoots maps each root to its physical path, dropping any that
