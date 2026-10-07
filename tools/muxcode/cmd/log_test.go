@@ -99,6 +99,62 @@ func TestRunLogWritesSelfReportedSource(t *testing.T) {
 	}
 }
 
+// A self-report is a history road too (MUX-179): plan logging a diagnostic
+// that printed a key stores it redacted, in output and summary alike, under one
+// notice counting both fields — a summary-only redaction announces itself too.
+// The clean row is the control: no notice, both fields as given.
+func TestRunLogScrubsCredentials(t *testing.T) {
+	const key = "sk-fake-0123456789abcdef"
+	cases := []struct {
+		name    string
+		args    []string
+		notice  string
+		summary string
+		output  string
+	}{
+		{"both fields", []string{"env of 21146: API_KEY=" + key, "--output", "AGENT_ROLE=plan\nMUXCODE_OPENCODE_API_KEY=" + key},
+			"[muxcode pii-scrub: 2 value(s)", "env of 21146: API_KEY= [SECRET_REDACTED]", ""},
+		{"summary only", []string{"API_KEY=" + key, "--exit-code", "0"},
+			"[muxcode pii-scrub: 1 value(s)", "API_KEY= [SECRET_REDACTED]", ""},
+		{"clean", []string{"env of 21146 read", "--output", "AGENT_ROLE=plan"},
+			"", "env of 21146 read", "AGENT_ROLE=plan"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bus.SetBusDirBase(dir)
+			t.Cleanup(bus.ResetBusDirBase)
+			session := "log-scrub"
+			t.Setenv("BUS_SESSION", session)
+			if err := bus.Init(session, filepath.Join(dir, "memory")); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+
+			if err := runLog(append([]string{"plan"}, tc.args...), nil); err != nil {
+				t.Fatalf("runLog: %v", err)
+			}
+			entries := bus.ReadConsoleEntries(bus.HistoryPath(session, "plan"), 0)
+			if len(entries) != 1 {
+				t.Fatalf("wrote %d entries, want 1", len(entries))
+			}
+			e := entries[0]
+			if strings.Contains(e.Output, key) || e.Summary != tc.summary {
+				t.Errorf("summary %q, want %q; output %q must not hold the key", e.Summary, tc.summary, e.Output)
+			}
+			banners := strings.Count(e.Output, "[muxcode pii-scrub:")
+			switch {
+			case tc.notice == "" && banners != 0:
+				t.Errorf("clean row gained a notice: %q", e.Output)
+			case tc.notice != "" && (banners != 1 || !strings.HasPrefix(e.Output, tc.notice)):
+				t.Errorf("output %q, want exactly one notice opening %q", e.Output, tc.notice)
+			}
+			if tc.output != "" && e.Output != tc.output {
+				t.Errorf("clean output altered: got %q, want %q", e.Output, tc.output)
+			}
+		})
+	}
+}
+
 func TestLogEntryFormat(t *testing.T) {
 	// Test that a log entry written via the file append path has correct structure
 	dir := t.TempDir()

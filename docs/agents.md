@@ -764,7 +764,7 @@ Standalone binary (`muxcode-llm-harness`) that replaces `muxcode agent run` for 
 | Harness agent definitions | Simplified prompts in `agents/harness/` tailored for local LLMs |
 | TUI activity log | Dracula-themed display showing Ollama calls, tool executions with output previews, and status bar |
 | Chat history truncation | Tool outputs truncated to 2KB in persistent chat history to prevent context exhaustion |
-| PII scrubbing | Automatic redaction of PII/secrets in tool output for sensitive roles |
+| PII scrubbing | Automatic redaction of PII/secrets in tool output for sensitive roles — harness conversation and history rows only; coverage differs by road, see [PII scrubbing](#pii-scrubbing) |
 
 CLI: `muxcode-llm-harness run <role> [--model MODEL] [--url URL] [--max-turns N] [--tui]`
 
@@ -791,7 +791,26 @@ Tool output from `api`, `runner`/`run`, and `watch` roles is automatically scrub
 
 Redacted values are replaced with bracketed placeholders (e.g. `[EMAIL_REDACTED]`, `[SECRET_REDACTED]`). Scrubbing is logged to stderr with redaction count per tool call. When anything is redacted, a self-documenting banner (`PIIScrubNotice`) is also prepended to the output via `ScrubPIIWithNotice()` so the agent doesn't treat masked placeholders as real data or compute lengths/counts over them.
 
-For Claude Code agents in the same roles, `muxcode pii-scrub` provides equivalent pipe-through filtering. Agent definitions for api, runner, and watch instruct the agent to pipe sensitive output through the scrubber.
+For Claude Code agents in the same roles, `muxcode pii-scrub` provides the same filtering as an **opt-in pipe**. The api, runner and watch definitions instruct the agent to pipe sensitive output through it; nothing enforces that, so it is not equivalent coverage — see *Coverage by road*.
+
+#### Coverage by road
+
+What is scrubbed depends on where the text is going ([MUX-179](requirements/completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md)):
+
+| Road | Scrubbed | Roles | Code |
+|------|----------|-------|------|
+| Local LLM harness — tool output entering the model's conversation | PII and credentials | `api`, `run`, `runner`, `watch` | `harness/loop.go` → `Executor.ScrubPII` |
+| `<role>-history.jsonl` — all four writers: PostToolUse hook capture, synthesized reply rows (`NewBusResponseEntry`), `muxcode log` self-reports, `muxcode agent`'s `logBashToHistory` | credentials | **every** role | `ScrubForRole` → `ScrubSecrets` (`bus/scrub.go`) |
+| same | PII as well | `api`, `run`, `runner`, `watch` | `ScrubForRole` → `ScrubPII` |
+| A Claude, Codex or OpenCode agent's own conversation | **nothing automatic** — `\| muxcode pii-scrub` by instruction only | — | PostToolUse fires after the agent has already seen the output |
+| `muxcode agent`'s model copy of a result; a history row's `Command`/`Description`; bus message payloads (`inbox/`, `log.jsonl`) | nothing | — | — |
+
+- **Why credentials everywhere but PII by role.** The leak that motivated the split (2026-09-11, MUX-156's third occurrence) was a credential — `MUXCODE_OPENCODE_API_KEY` from a `plan` `ps eww` — on a role outside the list. Credential patterns — a JWT, an AWS access or secret key, an `Authorization:` header with a `Bearer`/`Basic`/`Token` scheme — or `Digest`, whose whole field list is redacted to the end of the line (`piiAuthHeaderRe`, run first so a JWT inside it is one redaction), a value after `=`/`:` — a quoted JSON key such as `"password":` included — whose label contains `api_key`, `api_secret`, `auth_token`, `token`, `secret`, `password`, `passwd` or `authorization` (`piiGenericSecretRe`, 8+ character value), or a bare `key=` whose value is **secret-shaped** (`piiBareKeyRe` + `secretShaped`: 16+ characters mixing letters and digits, no `.` or `:`, not a path — so `key=timestamp`, `partition_key=…`, `key=/etc/a.pem` and an SSH `key: SHA256:…` fingerprint stay readable) — match with high precision; PII patterns match ordinary output agents reason over (a commit's author email, an SSN-shaped id), so they stay on the roles that handle external data. Rules run in order and a later rule skips a value only when it is **exactly** an earlier rule's placeholder, so nothing is counted twice while `password=[EMAIL_REDACTED]!secret987` is still redacted. Mirrored in the harness (`harness/scrub.go`). Recorded at the boundary in `ScrubForRole`'s doc comment.
+- **Order.** Each writer scrubs before it truncates. Hook capture scrubs the whole ANSI-stripped response **before** its line tail and length clip — either limit can split a secret from its label (`password=` on a dropped line, its value on a kept one) or cut a key into an unmatchable prefix. `muxcode agent`'s `logBashToHistory` scrubs before its length cap (`MUXCODE_HISTORY_MAX_OUTPUT`, 8000). Synthesized reply rows and `muxcode log` self-reports are stored whole. **Every writer strips ANSI escapes before matching** — `ScrubForRole` does it itself, since a colour code between a label and its `=` defeats every label=value pattern (`TestScrubForRole_ColoredLabelRedacted`). One `PIIScrubNotice` banner, counting every redaction, opens the stored output; a synthesized row's or self-report's summary stays its scrubbed first line, without the banner.
+- **How `plan`'s key reached `plan-history.jsonl`.** The hook keeps no row for an unclassified command (`ps eww`) outside run/runner/watch, so the agent's *reply* — synthesized into a history row — is the road; that row is now scrubbed.
+- **Safe idiom for diagnosis** (from MUX-156): read another process's role with `ps eww -p <pid> | tr ' ' '\n' | grep -E '^(AGENT_ROLE|BUS_SESSION)='` — never a bare `ps eww` or `env`, whose output reaches the conversation unscrubbed whatever the role.
+
+Pinned by `TestProcessBashHook_ScrubsExactlyTheSensitiveRoles`, `TestProcessBashHook_ScrubsCredentialsForEveryRole`, `TestProcessBashHook_SensitiveRoleRedactsSecretAcrossTail`, `TestNewBusResponseEntry_PlanDiagnosticKeyRedacted`, `TestScrubSecrets_CredentialsOnly`, `TestRunLogScrubsCredentials` and `TestLogBashToHistory_ScrubsCredentials`.
 
 ### Single-shot auto-complete
 

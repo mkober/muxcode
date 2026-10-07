@@ -347,7 +347,9 @@ func stripFrontmatter(content string) string {
 	return after
 }
 
-// logBashToHistory appends a bash command execution to the role's history JSONL.
+// logBashToHistory appends a bash command execution to the role's history
+// JSONL, its output redacted for the bus role by ScrubForRole before the
+// length cap (MUX-179). The model's own copy of result is not scrubbed.
 func logBashToHistory(cfg AgentConfig, tc ToolCall, result string) {
 	var args struct {
 		Command string `json:"command"`
@@ -378,8 +380,9 @@ func logBashToHistory(cfg AgentConfig, tc ToolCall, result string) {
 		exitCode = code
 	}
 
+	output, redacted := ScrubForRole(cfg.busRole(), result)
+
 	// Truncate output for history (configurable via MUXCODE_HISTORY_MAX_OUTPUT)
-	output := result
 	maxOutput := 8000
 	if v := os.Getenv("MUXCODE_HISTORY_MAX_OUTPUT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -388,6 +391,9 @@ func logBashToHistory(cfg AgentConfig, tc ToolCall, result string) {
 	}
 	if len(output) > maxOutput {
 		output = output[:maxOutput] + "..."
+	}
+	if redacted > 0 {
+		output = PIIScrubNotice(redacted) + output
 	}
 
 	entry := map[string]interface{}{

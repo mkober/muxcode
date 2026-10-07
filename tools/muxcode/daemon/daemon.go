@@ -3834,7 +3834,7 @@ func logTaskToConsoleHistory(session, role, action, output string, errored bool)
 	// pane content, so it may be a launch banner or partial reasoning rather
 	// than a result. bus.NewBusResponseEntry records it as unverified activity
 	// and drops payloads that are plainly TUI chrome.
-	entry, ok := bus.NewBusResponseEntry(action, output, errored)
+	entry, ok := bus.NewBusResponseEntry(role, action, output, errored)
 	if !ok {
 		return
 	}

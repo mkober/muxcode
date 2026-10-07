@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // PII patterns compiled once at package init.
@@ -24,14 +25,24 @@ var (
 	// +1-234-567-8901, (234) 567-8901, 234-567-8901, 234.567.8901
 	phoneRe = regexp.MustCompile(`(?:\+\d{1,3}[-.\s])\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b|\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b`)
 
-	// AWS access key: AKIA followed by 16 alphanumeric chars
-	awsKeyRe = regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)
+	// AWS access key id: AKIA (long-term) or ASIA (STS temporary) followed by 16 alphanumeric chars
+	awsKeyRe = regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 
 	// AWS secret key: 40-char base64-like string after common key labels
 	awsSecretRe = regexp.MustCompile(`(?i)(?:aws_secret_access_key|secret.?key|SecretAccessKey)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?`)
 
-	// Generic API key/token patterns (key=..., token=..., password=...)
-	genericSecretRe = regexp.MustCompile(`(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|bearer|password|passwd|secret|token|authorization)\s*[=:]\s*["']?([^\s"',;]{8,})["']?`)
+	// Authorization header: one Bearer/Basic/Token token of any length (Basic dTpw is u:p),
+	// or Digest's field list to end of line
+	authHeaderRe = regexp.MustCompile(`(?i)\bauthorization["']?\s*[=:]\s*["']?(?:(?:bearer|basic|token)\s+[^\s"',;]+["']?|digest\s+[^\r\n]+)`)
+
+	// Generic API key/token patterns (token=..., "password": "...")
+	genericSecretRe = regexp.MustCompile(`(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|bearer|password|passwd|secret|token|authorization)["']?\s*[=:]\s*["']?([^\s"',;]{8,})["']?`)
+
+	// Bare key label: --key=..., "key": "..." — kept only when secretShaped
+	bareKeyRe = regexp.MustCompile(`(?i)\bkey["']?\s*[=:]\s*["']?[^\s"',;]{8,}["']?`)
+
+	// A whole value that is an earlier rule's placeholder, closing JSON punctuation allowed
+	placeholderRe = regexp.MustCompile(`^\[[A-Z_]+_REDACTED\][)\]}>]*$`)
 
 	// JWT tokens: three base64 segments separated by dots
 	jwtRe = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
@@ -61,6 +72,10 @@ func ScrubPII(text string) (string, int) {
 	count := 0
 
 	// Order matters: more specific patterns first to avoid partial matches
+
+	// Authorization header first, so a JWT inside it is one redaction, not two
+	text, n := redactLabelled(text, authHeaderRe, nil)
+	count += n
 
 	// JWT tokens (before generic secret, since JWTs contain dots that confuse other patterns)
 	if jwtRe.MatchString(text) {
@@ -124,20 +139,53 @@ func ScrubPII(text string) (string, int) {
 		count += n
 	}
 
-	// Generic secrets/tokens (last — broadest pattern)
-	if genericSecretRe.MatchString(text) {
-		n := len(genericSecretRe.FindAllString(text, -1))
-		text = genericSecretRe.ReplaceAllStringFunc(text, func(m string) string {
-			idx := strings.IndexAny(m, "=:")
-			if idx >= 0 {
-				return m[:idx+1] + " " + redactSecret
-			}
-			return redactSecret
-		})
-		count += n
-	}
+	// Generic secrets/tokens, then a bare key= carrying a secret-shaped value
+	text, n = redactLabelled(text, genericSecretRe, notPlaceholder)
+	count += n
+	text, n = redactLabelled(text, bareKeyRe, secretShaped)
+	count += n
 
 	return text, count
+}
+
+// redactLabelled redacts each match of a label=value pattern that accept
+// approves (nil approves all), keeping the label. Returns the text and count.
+func redactLabelled(text string, re *regexp.Regexp, accept func(string) bool) (string, int) {
+	n := 0
+	text = re.ReplaceAllStringFunc(text, func(m string) string {
+		if accept != nil && !accept(m) {
+			return m
+		}
+		n++
+		if idx := strings.IndexAny(m, "=:"); idx >= 0 {
+			return m[:idx+1] + " " + redactSecret
+		}
+		return redactSecret
+	})
+	return text, n
+}
+
+// labelValue returns a label=value match's value, unquoted.
+func labelValue(match string) string {
+	return strings.Trim(match[strings.IndexAny(match, "=:")+1:], ` "'`)
+}
+
+// notPlaceholder skips a value that is exactly an earlier rule's placeholder
+// (token=[JWT_REDACTED]) so it is counted once, while a value that merely
+// contains one (password=[EMAIL_REDACTED]!secret987) is still redacted.
+func notPlaceholder(match string) bool {
+	return !placeholderRe.MatchString(labelValue(match))
+}
+
+// secretShaped reports whether a bare key= match carries a credential rather
+// than an ordinary key: a value of 16+ characters mixing letters and digits,
+// with no '.' or ':' and no leading '/' or '~'. Mirrors bus/scrub.go.
+func secretShaped(match string) bool {
+	v := labelValue(match)
+	if len(v) < 16 || strings.ContainsAny(v, ".:") || strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~") {
+		return false
+	}
+	return strings.IndexFunc(v, unicode.IsLetter) >= 0 && strings.IndexFunc(v, unicode.IsDigit) >= 0
 }
 
 // PIIScrubNotice returns an in-band banner to prepend to scrubbed output when

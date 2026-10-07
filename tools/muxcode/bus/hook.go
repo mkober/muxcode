@@ -165,31 +165,42 @@ func (ev *ToolEvent) resolveExitCode() string {
 // GetOutput extracts the command output from a tool event's response.
 // Returns the last maxLines lines with ANSI codes stripped, truncated to maxChars.
 func (ev *ToolEvent) GetOutput(maxLines, maxChars int) string {
-	raw := ev.responseText()
-	if raw == "" {
-		return ""
+	return clipOutput(StripANSI(ev.responseText()), maxLines, maxChars)
+}
+
+// GetScrubbedOutput is GetOutput redacted for role by ScrubForRole —
+// credentials for every role, PII as well for a PII-sensitive one. The scrub
+// runs on the whole ANSI-stripped response, before either limit, because each
+// limit can split a secret from what identifies it: the line tail can drop a
+// label whose value sits on a kept line (`password=`, newline,
+// `SuperSecret123` — the generic pattern spans the newline), and the maxChars
+// clip can cut a key into a prefix too short to match. The PIIScrubNotice
+// banner goes on after both limits so neither can drop it, and counts every
+// redaction in the response, kept lines or not. Output with nothing to redact
+// is byte-identical to GetOutput's.
+func (ev *ToolEvent) GetScrubbedOutput(role string, maxLines, maxChars int) string {
+	scrubbed, n := ScrubForRole(role, ev.responseText())
+	out := clipOutput(scrubbed, maxLines, maxChars)
+	if n > 0 {
+		out = PIIScrubNotice(n) + out
 	}
+	return out
+}
 
-	// Strip ANSI escape codes (reuses StripANSI from console.go)
-	raw = StripANSI(raw)
-
-	// Take last N lines
-	lines := strings.Split(raw, "\n")
+// clipOutput keeps text's last maxLines lines, truncates them to maxChars and
+// abbreviates HOME to ~.
+func clipOutput(text string, maxLines, maxChars int) string {
+	lines := strings.Split(text, "\n")
 	if len(lines) > maxLines {
 		lines = lines[len(lines)-maxLines:]
 	}
 	out := strings.Join(lines, "\n")
-
-	// Truncate
 	if len(out) > maxChars {
 		out = out[:maxChars-3] + "..."
 	}
-
-	// Replace HOME with ~
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		out = strings.ReplaceAll(out, home, "~")
 	}
-
 	return out
 }
 
@@ -770,6 +781,12 @@ func precheckPassed(cmdType CommandType, outcome string) bool {
 // ProcessBashHook processes a PostToolUse Bash event: classifies the command,
 // transitions the workflow and writes the history row. Chain firing is the
 // caller's (cmd/hook.go) — it reads result.Chain.
+//
+// Output is captured through GetScrubbedOutput, redacted for role by
+// ScrubForRole — the bus road's counterpart of the harness executor's
+// IsPIISensitiveRole gate (loop.go). It protects the history row and the
+// errors extracted from it, not the conversation: PostToolUse fires after the
+// agent has already been shown the raw output (MUX-179).
 func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	command := ev.ToolInput.Command
 	if command == "" {
@@ -793,7 +810,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	case CmdDeploy, CmdDeployApply:
 		maxLines, maxChars = 50, 4000
 	}
-	output := ev.GetOutput(maxLines, maxChars)
+	output := ev.GetScrubbedOutput(role, maxLines, maxChars)
 
 	result := HookBashResult{CommandType: cmdType, Chain: ChainEvent(role, cmdType, outcome)}
 

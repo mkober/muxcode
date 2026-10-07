@@ -353,3 +353,28 @@ func TestLogBashToHistory(t *testing.T) {
 		t.Errorf("history should contain 'git status', got: %s", string(data))
 	}
 }
+
+// The `muxcode agent` loop is a history road too (MUX-179): a key in a bash
+// result is stored redacted for the role.
+func TestLogBashToHistory_ScrubsCredentials(t *testing.T) {
+	session := fmt.Sprintf("test-agent-scrub-%d", rand.Int())
+	if err := Init(session, t.TempDir()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	defer func() { _ = Cleanup(session) }()
+
+	tc := ToolCall{Function: FunctionCall{Name: "bash", Arguments: json.RawMessage(`{"command":"env"}`)}}
+	const key = "sk-fake-0123456789abcdef"
+	logBashToHistory(AgentConfig{Role: "commit", Session: session}, tc, "HOME=/tmp\nOPENAI_API_KEY="+key)
+
+	data, err := os.ReadFile(HistoryPath(session, "commit"))
+	if err != nil {
+		t.Fatalf("history file not created: %v", err)
+	}
+	if strings.Contains(string(data), key) {
+		t.Errorf("key reached commit-history: %s", data)
+	}
+	if !strings.Contains(string(data), "[muxcode pii-scrub:") {
+		t.Errorf("redacted row lacks the notice banner: %s", data)
+	}
+}

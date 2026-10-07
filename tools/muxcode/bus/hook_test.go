@@ -871,6 +871,197 @@ func TestProcessBashHook_Runner(t *testing.T) {
 	}
 }
 
+func lastHookHistoryEntry(t *testing.T, path string) HookHistoryEntry {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("history not written: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var entry HookHistoryEntry
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &entry); err != nil {
+		t.Fatalf("history row unparseable: %v", err)
+	}
+	return entry
+}
+
+// MUX-179: a PII-sensitive role's history row holds the redacted output under
+// the notice banner, never the secret — the shape of plan's `ps eww` leak of a
+// real API key. Fails if ProcessBashHook's IsPIISensitiveRole gate is removed.
+func TestProcessBashHook_SensitiveRoleRedactsSecret(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-pii"
+	t.Setenv("BUS_SESSION", session)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	const secret = "sk-fake-0123456789abcdef"
+	stdout := "PID TT STAT TIME COMMAND\n21146 s001 S 0:00.01 muxcode inbox --poll MUXCODE_OPENCODE_API_KEY=" + secret + " PATH=/usr/bin"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"ps eww -p 21146"},"exit_code":0,"tool_response":{"stdout":%q}}`, stdout)))
+
+	if res := ProcessBashHook(session, "run", ev); !res.Logged {
+		t.Fatal("expected the run role's row to be logged")
+	}
+	entry := lastHookHistoryEntry(t, filepath.Join(busDir, "run-history.jsonl"))
+	if strings.Contains(entry.Output, secret) {
+		t.Errorf("secret reached run-history: %q", entry.Output)
+	}
+	if !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+		t.Errorf("redacted row lacks the notice banner: %q", entry.Output)
+	}
+	if !strings.Contains(entry.Output, "MUXCODE_OPENCODE_API_KEY= [SECRET_REDACTED]") {
+		t.Errorf("redacted row lacks the placeholder: %q", entry.Output)
+	}
+}
+
+// The label sits on the one line the 15-line tail discards and the value on
+// the first line it keeps: scrubbing only the tail would see a bare
+// "SuperSecret123" and store it.
+func TestProcessBashHook_SensitiveRoleRedactsSecretAcrossTail(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-pii-tail"
+	t.Setenv("BUS_SESSION", session)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	const secret = "SuperSecret123"
+	stdout := "password=\n" + secret
+	for i := 1; i <= 14; i++ {
+		stdout += fmt.Sprintf("\nline_%02d", i)
+	}
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"cat creds.txt"},"exit_code":0,"tool_response":{"stdout":%q}}`, stdout)))
+
+	if tail := ev.GetOutput(15, 1000); strings.Contains(tail, "password=") || !strings.Contains(tail, secret) {
+		t.Fatalf("fixture must drop the label and keep the value, tail = %q", tail)
+	}
+	if res := ProcessBashHook(session, "run", ev); !res.Logged {
+		t.Fatal("expected the run role's row to be logged")
+	}
+	entry := lastHookHistoryEntry(t, filepath.Join(busDir, "run-history.jsonl"))
+	if strings.Contains(entry.Output, secret) {
+		t.Errorf("secret reached run-history across the tail boundary: %q", entry.Output)
+	}
+	if !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+		t.Errorf("redacted row lacks the notice banner: %q", entry.Output)
+	}
+}
+
+// The bus road scrubs exactly the IsPIISensitiveRole set. It replaces a
+// membership-only check that stayed green while the gate had no call site
+// (MUX-179): this fails if the call site goes, if a member drops out, or if a
+// non-member is scrubbed — the commit agent's own row must keep the author
+// email it committed with.
+func TestProcessBashHook_ScrubsExactlyTheSensitiveRoles(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-pii-roles"
+	t.Setenv("BUS_SESSION", session)
+	histPath := filepath.Join(BusDir(session), "commit-history.jsonl")
+
+	const email = "jane.doe@example.com"
+	stdout := "[MUX-179 3107fbb] gofmt the bus package\n Author: Jane Doe <" + email + ">\n 1 file changed, 2 insertions(+)"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"git commit -m gofmt"},"exit_code":0,"tool_response":{"stdout":%q}}`, stdout)))
+
+	for _, role := range []string{"api", "run", "runner", "watch"} {
+		if res := ProcessBashHook(session, role, ev); !res.Logged {
+			t.Fatalf("%s: git commit row not logged", role)
+		}
+		entry := lastHookHistoryEntry(t, histPath)
+		if strings.Contains(entry.Output, email) || !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+			t.Errorf("%s: sensitive role's row not redacted: %q", role, entry.Output)
+		}
+	}
+	for _, role := range []string{"build", "test", "edit", "review", "commit"} {
+		ProcessBashHook(session, role, ev)
+		if entry := lastHookHistoryEntry(t, histPath); entry.Output != stdout {
+			t.Errorf("%s: non-sensitive role's row altered: got %q, want %q", role, entry.Output, stdout)
+		}
+	}
+}
+
+// Credentials are scrubbed on the hook road for every role, not only the PII
+// set (MUX-179 Phase 3) — plan, where the leak came from, included. The PII
+// gating beside it is pinned by the test above.
+func TestProcessBashHook_ScrubsCredentialsForEveryRole(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-creds"
+	t.Setenv("BUS_SESSION", session)
+	histPath := filepath.Join(BusDir(session), "commit-history.jsonl")
+
+	const key = "ghp_FAKE0123456789abcdefghij"
+	stdout := "remote: GITHUB_TOKEN=" + key + "\nTo github.com:mkober/muxcode.git\n   872f4b0..d573410  main -> main"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"git push"},"exit_code":0,"tool_response":{"stdout":%q}}`, stdout)))
+
+	for _, role := range []string{"plan", "edit", "build", "test", "review", "commit", "api", "run", "runner", "watch"} {
+		if res := ProcessBashHook(session, role, ev); !res.Logged {
+			t.Fatalf("%s: git push row not logged", role)
+		}
+		entry := lastHookHistoryEntry(t, histPath)
+		if strings.Contains(entry.Output, key) || !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+			t.Errorf("%s: credential not redacted: %q", role, entry.Output)
+		}
+	}
+}
+
+// Negative control for the gate above: clean output on a PII-sensitive role is
+// stored byte-identical — no banner, no truncation, exit code untouched.
+func TestProcessBashHook_SensitiveRoleCleanOutputUnchanged(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-pii-clean"
+	t.Setenv("BUS_SESSION", session)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	stdout := "total 3\nfile_a.go\nfile_b.go"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"ls -la"},"exit_code":3,"tool_response":{"stdout":%q}}`, stdout)))
+
+	if res := ProcessBashHook(session, "run", ev); !res.Logged {
+		t.Fatal("expected the run role's row to be logged")
+	}
+	entry := lastHookHistoryEntry(t, filepath.Join(busDir, "run-history.jsonl"))
+	if entry.Output != stdout {
+		t.Errorf("clean output altered: got %q, want %q", entry.Output, stdout)
+	}
+	if entry.ExitCode != "3" || entry.Outcome != OutcomeFailure {
+		t.Errorf("exit code/outcome altered: %q/%q, want 3/%s", entry.ExitCode, entry.Outcome, OutcomeFailure)
+	}
+}
+
+// A key straddling the maxChars clip is redacted whole: scrubbing after the
+// clip would leave "AKIAIOSFOD..." — half the key id, too short to match.
+func TestGetScrubbedOutput_RedactsBeforeClip(t *testing.T) {
+	stdout := strings.Repeat("a", 30) + " AKIAIOSFODNN7EXAMPLE trailing"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"env"},"tool_response":%q}`, stdout)))
+
+	if raw := ev.GetOutput(10, 44); !strings.HasSuffix(raw, " AKIAIOSFOD...") {
+		t.Fatalf("fixture must straddle the clip, GetOutput = %q", raw)
+	}
+	out := ev.GetScrubbedOutput("run", 10, 44)
+	if strings.Contains(out, "AKIAIOSFOD") {
+		t.Errorf("key prefix survived the clip: %q", out)
+	}
+	if !strings.HasPrefix(out, "[muxcode pii-scrub:") {
+		t.Errorf("clip dropped the notice banner: %q", out)
+	}
+}
+
+// Negative control: clean output that is tailed and clipped comes back from
+// GetScrubbedOutput exactly as GetOutput returns it.
+func TestGetScrubbedOutput_CleanMatchesGetOutput(t *testing.T) {
+	stdout, _ := json.Marshal("line_01\nline_02\n\x1b[31mline_03\x1b[0m\n" + strings.Repeat("b", 80))
+	ev, err := ParseToolEvent([]byte(`{"tool_input":{"command":"env"},"tool_response":` + string(stdout) + `}`))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+
+	want := ev.GetOutput(2, 44)
+	if !strings.HasSuffix(want, "...") || strings.Contains(want, "line_01") {
+		t.Fatalf("fixture must exercise both tail and clip, GetOutput = %q", want)
+	}
+	if got := ev.GetScrubbedOutput("run", 2, 44); got != want {
+		t.Errorf("clean output altered: got %q, want %q", got, want)
+	}
+}
+
 // A passing test precheck is not the suite's verdict: no row, no chain, and
 // the workflow stays in Testing so the suite's own success that follows is
 // not swallowed by the chain's Reviewing guard. A failing precheck is the

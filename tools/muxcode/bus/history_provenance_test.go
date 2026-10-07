@@ -20,7 +20,7 @@ func TestNewBusResponseEntry_LaunchBannerRejected(t *testing.T) {
 		"To update your account to use zsh, please run `chsh -s /bin/zsh`.\n" +
 		"LSPs are disabled"
 
-	if _, ok := NewBusResponseEntry("test", banner, false); ok {
+	if _, ok := NewBusResponseEntry("test", "test", banner, false); ok {
 		t.Fatal("launch banner was accepted as a history entry; it must be rejected outright")
 	}
 }
@@ -36,7 +36,7 @@ func TestNewBusResponseEntry_NeverRecordsSuccess(t *testing.T) {
 	}
 
 	for _, payload := range payloads {
-		entry, ok := NewBusResponseEntry("test", payload, false)
+		entry, ok := NewBusResponseEntry("test", "test", payload, false)
 		if !ok {
 			t.Fatalf("payload %q was rejected; expected an unverified entry", payload)
 		}
@@ -53,7 +53,7 @@ func TestNewBusResponseEntry_NeverRecordsSuccess(t *testing.T) {
 }
 
 func TestNewBusResponseEntry_ActionNeverBecomesCommand(t *testing.T) {
-	entry, ok := NewBusResponseEntry("review", "Looked over the diff, nothing jumped out.", false)
+	entry, ok := NewBusResponseEntry("review", "review", "Looked over the diff, nothing jumped out.", false)
 	if !ok {
 		t.Fatal("expected entry to be recorded")
 	}
@@ -70,7 +70,7 @@ func TestNewBusResponseEntry_ActionNeverBecomesCommand(t *testing.T) {
 
 func TestNewBusResponseEntry_DetectedFailureKeepsVerdict(t *testing.T) {
 	// Over-reporting failure is safe and useful; only success may not be guessed.
-	entry, ok := NewBusResponseEntry("build", "compilation aborted", true)
+	entry, ok := NewBusResponseEntry("build", "build", "compilation aborted", true)
 	if !ok {
 		t.Fatal("expected entry to be recorded")
 	}
@@ -80,12 +80,38 @@ func TestNewBusResponseEntry_DetectedFailureKeepsVerdict(t *testing.T) {
 }
 
 func TestNewBusResponseEntry_SummaryHasNoNewline(t *testing.T) {
-	entry, ok := NewBusResponseEntry("run", "Ran the script.\nSecond line.\nThird line.", false)
+	entry, ok := NewBusResponseEntry("run", "run", "Ran the script.\nSecond line.\nThird line.", false)
 	if !ok {
 		t.Fatal("expected entry to be recorded")
 	}
 	if entry.Summary != "Ran the script." {
 		t.Errorf("Summary = %q, want first line only — an embedded newline corrupts the console row", entry.Summary)
+	}
+}
+
+// MUX-179: plan relaying a diagnostic that printed a key. The hook keeps no
+// row of a plan `ps eww`, so its reply is how that output reaches
+// plan-history.jsonl. plan is outside the PII role list: the credential is
+// redacted by the every-role scrub, the email beside it — PII, no credential —
+// is kept, and the summary stays the reply's first line, not the banner.
+func TestNewBusResponseEntry_PlanDiagnosticKeyRedacted(t *testing.T) {
+	const key = "sk-fake-0123456789abcdef"
+	payload := "Listener 21146 is plan's: MUXCODE_OPENCODE_API_KEY=" + key + " AGENT_ROLE=plan\nOwner: jane.doe@example.com"
+	entry, ok := NewBusResponseEntry("plan", "diagnose", payload, false)
+	if !ok {
+		t.Fatal("expected entry to be recorded")
+	}
+	if strings.Contains(entry.Output, key) || strings.Contains(entry.Summary, key) {
+		t.Errorf("key reached the plan row: output %q, summary %q", entry.Output, entry.Summary)
+	}
+	if !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+		t.Errorf("redacted output lacks the notice banner: %q", entry.Output)
+	}
+	if !strings.HasPrefix(entry.Summary, "Listener 21146") {
+		t.Errorf("Summary = %q, want the reply's scrubbed first line", entry.Summary)
+	}
+	if !strings.Contains(entry.Output, "jane.doe@example.com") {
+		t.Errorf("plan's email was scrubbed; only credentials are scrubbed outside the PII roles: %q", entry.Output)
 	}
 }
 

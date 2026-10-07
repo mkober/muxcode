@@ -80,14 +80,13 @@ func TestScrubPII_Phone(t *testing.T) {
 	}
 }
 
+// ASIA is the STS temporary-credential prefix, issued by every assumed role.
 func TestScrubPII_AWSKey(t *testing.T) {
-	input := "aws_access_key_id = AKIAIOSFODNN7EXAMPLE"
-	out, n := ScrubPII(input)
-	if n == 0 {
-		t.Fatal("expected redactions")
-	}
-	if strings.Contains(out, "AKIAIOSFODNN7EXAMPLE") {
-		t.Error("AWS key not redacted")
+	for _, key := range []string{"AKIAIOSFODNN7EXAMPLE", "ASIAIOSFODNN7EXAMPLE"} {
+		out, n := ScrubPII("aws_access_key_id = " + key)
+		if n != 1 || strings.Contains(out, key) {
+			t.Errorf("AWS key %s not redacted once (%d): %q", key, n, out)
+		}
 	}
 }
 
@@ -175,6 +174,44 @@ func TestScrubPII_Multiple(t *testing.T) {
 	}
 	if strings.Contains(out, "123-45-6789") {
 		t.Error("SSN not redacted")
+	}
+}
+
+// Mirrors bus TestScrubSecrets_HeaderQuotedLabelAndBareKey (MUX-179): the two
+// copies of the patterns must redact and keep the same inputs.
+func TestScrubPII_HeaderQuotedLabelAndBareKey(t *testing.T) {
+	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456ghi789"
+	digest := `Authorization: Digest username="alice", nonce="abcdef0123456789", response="0123456789abcdef0123456789abcdef"`
+	redacted := map[string]string{
+		"Authorization: Bearer opaque0123456789abcdef":       "opaque0123456789abcdef",
+		"Authorization: Basic dTpw":                          "dTpw",
+		`{"Authorization": "Bearer opaque0123456789abcdef"}`: "opaque0123456789abcdef",
+		`{"user": "svc", "password": "hunter2secret"}`:       "hunter2secret",
+		"openssl enc --key=sk0123456789abcdefXYZ":            "sk0123456789abcdefXYZ",
+		"Authorization: Bearer " + jwt:                       "eyJhbGci",
+		"token=" + jwt:                                       "eyJhbGci",
+		"password=[hunter2secret0]":                          "hunter2secret0",
+		digest:                                               "0123456789abcdef0123456789abcdef",
+	}
+	for input, secret := range redacted {
+		out, n := ScrubPII(input)
+		if n != 1 || strings.Contains(out, secret) {
+			t.Errorf("not redacted once (%d): %q -> %q", n, input, out)
+		}
+	}
+	if out, n := ScrubPII("password=alice@example.com!secret987"); n != 2 || strings.Contains(out, "secret987") {
+		t.Errorf("secret suffix after a placeholder survived (%d): %q", n, out)
+	}
+	for _, input := range []string{
+		"key=timestamp",
+		"key=/etc/ssl/private/server.pem",
+		"partition_key=user_0123456789abcdef",
+		`{"token_type": "Bearer", "expires_in": 3600}`,
+		`{"Authorization": "Bearer "}`,
+	} {
+		if out, n := ScrubPII(input); n != 0 || out != input {
+			t.Errorf("lookalike redacted (%d): %q -> %q", n, input, out)
+		}
 	}
 }
 
