@@ -184,19 +184,3 @@ func TestScrubPII_Multiple(t *testing.T) {
 		t.Error("SSN not redacted")
 	}
 }
-
-func TestIsPIISensitiveRole_Bus(t *testing.T) {
-	sensitive := []string{"api", "runner", "run", "watch"}
-	for _, r := range sensitive {
-		if !IsPIISensitiveRole(r) {
-			t.Errorf("expected %q to be PII-sensitive", r)
-		}
-	}
-
-	notSensitive := []string{"build", "test", "edit", "review", "commit"}
-	for _, r := range notSensitive {
-		if IsPIISensitiveRole(r) {
-			t.Errorf("expected %q to NOT be PII-sensitive", r)
-		}
-	}
-}

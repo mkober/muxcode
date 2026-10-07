@@ -946,6 +946,38 @@ func TestProcessBashHook_SensitiveRoleRedactsSecretAcrossTail(t *testing.T) {
 	}
 }
 
+// The bus road scrubs exactly the IsPIISensitiveRole set. It replaces a
+// membership-only check that stayed green while the gate had no call site
+// (MUX-179): this fails if the call site goes, if a member drops out, or if a
+// non-member is scrubbed — the commit agent's own row must keep the author
+// email it committed with.
+func TestProcessBashHook_ScrubsExactlyTheSensitiveRoles(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-pii-roles"
+	t.Setenv("BUS_SESSION", session)
+	histPath := filepath.Join(BusDir(session), "commit-history.jsonl")
+
+	const email = "jane.doe@example.com"
+	stdout := "[MUX-179 3107fbb] gofmt the bus package\n Author: Jane Doe <" + email + ">\n 1 file changed, 2 insertions(+)"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"git commit -m gofmt"},"exit_code":0,"tool_response":{"stdout":%q}}`, stdout)))
+
+	for _, role := range []string{"api", "run", "runner", "watch"} {
+		if res := ProcessBashHook(session, role, ev); !res.Logged {
+			t.Fatalf("%s: git commit row not logged", role)
+		}
+		entry := lastHookHistoryEntry(t, histPath)
+		if strings.Contains(entry.Output, email) || !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+			t.Errorf("%s: sensitive role's row not redacted: %q", role, entry.Output)
+		}
+	}
+	for _, role := range []string{"build", "test", "edit", "review", "commit"} {
+		ProcessBashHook(session, role, ev)
+		if entry := lastHookHistoryEntry(t, histPath); entry.Output != stdout {
+			t.Errorf("%s: non-sensitive role's row altered: got %q, want %q", role, entry.Output, stdout)
+		}
+	}
+}
+
 // Negative control for the gate above: clean output on a PII-sensitive role is
 // stored byte-identical — no banner, no truncation, exit code untouched.
 func TestProcessBashHook_SensitiveRoleCleanOutputUnchanged(t *testing.T) {

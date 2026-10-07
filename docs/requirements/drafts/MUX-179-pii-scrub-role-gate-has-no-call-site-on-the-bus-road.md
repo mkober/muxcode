@@ -68,7 +68,7 @@ diagnosing it but is independent of it.
 - [x] Tool output from a sensitive role is scrubbed **on the bus road**, not only in the harness (Phase 1: `ProcessBashHook` → `GetScrubbedOutput`; `TestProcessBashHook_SensitiveRoleRedactsSecret`)
 - [ ] A secret in a diagnostic command's output never reaches `<role>-history.jsonl` or the conversation unredacted (**history half met** in Phase 1 — `TestProcessBashHook_SensitiveRoleRedactsSecret`, `…RedactsSecretAcrossTail`, `TestGetScrubbedOutput_RedactsBeforeClip`; the history row's `Command`/`Description` fields are still unscrubbed. **The conversation half is not**: `PostToolUse` fires after the provider has already shown the agent the raw output, so this road cannot redact what the agent sees — a different mechanism, or a narrowed promise, is for [Phase 3](#phase-3-decide-coverage) to decide)
 - [x] **Negative control:** ordinary output with no secret is passed through **unchanged** — no banner, no truncation, no altered exit code (Phase 1: `TestProcessBashHook_SensitiveRoleCleanOutputUnchanged`, `TestGetScrubbedOutput_CleanMatchesGetOutput`)
-- [x] A test fails if the call site is removed — the current test passes with the feature gone (Phase 1: `TestProcessBashHook_SensitiveRoleRedactsSecret` drives `ProcessBashHook` end to end and reads the history row — it fails if the `IsPIISensitiveRole` gate is removed, which the membership-only `TestIsPIISensitiveRole_Bus` never did)
+- [x] A test fails if the call site is removed — the current test passes with the feature gone (Phase 1: `TestProcessBashHook_SensitiveRoleRedactsSecret` drives `ProcessBashHook` end to end and reads the history row — it fails if the `IsPIISensitiveRole` gate is removed, which the membership-only `TestIsPIISensitiveRole_Bus` never did; Phase 2 replaced that test with `TestProcessBashHook_ScrubsExactlyTheSensitiveRoles`, which also fails on a membership change either way)
 - [ ] The role list is reconsidered on evidence: the leak came from `plan`, which is not a member
 - [ ] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) state what is actually covered, per road
 
@@ -127,7 +127,15 @@ coverage decision — the original leak came from `plan`.
 
 ### Phase 2: Make the test non-vacuous
 
-- [ ] Replace/augment `TestIsPIISensitiveRole_Bus` so it fails when the call site is removed
+- [x] Replace/augment `TestIsPIISensitiveRole_Bus` so it fails when the call site is removed (**replaced** — removed from `bus/scrub_test.go`; `TestProcessBashHook_ScrubsExactlyTheSensitiveRoles` in `bus/hook_test.go` drives `ProcessBashHook` with a `git commit` row carrying an author email, which every role logs to `commit-history.jsonl`, and asserts the stored row: redacted under the banner for `api`, `run`, `runner`, `watch`; byte-identical for `build`, `test`, `edit`, `review`, `commit` — the commit agent keeps its own author email. It fails if the call site goes, a member drops out, or a non-member is scrubbed; the old test caught only edits to the map. An email was chosen over a credential so the negative control survives a Phase 3 "credentials everywhere" decision; `plan` is in neither list, left for Phase 3)
+
+#### Phase 2 verification note
+
+Verified 2026-10-07 14:20 by plan from the working tree (run `1791395671`; Phase 1 committed as
+`47a63c5`). Test-only change; test node **success** on the full suite, review 0 must-fix ("the old
+map-only test adds no distinct protection"). The criterion *a test fails if the call site is removed*,
+ticked in Phase 1 on `TestProcessBashHook_SensitiveRoleRedactsSecret`, now rests on this replacement as
+well, which additionally fails on a membership change in either direction.
 - [x] Assert the *behaviour* (output redacted) rather than the map's membership (already met by Phase 1's `TestProcessBashHook_SensitiveRoleRedactsSecret` and `…AcrossTail`, which drive `ProcessBashHook` and read the history row; the membership-only `TestIsPIISensitiveRole_Bus` is the step above's to replace or keep)
 
 ### Phase 3: Decide coverage
@@ -162,7 +170,7 @@ same shape, one road up).
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 10m | 2026-10-07 14:15 |
+| MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road | 18m | 2026-10-07 14:20 |
 
 ## Status
 
