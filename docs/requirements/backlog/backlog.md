@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| [`MUX-179`](../drafts/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII Scrub Role Gate Is Dead Code on the Bus Road | 2026-10-07 | In Progress — moved to `drafts/` and set as the active spec on the user's instruction; next defect by rank |
+| — | _None — MUX-179 closed 2026-10-07; the next active spec is the user's call_ | — | — |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -46,7 +46,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-179`](../drafts/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII scrub role gate is dead code on the bus road | High | — |
+| 1 | 1 | [`MUX-203`](./MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | A sensitive role's own conversation is never scrubbed — PostToolUse cannot reach it | High | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) |
 | 2 | 1 | [`MUX-174`](./MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) | `./test.sh` exits 1 repo-wide on the `test` role | High | — |
 | 3 | 1 | [`MUX-176`](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | The run chain fires `success` for a call that has not finished | High | ⇄ [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) |
 | 4 | 1 | [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The watch chain fires on every bash call and pastes the raw command into the message | Medium | ⇄ [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) |
@@ -102,6 +102,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-203`](./MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | A Sensitive Role's Own Conversation Is Never Scrubbed — PostToolUse Cannot Reach It | High | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned Session Processes Are Never Reaped | High | — |
@@ -312,6 +313,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-144`](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) | A `wait_human` Gate Is Openable by Any Agent, Unaudited |
 | [`MUX-007`](../completed/MUX-007-verify-spec-stale-review-refire.md) | Verify-Spec Stale Review Refire |
 | [`MUX-178`](../completed/MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | A Graph Spawn Node Credits an Unanswered Seed as Success, and the Multi-Phase Fixture Still Asserts the Retired Worktree Model |
+| [`MUX-179`](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The PII Scrub Role Gate Has No Call Site on the Bus Road |
 | [`MUX-182`](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) | A Cancelled Run Keeps Working, and Nothing Downstream Can Tell Who Launched It |
 | [`MUX-183`](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md) | `phaseCommitReady` Credits a Fresh Run With Phases It Never Shipped |
 | [`MUX-186`](./MUX-186-pr-89-cancel-races-and-fail-open-cleanup-merged-unaddressed.md) | Cancel Races and Fail-Open Cleanup Merged Unaddressed in PR #89 |

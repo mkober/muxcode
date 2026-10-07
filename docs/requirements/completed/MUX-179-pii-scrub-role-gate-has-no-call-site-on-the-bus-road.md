@@ -66,7 +66,7 @@ diagnosing it but is independent of it.
 ### Acceptance criteria
 
 - [x] Tool output from a sensitive role is scrubbed **on the bus road**, not only in the harness (Phase 1: `ProcessBashHook` → `GetScrubbedOutput`; `TestProcessBashHook_SensitiveRoleRedactsSecret`)
-- [ ] A secret in a diagnostic command's output never reaches `<role>-history.jsonl` or the conversation unredacted (**history half met** in Phase 1 — `TestProcessBashHook_SensitiveRoleRedactsSecret`, `…RedactsSecretAcrossTail`, `TestGetScrubbedOutput_RedactsBeforeClip`; the history row's `Command`/`Description` fields are still unscrubbed. Phase 3 widened the history half: credentials are redacted for **every** role on all four history writers, so the original `plan` leak shape is covered. **The conversation half is not**: `PostToolUse` fires after the provider has already shown the agent the raw output, so this road cannot redact what the agent sees — a different mechanism, or a narrowed promise, is for [Phase 3](#phase-3-decide-coverage) to decide)
+- [x] A secret in a diagnostic command's output never reaches `<role>-history.jsonl` or the conversation unredacted — **conversation half deferred to [MUX-203](../backlog/MUX-203-sensitive-role-conversation-is-never-scrubbed.md)** (user decision 2026-10-07, option 3: close the credential gaps here, file the conversation half as its own defect) (**history half met** in Phase 1 — `TestProcessBashHook_SensitiveRoleRedactsSecret`, `…RedactsSecretAcrossTail`, `TestGetScrubbedOutput_RedactsBeforeClip`; the history row's `Command`/`Description` fields are still unscrubbed. Phase 3 widened the history half: credentials are redacted for **every** role on all four history writers, so the original `plan` leak shape is covered. **The conversation half is not**: `PostToolUse` fires after the provider has already shown the agent the raw output, so this road cannot redact what the agent sees — a different mechanism, or a narrowed promise, is for [Phase 3](#phase-3-decide-coverage) to decide)
 - [x] **Negative control:** ordinary output with no secret is passed through **unchanged** — no banner, no truncation, no altered exit code (Phase 1: `TestProcessBashHook_SensitiveRoleCleanOutputUnchanged`, `TestGetScrubbedOutput_CleanMatchesGetOutput`)
 - [x] A test fails if the call site is removed — the current test passes with the feature gone (Phase 1: `TestProcessBashHook_SensitiveRoleRedactsSecret` drives `ProcessBashHook` end to end and reads the history row — it fails if the `IsPIISensitiveRole` gate is removed, which the membership-only `TestIsPIISensitiveRole_Bus` never did; Phase 2 replaced that test with `TestProcessBashHook_ScrubsExactlyTheSensitiveRoles`, which also fails on a membership change either way)
 - [x] The role list is reconsidered on evidence: the leak came from `plan`, which is not a member (Phase 3: reconsidered and **kept** — the leak was a credential, and credentials are now scrubbed for every role regardless of the list; PII stays gated on the roles that handle external data. [Decision 1](#decision-1--credentials-everywhere-pii-by-role))
@@ -174,9 +174,13 @@ against plan's own text**: the credential set was overstated — "labelled `key=
 claimed for every history writer when only hook capture strips ANSI and tails lines — synthesized rows
 and `muxcode log` store whole, `logBashToHistory` scrubs before its 8000-char cap. Both fixed in
 `agents.md` and `CLAUDE.md` with matching wording, and Decision 1 here aligned; second review pass
-0/0/0. **Follow-up surfaced, not fixed**: a bare `key=` and an `Authorization: Bearer <token>` header
-— the commonest header in API output, on a PII-sensitive role — survive every rule; a one-pattern
-widening, but its own backlog defect, not a docs-phase change.
+0/0/0. **Follow-up surfaced here, then fixed**: a bare `key=` and an `Authorization: Bearer <token>` header
+— the commonest header in API output, on a PII-sensitive role — survived every rule. On 2026-10-07 the
+user had edit close them in `bus/scrub.go` and the harness mirror: `piiAuthHeaderRe` (`Bearer`/`Basic`/
+`Token`/`Digest`), quoted JSON labels in `piiGenericSecretRe`, `piiBareKeyRe` gated by `secretShaped`,
+and `StripANSI` inside `ScrubForRole` so every writer — not only hook capture — matches through colour
+codes (`TestScrubPII_HeaderQuotedLabelAndBareKey`, `TestScrubSecrets_HeaderQuotedLabelAndBareKey`,
+`TestScrubForRole_ColoredLabelRedacted`). The docs were updated to match.
 
 ### Phase 5: Integration test
 
@@ -222,9 +226,12 @@ same shape, one road up).
 patterns from the PII patterns, or widen the role list — and the evidence chose the first. The leak
 that motivated this spec was a **credential**, from `plan`, a role outside the list; credentials (JWTs,
 AWS keys, and a value after `=`/`:` whose label contains `api_key`, `api_secret`, `auth_token`, `token`,
-`secret`, `password`, `passwd` or `authorization` — `piiGenericSecretRe`; a bare `key=` and an
-`Authorization: Bearer <token>` header are **not** matched, a gap the Phase 4 review recorded as a
-follow-up) match with high precision, so redacting them for every
+`secret`, `password`, `passwd` or `authorization` — `piiGenericSecretRe`, quoted JSON labels included;
+an `Authorization:` header with a `Bearer`/`Basic`/`Token` scheme, or `Digest` redacted to the end of the
+line — `piiAuthHeaderRe`; and a
+bare `key=` whose value is secret-shaped — `piiBareKeyRe` + `secretShaped`. The last two were gaps the
+Phase 4 review found and the user had edit close on 2026-10-07, harness mirror included, with ANSI now
+stripped inside `ScrubForRole` for every writer) match with high precision, so redacting them for every
 role costs almost nothing. The PII patterns are different: an email matches a commit's author line, an
 SSN-shaped number matches an id in a test log — ordinary output agents reason over — so they stay gated
 on the roles that handle external data (`api`, `run`, `runner`, `watch`). `ScrubForRole` is that rule:
@@ -241,5 +248,10 @@ covered by the credential half.
 
 ## Status
 
-In Progress — moved from `backlog/` to `drafts/` and set as the active spec on the user's instruction,
-2026-10-07 (next defect by rank, 1 / Tier 1).
+Complete — 2026-10-07. All five phases and every acceptance criterion verified; closed out the same day
+by the `50-spec-to-pr` run `1791395671` and moved to `completed/`. Filed 2026-09-11; set active and moved
+to `drafts/` on the user's instruction 2026-10-07 (rank 1 / Tier 1); phases on
+`MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road`: `47a63c5`, `07993c5`, `78c9b9d`, `ac9958f`,
+`ec93523`, plus the user-directed credential-gap fixes after Phase 5. Criterion 2's conversation half is
+deferred to [MUX-203](../backlog/MUX-203-sensitive-role-conversation-is-never-scrubbed.md). Active branch
+time 53m.
