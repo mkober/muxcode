@@ -1275,7 +1275,7 @@ Core code: `refreshSessionDaemon()` in `cmd/launcher.go`, `EnsureSessionDaemonCu
 
 ### Self-upgrade flow
 
-`muxcode upgrade` and the **Upgrade MuxCode** modal ([MUX-202](requirements/drafts/MUX-202-self-upgrade-from-the-quick-menu.md)) bring a machine onto the latest GitHub release without a checkout, and end by running the daemon-upgrade contract above on the binary they just installed.
+`muxcode upgrade` and the **Check for Updates** modal ([MUX-202](requirements/completed/MUX-202-self-upgrade-from-the-quick-menu.md)) bring a machine onto the latest GitHub release without a checkout, and end by running the daemon-upgrade contract above on the binary they just installed.
 
 ```
 Check → Download → Build → Install → Verify → Restart daemons → Reload tmux config

@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| [`MUX-202`](../drafts/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons | 2026-10-06 | In Progress — Phase 1 (release check) verified 2026-10-06; filed in `drafts/` on the user's request to work on now; active spec set |
+| — | _None — MUX-202 closed 2026-10-07; the next active spec is the user's call_ | — | — |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -187,7 +187,6 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
-| [`MUX-202`](../drafts/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons | High | — |
 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` Does Not Exist, but Agent Definitions Tell Agents to Use It | Low | — |
 | [`MUX-158`](./MUX-158-api-surface-in-control-pane.md) | API Testing as a Control-Pane Surface, Served Without an LLM | Medium | — |
 | [`MUX-128`](./MUX-128-fkey-navigation-for-spawn-windows.md) | F11 and F12 Navigate to Spawned Worker Windows | Medium | — |
@@ -324,6 +323,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-148`](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) | A Node Outcome Reads "a Command Ran" as "the Task Was Done" |
 | [`MUX-187`](../completed/MUX-187-pr-merge-merges-over-unresolved-review-comments.md) | `110-pr-merge` Merges Over Unresolved Review Comments |
 | [`MUX-198`](../completed/MUX-198-graph-requests-carry-literal-verdicts-an-echo-satisfies.md) | Builtin Graph Requests Carry Literal Verdicts an Echoed Request Satisfies |
+| [`MUX-202`](../completed/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons |
 | [`MUX-139`](../completed/MUX-139-claude-agent-auto-resume.md) | Claude Agent Auto-Resume After Mass Exit |
 | [`MUX-141`](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | Auto Agent Restarts Relaunch Autonomous Graph Runs |
 | [`MUX-142`](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned Worker Delegates Build/Test Into the Wrong Tree |

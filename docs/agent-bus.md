@@ -328,7 +328,7 @@ Integration test: `scripts/test-version.sh` — covers the stamped identity, `ve
 
 ### `muxcode upgrade`
 
-Self-upgrade from the latest GitHub release, no checkout needed ([MUX-202](requirements/drafts/MUX-202-self-upgrade-from-the-quick-menu.md)): check, download the release source, rebuild and install locally, verify, restart the daemons, reload the tmux config. This is the non-interactive form of the **Upgrade MuxCode** modal below.
+Self-upgrade from the latest GitHub release, no checkout needed ([MUX-202](requirements/completed/MUX-202-self-upgrade-from-the-quick-menu.md)): check, download the release source, rebuild and install locally, verify, restart the daemons, reload the tmux config. This is the non-interactive form of the **Check for Updates** modal below.
 
 ```bash
 muxcode upgrade [--check] [--force] [--json] [--events <file>] [--expect-tag <tag> [--expect-session <name>]...]
@@ -340,24 +340,25 @@ muxcode upgrade [--check] [--force] [--json] [--events <file>] [--expect-tag <ta
 - `--check --json` — `{installed:{version,commit,date,go,os,arch}, latest:{tag,tarball_url,published_at}, verdict: current|ahead|newer|unknown, reason?, missing_tools?}`; a failed lookup prints `{installed, error}` so a script cannot misread empty release fields.
 - `--json` (full run) — `{installed, latest, verdict, upgraded, steps:[{name,success,note,error,sub,duration_ns}], error}`. `upgraded` is `false` both for a failed run and for one that stopped at `Check`.
 - `--force` — rebuild and reinstall the latest release even when current, ahead or unknown. A dev build past the latest tag is never downgraded without it.
+- **Dev-build warning.** When the installed binary is an *unreleased* build — a `git describe` suffix (`v0.1.20-9-g7d339be`), a `-dirty` tree, or no rank at all — `Check` warns that upgrading replaces it with the release and drops whatever the release lacks (`UpgradeCheck.DevBuildWarning`): `Check: warning — installed <v> is an unreleased dev build — upgrading replaces it with release <tag> and drops any changes that release does not have` on `--check` (the exit code is unchanged), the same sentence in a full run's `Check` step note, and a `⚠` line on the modal's confirm screen. Version order alone cannot see this case — a branch build can be *behind* the latest tag in version yet *ahead* in features, and on 2026-10-07 one was replaced without a word. An exact release tag gets no warning.
 - `--events <file>`, `--expect-tag <tag>`, `--expect-session <name>` — the modal's detached run (below). `--events` appends each step and the run's end to the file as JSON lines; `--expect-tag` binds the run to the release the user confirmed, and each `--expect-session` to a daemon they were shown. `--expect-session` needs `--expect-tag`.
 - Where it writes: the release source and build log under `~/.cache/muxcode/upgrade/<tag>/`, the binary and configs where `make install` puts them (`BINDIR`/`CONFIGDIR`). Every step writes a lifecycle row — see [Configuration → Self-upgrade](configuration.md#self-upgrade) for the cache layout, limits and overrides, and [Architecture → Self-upgrade flow](architecture.md#self-upgrade-flow) for why `Build` and `Install` are separate and why the daemon restart runs the *new* binary.
 
 ### `muxcode upgrade-ui`
 
-Upgrade MuxCode TUI — the interactive face of `muxcode upgrade`, used by the `upgrade` modal.
+Check for Updates TUI — the interactive face of `muxcode upgrade`, used by the `upgrade` modal.
 
 ```bash
 muxcode upgrade-ui
 ```
 
-Launched via `muxcode modal open upgrade` — the **`Upgrade MuxCode`** entry (key `U`) in the `prefix + b` quick menu, next to `Restart Agents`; the modal is registered in `bus/modal.go` with the `provider`/`restart` sizes.
+Launched via `muxcode modal open upgrade` — the **`Check for Updates`** entry (key `U`) in the `prefix + b` quick menu, in the config group directly below `Reload Config`; the modal is registered in `bus/modal.go` as `upgrade` (its title ` Check for Updates `) with the `provider`/`restart` sizes.
 
 **Screens:**
 
 | Screen | Shows |
 |--------|-------|
-| Confirm | The check result and the consequence: `installed vA → latest vB; rebuilds and installs to <BINDIR> and <CONFIGDIR>, then restarts N daemons: <sessions>`. Up-to-date and ahead are explicit states, not an empty body — they offer only `f` |
+| Confirm | The check result and the consequence: `installed vA → latest vB; rebuilds and installs to <BINDIR> and <CONFIGDIR>, then restarts N daemons: <sessions>`. Up-to-date and ahead are explicit states, not an empty body — they offer only `f`. An unreleased installed build adds a `⚠` dev-build warning line (shortened on a short pane, never dropped) before the consequence |
 | Progress | One row per step — `○` pending, `⟳` running, `✓` done, `✗` failed with the cause wrapped to the pane — session sub-rows under `Restart daemons`, and a bar |
 | Done | The version delta and the follow-up the upgrade does not do (`Restart Agents`), or where it stopped and why |
 

@@ -380,7 +380,7 @@ A build with no stamp is not broken: `bus/version.go` falls back to Go's embedde
 
 ### Self-upgrade
 
-`muxcode upgrade` and the **Upgrade MuxCode** modal (`prefix + b`, `U`) install the latest GitHub release from its source tarball ([MUX-202](requirements/drafts/MUX-202-self-upgrade-from-the-quick-menu.md); verb reference in [Agent Bus CLI](agent-bus.md#muxcode-upgrade)). Every knob is an environment variable; none is required.
+`muxcode upgrade` and the **Check for Updates** modal (`prefix + b`, `U`) install the latest GitHub release from its source tarball ([MUX-202](requirements/completed/MUX-202-self-upgrade-from-the-quick-menu.md); verb reference in [Agent Bus CLI](agent-bus.md#muxcode-upgrade)). Every knob is an environment variable; none is required.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
