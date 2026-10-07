@@ -21,11 +21,13 @@ import (
 // $FAKE_INSTALLED_VERSION, else the VERSION it was given, and whose
 // `upgrade-daemons` logs its call and the muxcode its PATH resolves — the
 // binary a real one relaunches daemons with — to $FAKE_DAEMONS_LOG, answers
-// `--session <name>` with that one session restarted, and otherwise prints
-// $FAKE_DAEMONS_OUT, $FAKE_DAEMONS_ERR on stderr, and exits
-// $FAKE_DAEMONS_EXIT. FAKE_MAKE_FAIL names a target to fail. With
-// FAKE_MAKE_BLOCK set, build touches $FAKE_MAKE_BLOCK.started and waits for
-// $FAKE_MAKE_BLOCK to exist.
+// `--session <name>` with that one session restarted — or, for the session
+// named by $FAKE_DAEMONS_GONE, with cmd/upgrade.go's no-daemon line and exit
+// 0 — and otherwise prints $FAKE_DAEMONS_OUT, $FAKE_DAEMONS_ERR on stderr,
+// and exits $FAKE_DAEMONS_EXIT. FAKE_MAKE_FAIL names a target to fail;
+// install-late fails install after it has written the binary, as a real
+// install's config copy can. With FAKE_MAKE_BLOCK set, build touches
+// $FAKE_MAKE_BLOCK.started and waits for $FAKE_MAKE_BLOCK to exist.
 const fakeMakeScript = `#!/bin/sh
 echo "$(pwd -P) $*" >> "$FAKE_MAKE_LOG"
 target=$1
@@ -53,6 +55,9 @@ case "\$1" in
     echo '{"version":"$v","commit":"unknown","date":"2026-10-06T00:00:00Z"}' ;;
   upgrade-daemons)
     echo "\$* resolved=\$(command -v muxcode)" >> "\$FAKE_DAEMONS_LOG"
+    if [ "\$2" = "--session" ] && [ "\$3" = "\$FAKE_DAEMONS_GONE" ]; then
+      echo "upgrade-daemons: no running daemon found for session \$3"; exit 0
+    fi
     if [ "\$2" = "--session" ]; then printf '  %s: daemon restarted\n' "\$3"; exit 0; fi
     printf '%s' "\$FAKE_DAEMONS_OUT"
     [ -n "\$FAKE_DAEMONS_ERR" ] && printf '%s\n' "\$FAKE_DAEMONS_ERR" >&2
@@ -60,6 +65,10 @@ case "\$1" in
 esac
 EOF
   chmod 755 "$bindir/muxcode"
+  if [ "$FAKE_MAKE_FAIL" = install-late ]; then
+    echo "cp: config/tmux.conf: No space left on device" >&2
+    exit 2
+  fi
 fi
 echo "make $target done"
 `
@@ -127,6 +136,7 @@ func newUpgradeFixture(t *testing.T, installed, tag string) *upgradeFixture {
 	t.Setenv("FAKE_DAEMONS_OUT", fakeDaemonsOut)
 	t.Setenv("FAKE_DAEMONS_ERR", "")
 	t.Setenv("FAKE_DAEMONS_EXIT", "0")
+	t.Setenv("FAKE_DAEMONS_GONE", "")
 	t.Setenv("FAKE_TMUX_LOG", f.tmuxLog)
 	t.Setenv("FAKE_TMUX_NO_SERVER", "")
 	f.opts = SelfUpgradeOptions{
@@ -380,10 +390,14 @@ func TestSelfUpgradeBuildFailureKeepsInstalledBinary(t *testing.T) {
 
 // A failed Verify never reaches the daemon step: restarting daemons onto a
 // binary that does not report the release would spread a broken install to
-// every session. The install test, where Verify passes, is the half where
-// upgrade-daemons does run.
+// every session. Nor does it leave that binary in place under the daemons it
+// did not restart — the previous one is put back. The install test, where
+// Verify passes, is the half where upgrade-daemons runs and the new binary
+// stays.
 func TestSelfUpgradeVerifyMismatchStopsPipeline(t *testing.T) {
 	f := newUpgradeFixture(t, "v0.1.20", "v0.1.21")
+	previous := "#!/bin/sh\necho previous build\n"
+	writeUpgradeFile(t, filepath.Join(f.bindir, "muxcode"), previous, 0o755)
 	t.Setenv("FAKE_INSTALLED_VERSION", "v0.1.20")
 
 	s, err := RunSelfUpgrade(context.Background(), f.opts, nil)
@@ -394,10 +408,52 @@ func TestSelfUpgradeVerifyMismatchStopsPipeline(t *testing.T) {
 	if last.Name != "Verify" || !strings.Contains(last.Error, "reports v0.1.20, want v0.1.21") {
 		t.Errorf("last step %+v, want Verify naming both versions", last)
 	}
+	if !strings.Contains(last.Error, "restored the previous "+filepath.Join(f.bindir, "muxcode")) {
+		t.Errorf("Verify error %q, want it to say the previous binary was restored", last.Error)
+	}
+	if got, err := os.ReadFile(filepath.Join(f.bindir, "muxcode")); err != nil || string(got) != previous {
+		t.Errorf("installed binary = %q (err %v), want the previous bytes restored", got, err)
+	}
 	for _, log := range []string{f.daemonsLog, f.tmuxLog} {
 		if _, err := os.Stat(log); !os.IsNotExist(err) {
 			t.Errorf("%s exists — a step after the failed Verify ran", log)
 		}
+	}
+}
+
+// make install writes the binary before the configs, so an install that fails
+// late has already replaced it; the previous binary is restored, or the new
+// one removed when there was none. The install test, which succeeds, is the
+// half where the new binary stays.
+func TestSelfUpgradeLateInstallFailureRestoresBinary(t *testing.T) {
+	for _, c := range []struct{ name, previous, said string }{
+		{"previous binary restored", "#!/bin/sh\necho previous build\n", "restored the previous "},
+		{"fresh install removed", "", "removed the new "},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newUpgradeFixture(t, "v0.1.20", "v0.1.21")
+			bin := filepath.Join(f.bindir, "muxcode")
+			if c.previous != "" {
+				writeUpgradeFile(t, bin, c.previous, 0o755)
+			}
+			t.Setenv("FAKE_MAKE_FAIL", "install-late")
+
+			s, err := RunSelfUpgrade(context.Background(), f.opts, nil)
+			last := s.Results[len(s.Results)-1]
+			if err == nil || last.Name != "Install" || !strings.Contains(last.Error, "No space left on device") {
+				t.Fatalf("err %v last %+v, want Install to fail with make's cause", err, last)
+			}
+			if !strings.Contains(last.Error, c.said+bin) || !strings.Contains(last.Error, f.configdir) {
+				t.Errorf("Install error %q, want %q and CONFIGDIR named", last.Error, c.said+bin)
+			}
+			got, err := os.ReadFile(bin)
+			switch {
+			case c.previous != "" && (err != nil || string(got) != c.previous):
+				t.Errorf("installed binary = %q (err %v), want the previous bytes restored", got, err)
+			case c.previous == "" && !os.IsNotExist(err):
+				t.Errorf("installed binary = %q (err %v), want the new one removed", got, err)
+			}
+		})
 	}
 }
 
@@ -535,6 +591,43 @@ func TestSelfUpgradeRestartsOnlyConfirmedDaemons(t *testing.T) {
 			}
 			if c.left == "" && strings.Contains(daemons.Note, "left") {
 				t.Errorf("note %q names a session left behind with none started", daemons.Note)
+			}
+		})
+	}
+}
+
+// A confirmed session whose daemon is gone by the restart is not counted as
+// restarted: upgrade-daemons exits 0 for it with no session line, and the
+// note names it instead. Every confirmed daemon present is the control.
+func TestSelfUpgradeConfirmedSessionWithoutDaemonIsNotCounted(t *testing.T) {
+	for _, c := range []struct{ name, gone, count string }{
+		{"one daemon gone", "beta", "restarted 1 of the 2 confirmed"},
+		{"all present", "", "restarted 2 of the 2 confirmed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newUpgradeFixture(t, "v0.1.20", "v0.1.21")
+			stubDaemonSessions(t, []string{"alpha"})
+			t.Setenv("FAKE_DAEMONS_GONE", c.gone)
+			f.opts.Confirmed = &UpgradeConfirmation{Tag: "v0.1.21", Sessions: []string{"alpha", "beta"}}
+
+			s, err := RunSelfUpgrade(context.Background(), f.opts, nil)
+			if err != nil {
+				t.Fatalf("RunSelfUpgrade: %v (results %+v)", err, s.Results)
+			}
+			daemons := s.Results[5]
+			if !strings.Contains(daemons.Note, c.count) {
+				t.Errorf("note %q, want %q", daemons.Note, c.count)
+			}
+			named := strings.Contains(daemons.Note, "no daemon running for beta")
+			if named != (c.gone != "") {
+				t.Errorf("note %q: names beta as having no daemon = %v, want %v", daemons.Note, named, c.gone != "")
+			}
+			wantSub := []string{"alpha", "beta"}
+			if c.gone != "" {
+				wantSub = []string{"alpha"}
+			}
+			if got := stepNames(daemons.Sub); !reflect.DeepEqual(got, wantSub) {
+				t.Errorf("daemon sub-rows %v, want %v", got, wantSub)
 			}
 		})
 	}

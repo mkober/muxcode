@@ -9,7 +9,9 @@
 # the installed muxcode is never run. The release lookup and the source
 # tarball are local files reached through MUXCODE_UPGRADE_API_URL and
 # MUXCODE_UPGRADE_TARBALL_URL; a fake `make` on PATH records each call and, for
-# install, copies $FAKE_INSTALL_BIN into BINDIR with a marker tmux.conf. HOME,
+# install, copies $FAKE_INSTALL_BIN into BINDIR with a marker tmux.conf —
+# FAKE_MAKE_FAIL=install-late fails it just after the binary copy, as a real
+# install's config copy can, so the rollback has a binary to undo. HOME,
 # XDG_CACHE_HOME, BINDIR, CONFIGDIR, BUS_SESSION, the lifecycle log and the
 # tmux server (TMUX_TMPDIR) are scratch.
 #
@@ -131,6 +133,10 @@ if [ "$target" = install ]; then
   mkdir -p "$bindir" "$configdir"
   cp "$FAKE_INSTALL_BIN" "$bindir/muxcode.tmp" && mv "$bindir/muxcode.tmp" "$bindir/muxcode"
   chmod 755 "$bindir/muxcode"
+  if [ "$FAKE_MAKE_FAIL" = install-late ]; then
+    echo "fake make: cp config/tmux.conf: No space left on device" >&2
+    exit 1
+  fi
   echo 'set -g @muxcode_upgrade_test 1' > "$configdir/tmux.conf"
 fi
 echo "fake make $target done"
@@ -217,12 +223,13 @@ f=$(last_failed)
   || fail "upgrade-failed: $f"
 ! grep -q " install " "$FAKE_MAKE_LOG" && ok "make install never ran after the failed build" || fail "make install ran"
 
-# --- 4. Negative control: a failed install ---------------------------------
+# --- 4. Negative control: an install that fails after writing the binary ----
 echo "-- failed install"
-out=$(FAKE_MAKE_FAIL=install upgrade "$OLD"); rc=$?
+out=$(FAKE_MAKE_FAIL=install-late upgrade "$OLD"); rc=$?
 [ "$rc" -eq 1 ] && [[ "$out" == *"Install: FAILED"* ]] && ok "a make install exiting 1 fails the Install step" \
   || fail "failed install rc=$rc: $out"
-unchanged && ok "installed binary byte-identical after the failed install" || fail "failed install changed the installed binary"
+unchanged && ok "previous binary restored after an install that failed past the copy" \
+  || fail "failed install left the release's binary in BINDIR"
 [ "$(daemon_pid)" = "$PID0" ] && ok "daemon not restarted" || fail "failed install restarted the daemon"
 f=$(last_failed)
 [[ "$f" == *"Install: "* && "$f" == *"$CACHE/build.log"* ]] && ok "upgrade-failed names the Install step and the log path" \
@@ -230,9 +237,13 @@ f=$(last_failed)
 
 # --- 5. Negative control: the wrong binary fails Verify ---------------------
 echo "-- wrong version"
-out=$(FAKE_INSTALL_BIN="$OLD" upgrade "$OLD"); rc=$?
-[ "$rc" -eq 1 ] && [[ "$out" == *"Verify: FAILED"*"reports v0.0.1-test, want $TAG"* ]] \
+printf '#!/bin/sh\n[ "$1" = version ] && echo %s\n' \
+  "'{\"version\":\"v0.0.9-wrong\",\"commit\":\"ccccccc\",\"date\":\"2026-10-07T00:00:00Z\"}'" > "$WORK/wrong-muxcode"
+chmod 755 "$WORK/wrong-muxcode"
+out=$(FAKE_INSTALL_BIN="$WORK/wrong-muxcode" upgrade "$OLD"); rc=$?
+[ "$rc" -eq 1 ] && [[ "$out" == *"Verify: FAILED"*"reports v0.0.9-wrong, want $TAG"* ]] \
   && ok "a binary reporting the wrong version fails Verify, naming both" || fail "verify rc=$rc: $out"
+unchanged && ok "previous binary restored after the failed Verify" || fail "failed Verify left the wrong binary in BINDIR"
 [ "$(daemon_pid)" = "$PID0" ] && [ "$(jq -r .version "$BD/daemon.version")" = v0.0.1-test ] \
   && ok "daemon not restarted after the failed Verify" || fail "failed Verify restarted the daemon"
 [ -z "$(tmux show-options -gqv @muxcode_upgrade_test 2>/dev/null)" ] && ok "tmux config not reloaded after the failed Verify" \
@@ -276,6 +287,6 @@ echo "-- real install"
 echo
 echo "  $PASS passed, $FAIL failed"
 # Coverage floor: the achievable maximum — a skipped section cannot green.
-[ "$PASS" -ge 46 ] || { echo "FAIL: coverage floor not met ($PASS < 46)"; exit 1; }
+[ "$PASS" -ge 47 ] || { echo "FAIL: coverage floor not met ($PASS < 47)"; exit 1; }
 [ "$FAIL" -eq 0 ] || exit 1
 echo "OK"

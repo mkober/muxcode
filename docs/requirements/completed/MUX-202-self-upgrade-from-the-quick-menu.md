@@ -199,6 +199,24 @@ script's own "no other daemon was touched" check, which is the right kind of fai
 have had — and the second passed every check at the floor. Review 0 must-fix; test node success on the
 full suite. With this, every acceptance criterion (22) and every phase step in the spec is ticked.
 
+#### PR review round, 2026-10-07
+
+Copilot's review of the PR produced four changes, applied by the user-launched `80-pr-review-fix` run
+`1791382946` (`fix` node) after the close-out. Behaviour recorded here; no criterion or step changes.
+
+| Finding | Change | Test |
+|---------|--------|------|
+| Install/Verify rollback (Copilot 4208063531) | `Install` first snapshots `<BINDIR>/muxcode` to `<cache>/<tag>/previous-muxcode` (`backupBinary`, `copyFileAtomic` — temp file + rename, so the running binary keeps its inode). A failed `Install` — `make` copies the binary before the configs, so a late failure has already replaced it — or a failed `Verify` **restores it** (`rollBack`), or removes the new binary when there was none, and the error says so and names `CONFIGDIR` as possibly holding the release's agents, skills and configs. Those are not snapshotted: a staged `CONFIGDIR` swap is out of scope because `CONFIGDIR` also holds user state that `make install` merges into | `TestSelfUpgradeVerifyMismatchStopsPipeline`, `TestSelfUpgradeLateInstallFailureRestoresBinary` |
+| Confirmed-session daemon count (Copilot 4208063632) | A confirmed session whose daemon is gone by the restart (`upgrade-daemons --session` exits 0 with no session line) is no longer counted as restarted: the note reads `restarted N of the M confirmed session daemon(s); no daemon running for <s> since the confirm — nothing to restart`. Not a failure — no daemon is left on the old build | `TestSelfUpgradeConfirmedSessionWithoutDaemonIsNotCounted` |
+| Short-popup confirm (Copilot 4208063695) | A third, tight confirm form (title only, no blank lines) keeps the warning and the consequence down to ~8 rows; below that the footer becomes `q Quit — enlarge the popup to confirm` and `⏎`/`f` are **ignored** (`UpgradeUI.confirmCut`) — keys follow the frame the user is looking at | `TestUpgradeUI_TooShortConfirmWithdrawsTheRunKeys` |
+| Cache-hit integrity wording (Copilot 4208063766) | Decision 1's "SHA-256 … for the cache-hit check" overstated `cachedSource`, which never re-hashes; downgraded to informational, above | — |
+
+`scripts/test-self-upgrade.sh` changed with it: section 4 now fails `make install` **after** the binary
+copy (`FAKE_MAKE_FAIL=install-late`) so "byte-identical" proves the rollback rather than the absence of a
+write, and section 5 installs a distinct wrong-version stub (`v0.0.9-wrong`) and adds "previous binary
+restored after the failed Verify". Coverage floor **46 → 47**; the re-run is the graph's test node's, after
+this note.
+
 ## Decisions
 
 ### Decision 1 — source tarball into a cache, not a `git pull`
@@ -210,8 +228,13 @@ on a feature branch with uncommitted work. The tarball is what the release *is*;
 explicitly because `git describe` has no `.git` to read. The prebuilt release binaries were rejected as
 the primary road because `make install` is what also installs agents, skills, configs, `tmux.conf` and
 the nvim config — the binary alone would upgrade half of muxcode. Integrity: GitHub publishes no checksum
-for source tarballs; the recorded SHA-256 is for the log and the cache-hit check, and `Verify` confirms
-the installed binary reports the tag. A `--from <dir>` override for building the local checkout is a
+for source tarballs, so the recorded SHA-256 is **informational** — shown in the `Download` row and kept
+in `download.json` for the log — and is **not re-checked on reuse**. A cache hit is a completion marker,
+not an integrity check: `download.json` is written last, so its presence with a matching tag (and the
+extracted tree's `Makefile`) means a finished extraction. Local tampering is out of scope — whoever can
+write the cache can write `BINDIR`. `Verify` confirms the installed binary reports the tag. *(Wording
+downgraded 2026-10-07 after PR review — Copilot 4208063766 — from "for the cache-hit check", which
+overstated what `cachedSource` does.)* A `--from <dir>` override for building the local checkout is a
 possible later addition, not part of this spec.
 
 ### Decision 2 — "newer" means a release tag past the installed version; force rebuilds anyway

@@ -102,6 +102,48 @@ func TestRenderUpgradeConfirm_ShortPaneKeepsWarningAndConsequence(t *testing.T) 
 	assertUpgradeFrameFits(t, frame, 80, 12)
 }
 
+// Too short for the compact confirm, the header's subtitle and blank lines go
+// before anything the run acts on. Shorter still, no form can show what ⏎
+// and f install and restart, so the footer withdraws them and the keys do
+// nothing; at a size that fits, the same keys start the run — the control.
+func TestUpgradeUI_TooShortConfirmWithdrawsTheRunKeys(t *testing.T) {
+	check := upgradeCheckOf("v0.1.20-16-gfeb4a13-dirty", "v0.1.21", bus.UpgradeNewer)
+	v := upgradeConfirmView{Reading: upgradeReading{Check: check, Target: upgradeTestTarget}}
+
+	tight := renderUpgradeConfirm(v, 80, 8)
+	flat := strings.Join(strings.Fields(StripAnsi(tight)), " ")
+	for _, want := range []string{"⚠ unreleased dev build", "/home/u/.local/bin", "/home/u/.config/muxcode", "restarts 2 daemons", "⏎ Upgrade"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("80x8 frame missing %q:\n%s", want, StripAnsi(tight))
+		}
+	}
+	assertUpgradeFrameFits(t, tight, 80, 8)
+
+	cut := renderUpgradeConfirm(v, 80, 5)
+	plain := StripAnsi(cut)
+	if !strings.Contains(plain, confirmTooSmallFooter) || strings.Contains(plain, "⏎ Upgrade") || strings.Contains(plain, "Force rebuild") {
+		t.Errorf("80x5 frame must withdraw ⏎ and f for %q:\n%s", confirmTooSmallFooter, plain)
+	}
+	assertUpgradeFrameFits(t, cut, 80, 5)
+
+	starts := stubUpgradeSeams(t, check)
+	ui := NewUpgradeUI()
+	ui.startCheck()
+	(<-ui.updates)()
+	ui.render(80, 5)
+	ui.handleKey('\r')
+	ui.handleKey('f')
+	if ui.phase != upgradeConfirm || starts.n != 0 {
+		t.Fatalf("keys on a cut confirm moved to phase %d, started %d — want both inert", ui.phase, starts.n)
+	}
+	ui.render(80, 30)
+	ui.handleKey('\r')
+	(<-ui.updates)()
+	if starts.n != 1 || ui.phase != upgradeRunning {
+		t.Errorf("⏎ on a confirm that fits: started %d phase %d, want one run", starts.n, ui.phase)
+	}
+}
+
 // Nothing newer is an explicit state with the header and a footer naming only
 // the keys it takes; a newer release is the half that states the full
 // consequence and offers ⏎.

@@ -33,6 +33,7 @@ const (
 	upgradeSourceName     = "src"
 	upgradeLogName        = "build.log"
 	upgradeLockName       = "upgrade.lock"
+	upgradeBackupName     = "previous-muxcode"
 	upgradeMakeTimeout    = 15 * time.Minute
 	upgradeDaemonsTimeout = 2 * time.Minute
 	upgradeCommandTimeout = 10 * time.Second
@@ -541,12 +542,92 @@ func runBuildStep(ctx context.Context, s *UpgradeState) (string, error) {
 }
 
 // runInstallStep runs only after a successful Build, so a tree that does not
-// compile never reaches `install -m 755` and the previous binary stays.
+// compile never reaches `install -m 755` and the previous binary stays. The
+// binary is snapshotted first, and a failed install — make copies the binary
+// before the configs, so a late failure has already replaced it — restores it.
 func runInstallStep(ctx context.Context, s *UpgradeState) (string, error) {
+	if err := s.backupBinary(); err != nil {
+		return "", fmt.Errorf("saving the installed binary before install: %w — nothing was installed", err)
+	}
 	if err := runMake(ctx, s, "install"); err != nil {
-		return "", err
+		return "", s.rollBack(err)
 	}
 	return fmt.Sprintf("installed to %s and %s", s.BinDir, s.ConfigDir), nil
+}
+
+func (s *UpgradeState) installedBinary() string { return filepath.Join(s.BinDir, "muxcode") }
+
+func (s *UpgradeState) backupPath() string { return filepath.Join(s.Dir, upgradeBackupName) }
+
+// backupBinary copies the installed binary into the release's cache directory
+// for rollBack, or records that there was none.
+func (s *UpgradeState) backupBinary() error {
+	backup := s.backupPath()
+	if err := os.Remove(backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if !fileExists(s.installedBinary()) {
+		return nil
+	}
+	return copyFileAtomic(s.installedBinary(), backup)
+}
+
+// rollBack puts back the binary backupBinary saved — or removes the new one
+// when there was none — and annotates cause with what it did. Every hook and
+// tmux binding runs `muxcode`, so a binary that failed Install or Verify must
+// not stay on disk under daemons that were never restarted. Only the binary
+// is restored: make install also writes agents, skills, configs and the nvim
+// config, which are not snapshotted, so the error names CONFIGDIR as possibly
+// holding the release's files.
+func (s *UpgradeState) rollBack(cause error) error {
+	bin := s.installedBinary()
+	done := "restored the previous " + bin
+	var err error
+	if fileExists(s.backupPath()) {
+		err = copyFileAtomic(s.backupPath(), bin)
+	} else {
+		done = "removed the new " + bin + ", there being none before"
+		if err = os.Remove(bin); errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("%w — rolling back %s also failed: %v", cause, bin, err)
+	}
+	return fmt.Errorf("%w — %s; %s may hold %s's agents, skills and configs until an upgrade completes",
+		cause, done, s.ConfigDir, s.Check.Latest.Tag)
+}
+
+// copyFileAtomic copies src over dst through a temporary file beside dst and
+// a rename, so dst is never half-written and a process running the old dst
+// keeps its inode. src's mode is kept.
+func copyFileAtomic(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	tmp := dst + ".upgrade-tmp"
+	if err := os.WriteFile(tmp, data, info.Mode().Perm()); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, info.Mode().Perm()); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // runMake runs one make target in the extracted tree with VERSION, DATE,
@@ -611,9 +692,19 @@ func tailLines(path string, n int) []string {
 // PATH entry ahead of BINDIR keeps every later `muxcode` call — tmux
 // bindings, daemon relaunches — on the old build; either fails here rather
 // than as a daemon restart onto stale code. BINDIR absent from PATH is a
-// note, not a failure: nothing on PATH shadows the install.
+// note, not a failure: nothing on PATH shadows the install. A failure rolls
+// the binary back (rollBack), since the daemons it would have restarted stay
+// on the previous build.
 func runVerifyStep(ctx context.Context, s *UpgradeState) (string, error) {
-	bin := filepath.Join(s.BinDir, "muxcode")
+	note, err := verifyInstall(ctx, s)
+	if err != nil {
+		return "", s.rollBack(err)
+	}
+	return note, nil
+}
+
+func verifyInstall(ctx context.Context, s *UpgradeState) (string, error) {
+	bin := s.installedBinary()
 	ctx, cancel := context.WithTimeout(ctx, upgradeCommandTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, "version", "--json").Output()
@@ -683,14 +774,23 @@ func runDaemonsStep(ctx context.Context, s *UpgradeState) (string, error) {
 // `upgrade-daemons --session` each, so a daemon started after the confirm is
 // never restarted onto a build its user did not agree to. Such a daemon is
 // named in the note, left for `muxcode upgrade-daemons`.
+//
+// A confirmed session whose daemon is gone by the restart makes
+// upgrade-daemons exit 0 with no session line; the note names it as not
+// restarted and the count leaves it out. It is not a failure: no daemon is
+// left on the old build.
 func runConfirmedDaemons(ctx context.Context, s *UpgradeState, confirmed []string) (string, error) {
 	var rows []StepResult
-	var notes, failures []string
+	var notes, failures, gone []string
 	for _, session := range confirmed {
 		r, messages, runErr := runUpgradeDaemons(ctx, s, "--session", session)
 		rows = append(rows, r...)
 		if err := daemonsError(r, messages, runErr); err != nil {
 			failures = append(failures, session+": "+err.Error())
+			continue
+		}
+		if len(r) == 0 {
+			gone = append(gone, session)
 			continue
 		}
 		notes = append(notes, messages...)
@@ -699,7 +799,10 @@ func runConfirmedDaemons(ctx context.Context, s *UpgradeState, confirmed []strin
 	if len(failures) > 0 {
 		return "", errors.New(strings.Join(failures, "; "))
 	}
-	notes = append(notes, fmt.Sprintf("restarted the %d confirmed session daemon(s)", len(confirmed)))
+	notes = append(notes, fmt.Sprintf("restarted %d of the %d confirmed session daemon(s)", len(confirmed)-len(gone), len(confirmed)))
+	if len(gone) > 0 {
+		notes = append(notes, fmt.Sprintf("no daemon running for %s since the confirm — nothing to restart", strings.Join(gone, ", ")))
+	}
 	running, err := upgradeDaemonSessionsFn()
 	if err != nil {
 		notes = append(notes, "could not check for daemons started since the confirm: "+err.Error())

@@ -95,11 +95,14 @@ func processAlive(pid int) bool {
 // modal at any point and the upgrade carries on.
 //
 // All state is changed on the Run goroutine: a read runs in a goroutine and
-// hands its result back as a closure on updates.
+// hands its result back as a closure on updates. confirmCut records that the
+// last confirm drawn was cut too short to show what ⏎ and f do, so handleKey
+// ignores them — keys follow the frame the user is looking at.
 type UpgradeUI struct {
-	phase   upgradePhase
-	reading upgradeReading
-	notice  string
+	phase      upgradePhase
+	reading    upgradeReading
+	notice     string
+	confirmCut bool
 
 	force      bool
 	eventsPath string
@@ -176,11 +179,11 @@ func (ui *UpgradeUI) handleKey(key byte) string {
 		case 10, 13:
 			if ui.reading.CheckErr != nil || ui.reading.TargetErr != nil {
 				ui.startCheck()
-			} else if ui.reading.canUpgrade() {
+			} else if ui.reading.canUpgrade() && !ui.confirmCut {
 				ui.startRecheck(false)
 			}
 		case 'f':
-			if ui.reading.canForce() {
+			if ui.reading.canForce() && !ui.confirmCut {
 				ui.startRecheck(true)
 			}
 		}
@@ -314,12 +317,14 @@ func (ui *UpgradeUI) render(width, height int) string {
 	case upgradeDone:
 		return renderUpgradeDone(ui.progressView(), width, height)
 	}
-	return renderUpgradeConfirm(upgradeConfirmView{
+	v := upgradeConfirmView{
 		Reading:    ui.reading,
 		Checking:   ui.phase == upgradeChecking,
 		Rechecking: ui.phase == upgradeRechecking,
 		Notice:     ui.notice,
-	}, width, height)
+	}
+	ui.confirmCut = !anyFormFits(confirmForms(v, width), height)
+	return renderUpgradeConfirm(v, width, height)
 }
 
 func (ui *UpgradeUI) progressView() upgradeProgressView {
@@ -358,16 +363,45 @@ func (v upgradeProgressView) title() string {
 	return fmt.Sprintf("Upgrading %s → %s", v.Installed, v.Latest)
 }
 
+// confirmTooSmallFooter replaces ⏎ and f when no confirm form fits: the cut
+// would hide the install paths and daemons they act on.
+const confirmTooSmallFooter = "q Quit — enlarge the popup to confirm"
+
 // renderUpgradeConfirm draws the release check and, before anything mutates,
 // what the upgrade will do. Every state has an explicit body; the footer
 // names only the keys that state accepts. A popup too short for the session
-// list gets their count, then the frame is cut above the footer. Pure.
+// list gets their count, then loses the header's subtitle and blank lines.
+// One too short even for that is cut above the footer, and since the cut can
+// hide what ⏎ and f would do, its footer withdraws them (UpgradeUI.confirmCut
+// makes handleKey ignore them). Pure.
 func renderUpgradeConfirm(v upgradeConfirmView, width, height int) string {
-	form := func(compact bool) []string {
-		body, footer := confirmBody(v, compact, width)
-		return upgradeFrame(upgradeHeader("Check · download · rebuild · restart daemons", width), body, footer, width)
+	forms := confirmForms(v, width)
+	if !anyFormFits(forms, height) && v.offersRun() {
+		tight := forms[len(forms)-1]
+		forms = append(forms, append(slices.Clone(tight[:len(tight)-1]), upgradeFooter(confirmTooSmallFooter, width)))
 	}
-	return fitUpgrade(height, form(false), form(true))
+	return fitUpgrade(height, forms...)
+}
+
+// confirmForms are the confirm screen's frames, roomiest first: the sessions
+// named, then counted, then without the header's subtitle and blank lines.
+func confirmForms(v upgradeConfirmView, width int) [][]string {
+	header := upgradeHeader("Check · download · rebuild · restart daemons", width)
+	full, footer := confirmBody(v, false, width)
+	compact, _ := confirmBody(v, true, width)
+	tight := slices.DeleteFunc(slices.Clone(compact), func(l string) bool { return l == "" })
+	return [][]string{
+		upgradeFrame(header, full, footer, width),
+		upgradeFrame(header, compact, footer, width),
+		upgradeFrame(header[1:2], tight, footer, width),
+	}
+}
+
+// offersRun reports whether the confirm's footer offers a key that starts a
+// run: f always does once the release and target are read and the tools are
+// present; ⏎ only adds to it.
+func (v upgradeConfirmView) offersRun() bool {
+	return !v.Checking && !v.Rechecking && v.Reading.canForce()
 }
 
 func confirmBody(v upgradeConfirmView, compact bool, width int) ([]string, string) {
@@ -542,20 +576,30 @@ func upgradeHeader(subtitle string, width int) []string {
 
 func upgradeFrame(header, body []string, footer string, width int) []string {
 	lines := append(append([]string{}, header...), body...)
-	return append(lines, "", TruncateAnsi(fmt.Sprintf("  %s%s%s", Comment, footer, RST), width))
+	return append(lines, "", upgradeFooter(footer, width))
+}
+
+func upgradeFooter(footer string, width int) string {
+	return TruncateAnsi(fmt.Sprintf("  %s%s%s", Comment, footer, RST), width)
+}
+
+// formFits reports whether form fits height whole. One row is left free: the
+// frame's last newline would otherwise scroll a full-height pane.
+func formFits(form []string, height int) bool { return len(form) <= height-1 }
+
+func anyFormFits(forms [][]string, height int) bool {
+	return slices.ContainsFunc(forms, func(f []string) bool { return formFits(f, height) })
 }
 
 // fitUpgrade returns the first form that fits height, else the last cut to
 // fit with its footer kept, so the keys stay visible however small the popup.
-// One row is left free: the frame's last newline would otherwise scroll a
-// full-height pane.
 func fitUpgrade(height int, forms ...[]string) string {
 	limit := height - 1
 	if limit < 1 {
 		return ""
 	}
 	for _, f := range forms {
-		if len(f) <= limit {
+		if formFits(f, height) {
 			return strings.Join(f, "\n") + "\n"
 		}
 	}
