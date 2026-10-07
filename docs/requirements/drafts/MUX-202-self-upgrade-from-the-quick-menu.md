@@ -50,12 +50,12 @@ source tarball into a cache, not a `git pull` ([Decision 1](#decision-1--source-
 
 **Menu and modal**
 
-- [ ] `prefix + b` shows **`Upgrade MuxCode`** (key `U`) beside `Restart Agents`; it opens a modal registered as `upgrade` in `bus/modal.go` with the `provider`/`restart` sizes
-- [ ] The modal shows **one row per step** — `Check`, `Download`, `Build`, `Install`, `Verify`, `Restart daemons`, `Reload tmux config` — as pending `○`, running `⟳`, done `✓` or failed `✗` with the failure's cause wrapped to the pane, a progress bar and a footer, rendered by a **pure** function (snapshot in, string out) that honours both width and height
-- [ ] Before anything mutates, the modal **stops at a confirm** stating the consequence — `installed vA → latest vB; rebuilds and installs to <BINDIR>/<CONFIGDIR>, then restarts N daemon(s): <sessions>` — and **re-checks the latest release and the daemon list at execution**, not at render
-- [ ] An **up-to-date** result is an explicit state, not an empty body: `installed vA is current (latest vB)`; a dev build past the latest tag reads `installed v0.1.20-9-g7d339be is ahead of the latest release v0.1.20` ([Decision 2](#decision-2--newer-means-a-release-tag-past-the-installed-version-force-rebuilds-anyway))
-- [ ] The footer advertises every key: `⏎ Upgrade`, `f Force rebuild`, `q Quit`; while running, `q` closes the modal and the upgrade **continues in the background**, as the reload modal does
-- [ ] State is readable **without colour** — the glyph carries it; no inline escapes outside `tui/styles.go`
+- [x] `prefix + b` shows **`Upgrade MuxCode`** (key `U`) beside `Restart Agents`; it opens a modal registered as `upgrade` in `bus/modal.go` with the `provider`/`restart` sizes (Phase 4: `config/tmux.conf`, `bus/modal.go`, `muxcode upgrade-ui`)
+- [x] The modal shows **one row per step** — `Check`, `Download`, `Build`, `Install`, `Verify`, `Restart daemons`, `Reload tmux config` — as pending `○`, running `⟳`, done `✓` or failed `✗` with the failure's cause wrapped to the pane, a progress bar and a footer, rendered by a **pure** function (snapshot in, string out) that honours both width and height (Phase 4: `renderUpgradeProgress`/`renderUpgradeDone` over `upgradeProgressView`, through the shared `renderBatchRows`; `fitUpgrade` degrades by height; `TestRenderUpgradeProgress_DegradesToHeight`, `TestRenderUpgradeDone_FailureWrapsToNarrowWidth`)
+- [x] Before anything mutates, the modal **stops at a confirm** stating the consequence — `installed vA → latest vB; rebuilds and installs to <BINDIR>/<CONFIGDIR>, then restarts N daemon(s): <sessions>` — and **re-checks the latest release and the daemon list at execution**, not at render (Phase 4: `renderUpgradeConfirm` + `upgradeConsequence`/`daemonClause`; `startRecheck` → `confirmChanged` on `⏎`/`f`; the confirmed tag and sessions then travel to the worker and are enforced there — `TestUpgradeUI_RecheckRefusesAStaleConfirm`, `TestSelfUpgradeRefusesAReleaseOtherThanConfirmed`, `TestSelfUpgradeRestartsOnlyConfirmedDaemons`)
+- [x] An **up-to-date** result is an explicit state, not an empty body: `installed vA is current (latest vB)`; a dev build past the latest tag reads `installed v0.1.20-9-g7d339be is ahead of the latest release v0.1.20` ([Decision 2](#decision-2--newer-means-a-release-tag-past-the-installed-version-force-rebuilds-anyway)) (Phase 4: `verdictLines` renders `UpgradeCheck.Summary()` with header and footer; `TestRenderUpgradeConfirm_UpToDateAndAheadAreExplicit`)
+- [x] The footer advertises every key: `⏎ Upgrade`, `f Force rebuild`, `q Quit`; while running, `q` closes the modal and the upgrade **continues in the background**, as the reload modal does (Phase 4: the run is a detached child; `TestUpgradeUI_KeysFollowTheFooter`, `TestUpgradeUI_PollFollowsTheEventsFile`)
+- [x] State is readable **without colour** — the glyph carries it; no inline escapes outside `tui/styles.go` (Phase 4: screen escapes moved to `styles.go`; `TestRenderUpgradeProgress_StatesReadableWithoutColour` asserts over `StripAnsi`)
 
 **Pipeline**
 
@@ -155,10 +155,24 @@ the upgrade?" while a full run answers "did it succeed?".
 
 ### Phase 4: Modal and menu
 
-- [ ] `tui/upgrade_ui.go`: confirm / progress / done screens, each a pure renderer taking width and height; confirm re-runs `Check` and the daemon list on Enter; `f` forces; `q` detaches while the pipeline continues
-- [ ] Generalise `renderBatchProgress` row input from `ReloadResult` to a small interface or a `StepResult` adapter — one renderer, two callers, no copy
-- [ ] `bus/modal.go` `upgrade` entry; `config/tmux.conf` `Upgrade MuxCode` (key `U`); `muxcode upgrade-ui`
-- [ ] Tests per the [TUI checklist](../../tui-style.md): up-to-date and ahead states render an explicit body with header and footer; a failure row wraps to a narrow width without overflow; height is read and the step list degrades when it does not fit; **negative control:** at a comfortable size nothing degrades; `StripAnsi` output carries every state
+- [x] `tui/upgrade_ui.go`: confirm / progress / done screens, each a pure renderer taking width and height; confirm re-runs `Check` and the daemon list on Enter; `f` forces; `q` detaches while the pipeline continues (`renderUpgradeConfirm` / `renderUpgradeProgress` / `renderUpgradeDone` over view structs, `fitUpgrade` picks the fullest form that fits the height — session sub-rows dropped first, then the step list folded to one status line, the footer always kept. `⏎`/`f` → `startRecheck` re-reads release and daemons; `confirmChanged` refuses a changed release, verdict, install path or daemon set and says which. The run is a detached `muxcode upgrade --events <file> --expect-tag <tag> --expect-session <s>…` child (`StartSelfUpgradeDetached`, `bus/selfupgrade_run.go`) — the **confirmed snapshot is bound to execution** (review must-fix): the worker's `Check` refuses any release but the confirmed tag before mutating ("nothing was changed; confirm again"), and `runConfirmedDaemons` restarts exactly the confirmed sessions, naming any daemon started since as not restarted. The modal polls the events file so `q` closes it while the run continues; a child that dies without writing its end is finished as failed)
+- [x] Generalise `renderBatchProgress` row input from `ReloadResult` to a small interface or a `StepResult` adapter — one renderer, two callers, no copy (`tui/provider_select.go`: rows become `batchRow`; `renderFailureRow` is now `renderFailureRowIn(indent, name, cause, nameWidth, width)` — stacks the cause under the name when the columns leave it under 20 cells, and `wrapCause` cuts a word wider than its line (a log path) rather than let it break the modal border; `stepRows` adapts `StepResult`, sub-rows included. Three callers — provider reload, restart, upgrade — one renderer)
+- [x] `bus/modal.go` `upgrade` entry; `config/tmux.conf` `Upgrade MuxCode` (key `U`); `muxcode upgrade-ui` (modal `upgrade`, title ` Upgrade MuxCode `, the `provider`/`restart` sizes; menu line after `Restart Agents`; `cmd.UpgradeUI` → `tui.NewUpgradeUI().Run()`, wired in `main.go`)
+- [x] Tests per the [TUI checklist](../../tui-style.md): up-to-date and ahead states render an explicit body with header and footer; a failure row wraps to a narrow width without overflow; height is read and the step list degrades when it does not fit; **negative control:** at a comfortable size nothing degrades; `StripAnsi` output carries every state (`TestRenderUpgradeConfirm_UpToDateAndAheadAreExplicit`, `TestRenderUpgradeDone_FailureWrapsToNarrowWidth`, `TestRenderUpgradeProgress_DegradesToHeight` — comfortable 80×40 undegraded, 80×16 drops sub-rows, 80×8 folds, footer at every height — `TestRenderUpgradeProgress_StatesReadableWithoutColour`, `TestUpgradeUI_RecheckRefusesAStaleConfirm`, `TestUpgradeUI_KeysFollowTheFooter`, `TestUpgradeUI_PollFollowsTheEventsFile`; from the fix round: `TestSelfUpgradeRefusesAReleaseOtherThanConfirmed`, `TestSelfUpgradeRestartsOnlyConfirmedDaemons`, and short- and full-height failure rendering keeping the cause and log path. `TestUpgradeEventsRoundTripAndPartialLine`, `TestPruneUpgradeEventsKeepsFreshFiles` cover the events file)
+
+#### Phase 4 verification note
+
+Verified 2026-10-06 17:25 by plan from the working tree (run `1791315389`; Phase 3 committed as
+`f3d2d12`). First pass: review **failed** with one must-fix — the modal re-checked the release and
+daemons on Enter but then launched the detached worker with only the force flag, so the worker ran its
+own `Check` and found its own daemons, and a release published or a daemon started in between became an
+unconfirmed target — and one should-fix, the compact done screen dropping a failure's cause and log path.
+Second pass, after the `fix` worker: the confirm travels as `--expect-tag` plus one `--expect-session`
+per daemon (`UpgradeConfirmation`, `SelfUpgradeOptions.Confirmed`), the worker's `Check` refuses any other
+release before anything mutates, `runConfirmedDaemons` restarts exactly the confirmed sessions and names
+any started since, and the compact outcome reuses `progressSummary`'s failure row. Test node **success**
+on the full suite including the upgrade-UI tests; review 0 must-fix. One consequence for Decision 3 is
+recorded there. Screen escape sequences moved into `tui/styles.go`, per the TUI style rule.
 
 ### Phase 5: Docs
 
@@ -207,6 +221,11 @@ the drift this feature exists to remove; `EnsureSessionDaemonCurrent`'s single-s
 the attach road. The modal runs in the user's tmux popup, not an agent sandbox, so `ps` is available
 (the MUX-161 constraint applies to the build agent, not here).
 
+*Amended by the Phase 4 review fix (2026-10-06):* a run the modal **confirmed** restarts exactly the
+sessions the confirm listed (`runConfirmedDaemons`) and names any daemon started since as not restarted,
+so the user is never shown one set and handed another; the unconfirmed CLI run (`muxcode upgrade` with
+no `--expect-tag`) still restarts every session on the machine, as above.
+
 ## Related
 
 | Spec | Relationship |
@@ -227,7 +246,7 @@ the attach road. The modal runs in the user's tmux popup, not an agent sandbox, 
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-202-self-upgrade-from-the-quick-menu | 1h 1m | 2026-10-06 16:58 |
+| MUX-202-self-upgrade-from-the-quick-menu | 1h 23m | 2026-10-06 17:25 |
 
 ## Status
 

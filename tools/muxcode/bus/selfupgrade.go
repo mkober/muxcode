@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -129,6 +130,17 @@ type SelfUpgradeOptions struct {
 	CacheRoot string
 	BinDir    string
 	ConfigDir string
+	Confirmed *UpgradeConfirmation // nil when no one confirmed a target — the CLI acting on what it finds
+}
+
+// UpgradeConfirmation binds a run to what its user confirmed: the release
+// and the session daemons they were shown. Check refuses any other release
+// before anything mutates, and Restart daemons restarts only these sessions —
+// a release published, or a daemon started, after the confirm is never
+// upgraded onto unasked.
+type UpgradeConfirmation struct {
+	Tag      string
+	Sessions []string
 }
 
 // SourceTarball is the downloaded release source. It is recorded in the
@@ -336,6 +348,9 @@ func runCheckStep(ctx context.Context, s *UpgradeState) (string, error) {
 	s.Check = check
 	if err != nil {
 		return "", err
+	}
+	if c := s.Options.Confirmed; c != nil && check.Latest.Tag != c.Tag {
+		return "", fmt.Errorf("the latest release is now %s, not the confirmed %s — nothing was changed; confirm again", check.Latest.Tag, c.Tag)
 	}
 	note := check.Summary()
 	if check.Verdict != UpgradeNewer && !s.Options.Force {
@@ -625,36 +640,97 @@ func sameFile(a, b string) bool {
 // a sub-row; a non-zero exit fails the step with the command's own message
 // lines verbatim — an unreadable ps among them.
 //
+// A confirmed run (SelfUpgradeOptions.Confirmed) restarts only its confirmed
+// sessions; see runConfirmedDaemons.
+func runDaemonsStep(ctx context.Context, s *UpgradeState) (string, error) {
+	if c := s.Options.Confirmed; c != nil {
+		return runConfirmedDaemons(ctx, s, c.Sessions)
+	}
+	rows, messages, runErr := runUpgradeDaemons(ctx, s)
+	s.sub = rows
+	if err := daemonsError(rows, messages, runErr); err != nil {
+		return "", err
+	}
+	if len(messages) > 0 {
+		return strings.Join(messages, "; "), nil
+	}
+	return fmt.Sprintf("%d session daemon(s) via %s upgrade-daemons", len(rows), filepath.Join(s.BinDir, "muxcode")), nil
+}
+
+// runConfirmedDaemons restarts exactly the confirmed sessions' daemons, one
+// `upgrade-daemons --session` each, so a daemon started after the confirm is
+// never restarted onto a build its user did not agree to. Such a daemon is
+// named in the note, left for `muxcode upgrade-daemons`.
+func runConfirmedDaemons(ctx context.Context, s *UpgradeState, confirmed []string) (string, error) {
+	var rows []StepResult
+	var notes, failures []string
+	for _, session := range confirmed {
+		r, messages, runErr := runUpgradeDaemons(ctx, s, "--session", session)
+		rows = append(rows, r...)
+		if err := daemonsError(r, messages, runErr); err != nil {
+			failures = append(failures, session+": "+err.Error())
+			continue
+		}
+		notes = append(notes, messages...)
+	}
+	s.sub = rows
+	if len(failures) > 0 {
+		return "", errors.New(strings.Join(failures, "; "))
+	}
+	notes = append(notes, fmt.Sprintf("restarted the %d confirmed session daemon(s)", len(confirmed)))
+	running, err := upgradeDaemonSessionsFn()
+	if err != nil {
+		notes = append(notes, "could not check for daemons started since the confirm: "+err.Error())
+	}
+	var unconfirmed []string
+	for _, session := range running {
+		if !slices.Contains(confirmed, session) {
+			unconfirmed = append(unconfirmed, session)
+		}
+	}
+	if len(unconfirmed) > 0 {
+		notes = append(notes, fmt.Sprintf("left %s on the old build — started after the confirm; `muxcode upgrade-daemons` restarts it",
+			strings.Join(unconfirmed, ", ")))
+	}
+	return strings.Join(notes, "; "), nil
+}
+
+// runUpgradeDaemons runs the installed binary's upgrade-daemons with args and
+// splits its output into session rows and messages.
+//
 // BINDIR goes first on the helper's PATH: upgrade-daemons kills each daemon
 // and relaunches it as bare `muxcode`, so with BINDIR off PATH — which Verify
 // allows — it would relaunch the old build, or nothing, and leave every
 // session without a daemon.
-func runDaemonsStep(ctx context.Context, s *UpgradeState) (string, error) {
-	bin := filepath.Join(s.BinDir, "muxcode")
+func runUpgradeDaemons(ctx context.Context, s *UpgradeState, args ...string) ([]StepResult, []string, error) {
 	ctx, cancel := context.WithTimeout(ctx, upgradeDaemonsTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "upgrade-daemons")
+	cmd := exec.CommandContext(ctx, filepath.Join(s.BinDir, "muxcode"), append([]string{"upgrade-daemons"}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+s.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, runErr := cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
 	rows, messages := parseDaemonLines(string(out))
-	s.sub = rows
+	return rows, messages, err
+}
+
+// daemonsError is an upgrade-daemons failure in its own words when it gave
+// any, else the count of sessions that failed, else the exit; nil on success.
+func daemonsError(rows []StepResult, messages []string, runErr error) error {
+	if runErr == nil {
+		return nil
+	}
+	if len(messages) > 0 {
+		return errors.New(strings.Join(messages, "; "))
+	}
 	failed := 0
 	for _, r := range rows {
 		if !r.Success {
 			failed++
 		}
 	}
-	switch {
-	case runErr != nil && len(messages) > 0:
-		return "", errors.New(strings.Join(messages, "; "))
-	case runErr != nil && failed > 0:
-		return "", fmt.Errorf("%d of %d daemons failed to restart", failed, len(rows))
-	case runErr != nil:
-		return "", fmt.Errorf("%s upgrade-daemons: %w", bin, runErr)
-	case len(messages) > 0:
-		return strings.Join(messages, "; "), nil
+	if failed > 0 {
+		return fmt.Errorf("%d of %d daemons failed to restart", failed, len(rows))
 	}
-	return fmt.Sprintf("%d session daemon(s) via %s upgrade-daemons", len(rows), bin), nil
+	return fmt.Errorf("upgrade-daemons: %w", runErr)
 }
 
 // parseDaemonLines splits upgrade-daemons output (cmd/upgrade.go's contract):

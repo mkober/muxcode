@@ -20,7 +20,8 @@ import (
 // install, writes a stub muxcode into BINDIR whose `version --json` reports
 // $FAKE_INSTALLED_VERSION, else the VERSION it was given, and whose
 // `upgrade-daemons` logs its call and the muxcode its PATH resolves — the
-// binary a real one relaunches daemons with — to $FAKE_DAEMONS_LOG, prints
+// binary a real one relaunches daemons with — to $FAKE_DAEMONS_LOG, answers
+// `--session <name>` with that one session restarted, and otherwise prints
 // $FAKE_DAEMONS_OUT, $FAKE_DAEMONS_ERR on stderr, and exits
 // $FAKE_DAEMONS_EXIT. FAKE_MAKE_FAIL names a target to fail. With
 // FAKE_MAKE_BLOCK set, build touches $FAKE_MAKE_BLOCK.started and waits for
@@ -52,6 +53,7 @@ case "\$1" in
     echo '{"version":"$v","commit":"unknown","date":"2026-10-06T00:00:00Z"}' ;;
   upgrade-daemons)
     echo "\$* resolved=\$(command -v muxcode)" >> "\$FAKE_DAEMONS_LOG"
+    if [ "\$2" = "--session" ]; then printf '  %s: daemon restarted\n' "\$3"; exit 0; fi
     printf '%s' "\$FAKE_DAEMONS_OUT"
     [ -n "\$FAKE_DAEMONS_ERR" ] && printf '%s\n' "\$FAKE_DAEMONS_ERR" >&2
     exit "\${FAKE_DAEMONS_EXIT:-0}" ;;
@@ -465,6 +467,76 @@ func TestSelfUpgradeDaemonRelaunchResolvesInstalledBinary(t *testing.T) {
 	want := "upgrade-daemons resolved=" + filepath.Join(f.bindir, "muxcode")
 	if got, err := os.ReadFile(f.daemonsLog); err != nil || strings.TrimSpace(string(got)) != want {
 		t.Errorf("upgrade-daemons saw %q (err %v), want %q", got, err, want)
+	}
+}
+
+func stubDaemonSessions(t *testing.T, sessions []string) {
+	t.Helper()
+	orig := upgradeDaemonSessionsFn
+	upgradeDaemonSessionsFn = func() ([]string, error) { return sessions, nil }
+	t.Cleanup(func() { upgradeDaemonSessionsFn = orig })
+}
+
+// A run bound to a confirmed release refuses any other before anything
+// mutates: a release published after the confirm is never installed unasked.
+// The same run against the release it confirmed is the passing half.
+func TestSelfUpgradeRefusesAReleaseOtherThanConfirmed(t *testing.T) {
+	f := newUpgradeFixture(t, "v0.1.20", "v0.1.22")
+	stubDaemonSessions(t, []string{"alpha"})
+	f.opts.Confirmed = &UpgradeConfirmation{Tag: "v0.1.21", Sessions: []string{"alpha"}}
+
+	s, err := RunSelfUpgrade(context.Background(), f.opts, nil)
+	if err == nil || len(s.Results) != 1 || !strings.Contains(s.Results[0].Error, "now v0.1.22, not the confirmed v0.1.21") {
+		t.Fatalf("err %v results %+v, want Check to refuse the unconfirmed release", err, s.Results)
+	}
+	for _, p := range []string{f.cache, f.bindir, f.makeLog, f.daemonsLog} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s exists after the refusal — something mutated", p)
+		}
+	}
+
+	f.opts.Confirmed.Tag = "v0.1.22"
+	if s, err := RunSelfUpgrade(context.Background(), f.opts, nil); err != nil {
+		t.Errorf("run against the confirmed release: %v (results %+v)", err, s.Results)
+	}
+}
+
+// A confirmed run restarts only the sessions it was shown: a daemon started
+// during the build stays on its build and is named, never restarted unasked.
+// With no such daemon the note names none — the negative control.
+func TestSelfUpgradeRestartsOnlyConfirmedDaemons(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		running []string
+		left    string
+	}{
+		{"daemon started after the confirm", []string{"alpha", "gamma"}, "left gamma on the old build"},
+		{"unchanged", []string{"alpha"}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newUpgradeFixture(t, "v0.1.20", "v0.1.21")
+			stubDaemonSessions(t, c.running)
+			f.opts.Confirmed = &UpgradeConfirmation{Tag: "v0.1.21", Sessions: []string{"alpha"}}
+
+			s, err := RunSelfUpgrade(context.Background(), f.opts, nil)
+			if err != nil {
+				t.Fatalf("RunSelfUpgrade: %v (results %+v)", err, s.Results)
+			}
+			want := "upgrade-daemons --session alpha resolved=" + filepath.Join(f.bindir, "muxcode")
+			if got, err := os.ReadFile(f.daemonsLog); err != nil || strings.TrimSpace(string(got)) != want {
+				t.Errorf("upgrade-daemons calls %q (err %v), want only %q", got, err, want)
+			}
+			daemons := s.Results[5]
+			if got := stepNames(daemons.Sub); !reflect.DeepEqual(got, []string{"alpha"}) {
+				t.Errorf("daemon sub-rows %v, want the confirmed session only", got)
+			}
+			if c.left != "" && !strings.Contains(daemons.Note, c.left) {
+				t.Errorf("note %q, want it to name %q", daemons.Note, c.left)
+			}
+			if c.left == "" && strings.Contains(daemons.Note, "left") {
+				t.Errorf("note %q names a session left behind with none started", daemons.Note)
+			}
+		})
 	}
 }
 
