@@ -552,7 +552,7 @@ func logWaitResponseToHistory(session, role, action, payload string) {
 	// built as an unverified activity row: no exit code, no success verdict,
 	// and the action kept out of the command field. bus.NewBusResponseEntry is
 	// the single constructor for every synthesized path.
-	entry, ok := bus.NewBusResponseEntry(action, payload, false)
+	entry, ok := bus.NewBusResponseEntry(role, action, payload, false)
 	if !ok {
 		return
 	}

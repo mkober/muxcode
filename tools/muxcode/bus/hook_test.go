@@ -978,6 +978,30 @@ func TestProcessBashHook_ScrubsExactlyTheSensitiveRoles(t *testing.T) {
 	}
 }
 
+// Credentials are scrubbed on the hook road for every role, not only the PII
+// set (MUX-179 Phase 3) — plan, where the leak came from, included. The PII
+// gating beside it is pinned by the test above.
+func TestProcessBashHook_ScrubsCredentialsForEveryRole(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-creds"
+	t.Setenv("BUS_SESSION", session)
+	histPath := filepath.Join(BusDir(session), "commit-history.jsonl")
+
+	const key = "ghp_FAKE0123456789abcdefghij"
+	stdout := "remote: GITHUB_TOKEN=" + key + "\nTo github.com:mkober/muxcode.git\n   872f4b0..d573410  main -> main"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"git push"},"exit_code":0,"tool_response":{"stdout":%q}}`, stdout)))
+
+	for _, role := range []string{"plan", "edit", "build", "test", "review", "commit", "api", "run", "runner", "watch"} {
+		if res := ProcessBashHook(session, role, ev); !res.Logged {
+			t.Fatalf("%s: git push row not logged", role)
+		}
+		entry := lastHookHistoryEntry(t, histPath)
+		if strings.Contains(entry.Output, key) || !strings.HasPrefix(entry.Output, "[muxcode pii-scrub:") {
+			t.Errorf("%s: credential not redacted: %q", role, entry.Output)
+		}
+	}
+}
+
 // Negative control for the gate above: clean output on a PII-sensitive role is
 // stored byte-identical — no banner, no truncation, exit code untouched.
 func TestProcessBashHook_SensitiveRoleCleanOutputUnchanged(t *testing.T) {
@@ -1011,7 +1035,7 @@ func TestGetScrubbedOutput_RedactsBeforeClip(t *testing.T) {
 	if raw := ev.GetOutput(10, 44); !strings.HasSuffix(raw, " AKIAIOSFOD...") {
 		t.Fatalf("fixture must straddle the clip, GetOutput = %q", raw)
 	}
-	out := ev.GetScrubbedOutput(10, 44)
+	out := ev.GetScrubbedOutput("run", 10, 44)
 	if strings.Contains(out, "AKIAIOSFOD") {
 		t.Errorf("key prefix survived the clip: %q", out)
 	}
@@ -1033,7 +1057,7 @@ func TestGetScrubbedOutput_CleanMatchesGetOutput(t *testing.T) {
 	if !strings.HasSuffix(want, "...") || strings.Contains(want, "line_01") {
 		t.Fatalf("fixture must exercise both tail and clip, GetOutput = %q", want)
 	}
-	if got := ev.GetScrubbedOutput(2, 44); got != want {
+	if got := ev.GetScrubbedOutput("run", 2, 44); got != want {
 		t.Errorf("clean output altered: got %q, want %q", got, want)
 	}
 }

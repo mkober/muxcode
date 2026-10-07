@@ -7,8 +7,10 @@ import (
 )
 
 // PII patterns compiled once at package init.
-// NOTE: This file is intentionally duplicated in harness/scrub.go (separate Go module).
-// Changes here must be mirrored in tools/muxcode-llm-harness/harness/scrub.go.
+// NOTE: The patterns, placeholders and ScrubPII's redaction order are
+// duplicated in tools/muxcode-llm-harness/harness/scrub.go (separate Go
+// module) and must stay in step with it. ScrubSecrets and ScrubForRole are
+// bus-only: the harness scrubs by the role list alone (MUX-179).
 var (
 	// Email: user@domain.tld
 	piiEmailRe = regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`)
@@ -51,94 +53,82 @@ const (
 	piiRedactDOB    = "[DOB_REDACTED]"
 )
 
-// ScrubPII redacts common PII and secrets from text.
-// Returns the scrubbed text and the count of redactions made.
-func ScrubPII(text string) (string, int) {
+// scrubRule is one redaction. A rule with no placeholder matches a
+// label=value pair and keeps the label, redacting only what follows its = or :.
+type scrubRule struct {
+	re          *regexp.Regexp
+	placeholder string
+	credential  bool
+}
+
+// scrubRules run in order: specific patterns before broad ones — JWTs ahead of
+// the generic secret, whose dots confuse it — and the generic label=value
+// secret last.
+var scrubRules = []scrubRule{
+	{piiJWTRe, piiRedactJWT, true},
+	{piiAWSKeyRe, piiRedactAWSKey, true},
+	{piiAWSSecretRe, "", true},
+	{piiSSNRe, piiRedactSSN, false},
+	{piiCCRe, piiRedactCC, false},
+	{piiEmailRe, piiRedactEmail, false},
+	{piiPhoneRe, piiRedactPhone, false},
+	{piiDOBRe, piiRedactDOB, false},
+	{piiGenericSecretRe, "", true},
+}
+
+var credentialScrubRules = func() []scrubRule {
+	var rules []scrubRule
+	for _, r := range scrubRules {
+		if r.credential {
+			rules = append(rules, r)
+		}
+	}
+	return rules
+}()
+
+func (r scrubRule) apply(text string) (string, int) {
+	n := len(r.re.FindAllStringIndex(text, -1))
+	if n == 0 {
+		return text, 0
+	}
+	if r.placeholder != "" {
+		return r.re.ReplaceAllString(text, r.placeholder), n
+	}
+	return r.re.ReplaceAllStringFunc(text, func(m string) string {
+		if idx := strings.IndexAny(m, "=:"); idx >= 0 {
+			return m[:idx+1] + " " + piiRedactSecret
+		}
+		return piiRedactSecret
+	}), n
+}
+
+func applyScrubRules(text string, rules []scrubRule) (string, int) {
 	count := 0
-
-	// Order matters: more specific patterns first to avoid partial matches
-
-	// JWT tokens (before generic secret, since JWTs contain dots that confuse other patterns)
-	if piiJWTRe.MatchString(text) {
-		n := len(piiJWTRe.FindAllString(text, -1))
-		text = piiJWTRe.ReplaceAllString(text, piiRedactJWT)
+	for _, r := range rules {
+		var n int
+		text, n = r.apply(text)
 		count += n
 	}
-
-	// AWS access keys
-	if piiAWSKeyRe.MatchString(text) {
-		n := len(piiAWSKeyRe.FindAllString(text, -1))
-		text = piiAWSKeyRe.ReplaceAllString(text, piiRedactAWSKey)
-		count += n
-	}
-
-	// AWS secret keys (capture group replacement)
-	if piiAWSSecretRe.MatchString(text) {
-		n := len(piiAWSSecretRe.FindAllString(text, -1))
-		text = piiAWSSecretRe.ReplaceAllStringFunc(text, func(m string) string {
-			idx := strings.IndexAny(m, "=:")
-			if idx >= 0 {
-				return m[:idx+1] + " " + piiRedactSecret
-			}
-			return piiRedactSecret
-		})
-		count += n
-	}
-
-	// SSN
-	if piiSSNRe.MatchString(text) {
-		n := len(piiSSNRe.FindAllString(text, -1))
-		text = piiSSNRe.ReplaceAllString(text, piiRedactSSN)
-		count += n
-	}
-
-	// Credit card numbers
-	if piiCCRe.MatchString(text) {
-		n := len(piiCCRe.FindAllString(text, -1))
-		text = piiCCRe.ReplaceAllString(text, piiRedactCC)
-		count += n
-	}
-
-	// Email addresses
-	if piiEmailRe.MatchString(text) {
-		n := len(piiEmailRe.FindAllString(text, -1))
-		text = piiEmailRe.ReplaceAllString(text, piiRedactEmail)
-		count += n
-	}
-
-	// Phone numbers
-	if piiPhoneRe.MatchString(text) {
-		n := len(piiPhoneRe.FindAllString(text, -1))
-		text = piiPhoneRe.ReplaceAllString(text, piiRedactPhone)
-		count += n
-	}
-
-	// Date of birth
-	if piiDOBRe.MatchString(text) {
-		n := len(piiDOBRe.FindAllString(text, -1))
-		text = piiDOBRe.ReplaceAllString(text, piiRedactDOB)
-		count += n
-	}
-
-	// Generic secrets/tokens (last — broadest pattern)
-	if piiGenericSecretRe.MatchString(text) {
-		n := len(piiGenericSecretRe.FindAllString(text, -1))
-		text = piiGenericSecretRe.ReplaceAllStringFunc(text, func(m string) string {
-			idx := strings.IndexAny(m, "=:")
-			if idx >= 0 {
-				return m[:idx+1] + " " + piiRedactSecret
-			}
-			return piiRedactSecret
-		})
-		count += n
-	}
-
 	return text, count
 }
 
+// ScrubPII redacts common PII and secrets from text.
+// Returns the scrubbed text and the count of redactions made.
+func ScrubPII(text string) (string, int) {
+	return applyScrubRules(text, scrubRules)
+}
+
+// ScrubSecrets redacts credentials alone — JWTs, AWS keys and labelled
+// secrets such as api_key=, token= and password= — and leaves PII-shaped text
+// (emails, phone- and SSN-shaped numbers) untouched. Returns the scrubbed text
+// and the count of redactions made.
+func ScrubSecrets(text string) (string, int) {
+	return applyScrubRules(text, credentialScrubRules)
+}
+
 // PIIScrubNotice returns an in-band banner to prepend to scrubbed output when
-// redactions occurred. PII-sensitive roles (api, run, watch) reason over their
-// own tool output, so without a visible notice an agent can mistake a redacted
+// redactions occurred. Agents reason over their own tool output and history,
+// so without a visible notice an agent can mistake a redacted
 // placeholder (e.g. [EMAIL_REDACTED]) for real data — and, worse, compute
 // string lengths, byte sizes, or row counts over redacted text and report them
 // as fact. The notice tells the agent the data was masked and that quantitative
@@ -174,4 +164,19 @@ var piiSensitiveRoles = map[string]bool{
 // that may contain PII (API responses, logs, command output).
 func IsPIISensitiveRole(role string) bool {
 	return piiSensitiveRoles[role]
+}
+
+// ScrubForRole is the bus road's coverage rule (MUX-179): every role's text is
+// scrubbed of credentials (ScrubSecrets), and a PII-sensitive role's of PII as
+// well (ScrubPII). The split follows the evidence: the leak that motivated it
+// was a credential, from plan, outside the role list — and credentials match
+// with high precision, so redacting them everywhere costs little. The PII
+// patterns match ordinary output agents reason over — a commit's author email,
+// an SSN-shaped id in a test log — so they stay gated on the roles that
+// handle external data.
+func ScrubForRole(role, text string) (string, int) {
+	if IsPIISensitiveRole(role) {
+		return ScrubPII(text)
+	}
+	return ScrubSecrets(text)
 }

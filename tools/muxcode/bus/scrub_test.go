@@ -184,3 +184,25 @@ func TestScrubPII_Multiple(t *testing.T) {
 		t.Error("SSN not redacted")
 	}
 }
+
+// ScrubSecrets is the every-role scrub (MUX-179): credentials go, and
+// PII-shaped text stays — the half that separates it from ScrubPII, without
+// which every role's build, test and git output would be rewritten.
+func TestScrubSecrets_CredentialsOnly(t *testing.T) {
+	input := "MUXCODE_OPENCODE_API_KEY=sk-fake-0123456789abcdef AKIAIOSFODNN7EXAMPLE\n" +
+		"Author: Jane Doe <jane.doe@example.com> call (555) 123-4567 id 123-45-6789"
+	out, n := ScrubSecrets(input)
+	if n != 2 {
+		t.Errorf("redactions = %d, want 2: %q", n, out)
+	}
+	for _, secret := range []string{"sk-fake-0123456789abcdef", "AKIAIOSFODNN7EXAMPLE"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("credential %q survived: %q", secret, out)
+		}
+	}
+	for _, pii := range []string{"jane.doe@example.com", "(555) 123-4567", "123-45-6789"} {
+		if !strings.Contains(out, pii) {
+			t.Errorf("PII %q was scrubbed; ScrubSecrets must leave it: %q", pii, out)
+		}
+	}
+}

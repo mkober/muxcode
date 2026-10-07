@@ -294,12 +294,24 @@ func SummarizePayload(payload string) string {
 // path goes through here precisely so the old duplicated heuristics — which
 // scanned payloads for "failed"/"error:" and defaulted to success otherwise —
 // cannot grow back in one copy while being fixed in another.
-func NewBusResponseEntry(action, payload string, errored bool) (HookHistoryEntry, bool) {
+//
+// The payload is redacted for role by ScrubForRole (MUX-179): an agent's reply
+// carries whatever its diagnostics printed, and the hook keeps no row of a
+// plan `ps eww`, so a reply is how that output reaches plan-history.jsonl. The
+// summary is taken from the scrubbed text without the PIIScrubNotice banner,
+// which goes on Output alone — a summary is one line, and the banner would
+// replace it.
+func NewBusResponseEntry(role, action, payload string, errored bool) (HookHistoryEntry, bool) {
 	payload = strings.TrimRight(payload, "\n")
 	if LooksLikeNonResult(payload) {
 		return HookHistoryEntry{}, false
 	}
 
+	scrubbed, n := ScrubForRole(role, payload)
+	output := scrubbed
+	if n > 0 {
+		output = PIIScrubNotice(n) + scrubbed
+	}
 	entry := HookHistoryEntry{
 		TS:     time.Now().Unix(),
 		Action: action,
@@ -307,8 +319,8 @@ func NewBusResponseEntry(action, payload string, errored bool) (HookHistoryEntry
 		// Explicitly verdict-free: no exit code, outcome "unknown".
 		ExitCode: "",
 		Outcome:  OutcomeUnknown,
-		Output:   payload,
-		Summary:  SummarizePayload(payload),
+		Output:   output,
+		Summary:  SummarizePayload(scrubbed),
 	}
 
 	// Two ways a failure reaches this point. The daemon paths pass errored

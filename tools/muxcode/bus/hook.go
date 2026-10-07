@@ -168,17 +168,18 @@ func (ev *ToolEvent) GetOutput(maxLines, maxChars int) string {
 	return clipOutput(StripANSI(ev.responseText()), maxLines, maxChars)
 }
 
-// GetScrubbedOutput is GetOutput with PII and secrets redacted for a
-// PII-sensitive role. ScrubPII runs on the whole ANSI-stripped response,
-// before either limit, because each limit can split a secret from what
-// identifies it: the line tail can drop a label whose value sits on a kept
-// line (`password=`, newline, `SuperSecret123` — the generic pattern spans the
-// newline), and the maxChars clip can cut a key into a prefix too short to
-// match. The PIIScrubNotice banner goes on after both limits so neither can
-// drop it, and counts every redaction in the response, kept lines or not.
-// Output with nothing to redact is byte-identical to GetOutput's.
-func (ev *ToolEvent) GetScrubbedOutput(maxLines, maxChars int) string {
-	scrubbed, n := ScrubPII(StripANSI(ev.responseText()))
+// GetScrubbedOutput is GetOutput redacted for role by ScrubForRole —
+// credentials for every role, PII as well for a PII-sensitive one. The scrub
+// runs on the whole ANSI-stripped response, before either limit, because each
+// limit can split a secret from what identifies it: the line tail can drop a
+// label whose value sits on a kept line (`password=`, newline,
+// `SuperSecret123` — the generic pattern spans the newline), and the maxChars
+// clip can cut a key into a prefix too short to match. The PIIScrubNotice
+// banner goes on after both limits so neither can drop it, and counts every
+// redaction in the response, kept lines or not. Output with nothing to redact
+// is byte-identical to GetOutput's.
+func (ev *ToolEvent) GetScrubbedOutput(role string, maxLines, maxChars int) string {
+	scrubbed, n := ScrubForRole(role, StripANSI(ev.responseText()))
 	out := clipOutput(scrubbed, maxLines, maxChars)
 	if n > 0 {
 		out = PIIScrubNotice(n) + out
@@ -781,11 +782,11 @@ func precheckPassed(cmdType CommandType, outcome string) bool {
 // transitions the workflow and writes the history row. Chain firing is the
 // caller's (cmd/hook.go) — it reads result.Chain.
 //
-// A PII-sensitive role's output is captured through GetScrubbedOutput — the
-// bus road's IsPIISensitiveRole gate, mirroring the harness executor's
-// (loop.go). It protects the history row and the errors extracted from it,
-// not the conversation: PostToolUse fires after the agent has already been
-// shown the raw output (MUX-179).
+// Output is captured through GetScrubbedOutput, redacted for role by
+// ScrubForRole — the bus road's counterpart of the harness executor's
+// IsPIISensitiveRole gate (loop.go). It protects the history row and the
+// errors extracted from it, not the conversation: PostToolUse fires after the
+// agent has already been shown the raw output (MUX-179).
 func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	command := ev.ToolInput.Command
 	if command == "" {
@@ -809,11 +810,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	case CmdDeploy, CmdDeployApply:
 		maxLines, maxChars = 50, 4000
 	}
-	captureOutput := ev.GetOutput
-	if IsPIISensitiveRole(role) {
-		captureOutput = ev.GetScrubbedOutput
-	}
-	output := captureOutput(maxLines, maxChars)
+	output := ev.GetScrubbedOutput(role, maxLines, maxChars)
 
 	result := HookBashResult{CommandType: cmdType, Chain: ChainEvent(role, cmdType, outcome)}
 

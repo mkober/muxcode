@@ -23,7 +23,11 @@ import (
 // piping through printf, which breaks allowedTools glob patterns when the LLM
 // embeds literal newlines in the command string.
 //
-// Appends a timestamped JSON entry to <bus-dir>/<role>-history.jsonl.
+// Appends a timestamped JSON entry to <bus-dir>/<role>-history.jsonl, its
+// output and summary redacted for role by bus.ScrubForRole (MUX-179). One
+// PIIScrubNotice, counting both fields, opens the output whenever either was
+// redacted — the summary is one line and the banner would replace it, so a
+// summary-only redaction leaves an output holding the notice alone.
 // Rotates to keep the last 100 entries.
 func Log(args []string) {
 	if err := runLog(args, os.Stdin); err != nil {
@@ -131,6 +135,11 @@ func runLog(args []string, stdin io.Reader) error {
 	session := bus.BusSession()
 	historyPath := bus.HistoryPath(session, role)
 
+	output, outputRedacted := bus.ScrubForRole(role, output)
+	summary, summaryRedacted := bus.ScrubForRole(role, summary)
+	if redacted := outputRedacted + summaryRedacted; redacted > 0 {
+		output = strings.TrimRight(bus.PIIScrubNotice(redacted)+output, "\n")
+	}
 	entry := bus.HookHistoryEntry{
 		TS:       time.Now().Unix(),
 		Summary:  summary,
