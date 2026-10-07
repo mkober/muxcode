@@ -192,10 +192,10 @@ const interruptPairDelay = 300 * time.Millisecond
 //  1. Optionally triggers context compaction before stopping (--compact flag)
 //  2. Sends provider-specific exit sequence:
 //     - Claude Code: TmuxClearComposer (Escape → C-e absorber → C-e → C-u, so
-//       the pending ESC fuses with the absorber rather than the command's
-//       first byte, and the composer is emptied whole — MUX-163) then /exit
-//       and Enter as separate writes, since Claude's TUI drops an Enter
-//       arriving in the same pty write as the text before it
+//     the pending ESC fuses with the absorber rather than the command's
+//     first byte, and the composer is emptied whole — MUX-163) then /exit
+//     and Enter as separate writes, since Claude's TUI drops an Enter
+//     arriving in the same pty write as the text before it
 //     - OpenCode/Codex/Local: C-c to interrupt
 //  3. Polls for process exit (500ms intervals, max 10s), answering Claude
 //     Code's "background shells are still running" confirmation dialog with

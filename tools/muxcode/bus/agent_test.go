@@ -116,7 +116,7 @@ func TestProcessMessages_SimpleResponse(t *testing.T) {
 			BaseURL:    server.URL,
 			HTTPClient: server.Client(),
 			Model:      "test-model",
-			Timeout: 10,
+			Timeout:    10,
 		},
 	}
 
@@ -232,7 +232,7 @@ func TestProcessMessages_WithToolCall(t *testing.T) {
 			BaseURL:    server.URL,
 			HTTPClient: server.Client(),
 			Model:      "test-model",
-			Timeout: 10,
+			Timeout:    10,
 		},
 	}
 
@@ -305,7 +305,7 @@ func TestAgentLoop_ContextCancel(t *testing.T) {
 			BaseURL:    server.URL,
 			HTTPClient: server.Client(),
 			Model:      "test-model",
-			Timeout: 10,
+			Timeout:    10,
 		},
 	}
 

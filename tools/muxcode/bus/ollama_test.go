@@ -129,8 +129,8 @@ func TestChatComplete_WithToolCalls(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "test-model",
-		Timeout: 10,
+		Model:      "test-model",
+		Timeout:    10,
 	})
 
 	resp, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "run git status"}}, nil)
@@ -171,8 +171,8 @@ func TestChatComplete_WithToolDefs(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "test-model",
-		Timeout: 10,
+		Model:      "test-model",
+		Timeout:    10,
 	})
 
 	tools := []ToolDef{
@@ -209,8 +209,8 @@ func TestChatComplete_APIError(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "bad-model",
-		Timeout: 10,
+		Model:      "bad-model",
+		Timeout:    10,
 	})
 
 	_, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "test"}}, nil)
@@ -243,8 +243,8 @@ func TestChatComplete_RetryOnServerError(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "test-model",
-		Timeout: 30,
+		Model:      "test-model",
+		Timeout:    30,
 	})
 
 	// Use a context with a generous timeout since we'll have retries
@@ -276,8 +276,8 @@ func TestChatComplete_NoRetryOn400(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "test-model",
-		Timeout: 10,
+		Model:      "test-model",
+		Timeout:    10,
 	})
 
 	_, err := client.ChatComplete(context.Background(), []ChatMessage{{Role: "user", Content: "test"}}, nil)
@@ -302,8 +302,8 @@ func TestCheckHealth_ModelAvailable(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "qwen2.5-coder:7b",
-		Timeout: 10,
+		Model:      "qwen2.5-coder:7b",
+		Timeout:    10,
 	})
 
 	err := client.CheckHealth(context.Background())
@@ -322,8 +322,8 @@ func TestCheckHealth_ModelNotFound(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "nonexistent-model",
-		Timeout: 10,
+		Model:      "nonexistent-model",
+		Timeout:    10,
 	})
 
 	err := client.CheckHealth(context.Background())
@@ -347,8 +347,8 @@ func TestCheckHealth_NoModels(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "any-model",
-		Timeout: 10,
+		Model:      "any-model",
+		Timeout:    10,
 	})
 
 	err := client.CheckHealth(context.Background())
@@ -386,8 +386,8 @@ func TestChatComplete_ContextCancelled(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "test-model",
-		Timeout: 10,
+		Model:      "test-model",
+		Timeout:    10,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -408,8 +408,8 @@ func TestCheckHealth_ModelNotFound_IsErrModelNotFound(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "missing-model",
-		Timeout: 10,
+		Model:      "missing-model",
+		Timeout:    10,
 	})
 
 	err := client.CheckHealth(context.Background())
@@ -430,8 +430,8 @@ func TestCheckHealth_NoModels_IsErrModelNotFound(t *testing.T) {
 	client := NewOllamaClient(OllamaConfig{
 		BaseURL:    server.URL,
 		HTTPClient: server.Client(),
-		Model:   "any-model",
-		Timeout: 10,
+		Model:      "any-model",
+		Timeout:    10,
 	})
 
 	err := client.CheckHealth(context.Background())

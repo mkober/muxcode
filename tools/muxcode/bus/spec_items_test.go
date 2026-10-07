@@ -65,9 +65,9 @@ func TestSpecOpenItemsBareCheckbox(t *testing.T) {
 func TestIntentPhase(t *testing.T) {
 	cases := map[string]int{
 		"MUX-115 Turn Budget — Phase 1: Turn trace": 1,
-		"phase 12 cleanup":                          12,
-		"no phase named here":                       0,
-		"":                                          0,
+		"phase 12 cleanup":    12,
+		"no phase named here": 0,
+		"":                    0,
 	}
 	for in, want := range cases {
 		if got := IntentPhase(in); got != want {
