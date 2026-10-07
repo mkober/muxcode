@@ -75,7 +75,7 @@ source tarball into a cache, not a `git pull` ([Decision 1](#decision-1--source-
 
 **Docs and test**
 
-- [ ] Docs: [`docs/agent-bus.md`](../../agent-bus.md) (`muxcode upgrade`, `upgrade-ui`, the modal), [`docs/configuration.md`](../../configuration.md) (`MUXCODE_UPGRADE_*` overrides, cache dir, token), [`docs/architecture.md`](../../architecture.md) (self-upgrade flow beside the daemon-upgrade contract), `CLAUDE.md` build/install table row, `README.md` quick-menu list
+- [x] Docs: [`docs/agent-bus.md`](../../agent-bus.md#muxcode-upgrade) (`muxcode upgrade`, `upgrade-ui`, the modal), [`docs/configuration.md`](../../configuration.md#self-upgrade) (`MUXCODE_UPGRADE_*` overrides, cache dir, token), [`docs/architecture.md`](../../architecture.md#self-upgrade-flow) (self-upgrade flow beside the daemon-upgrade contract), `CLAUDE.md` build/install table row, `README.md` quick-menu list (Phase 5, 2026-10-07)
 - [ ] `bash scripts/test-self-upgrade.sh` passes — hermetic, no network ([Phase 6](#phase-6-integration-test))
 
 ### Technical approach
@@ -176,7 +176,7 @@ recorded there. Screen escape sequences moved into `tui/styles.go`, per the TUI 
 
 ### Phase 5: Docs
 
-- [ ] `docs/agent-bus.md` (`muxcode upgrade`, `upgrade-ui`, modal), `docs/configuration.md` (`MUXCODE_UPGRADE_API_URL`, `MUXCODE_UPGRADE_TARBALL_URL`, cache dir, `GITHUB_TOKEN`), `docs/architecture.md` (self-upgrade flow next to the daemon-upgrade contract), `CLAUDE.md` table row, `README.md` quick-menu list
+- [x] `docs/agent-bus.md` (`muxcode upgrade`, `upgrade-ui`, modal), `docs/configuration.md` (`MUXCODE_UPGRADE_API_URL`, `MUXCODE_UPGRADE_TARBALL_URL`, cache dir, `GITHUB_TOKEN`), `docs/architecture.md` (self-upgrade flow next to the daemon-upgrade contract), `CLAUDE.md` table row, `README.md` quick-menu list (2026-10-07: plan wrote `agent-bus.md` §§ `muxcode upgrade` + `muxcode upgrade-ui` after `upgrade-daemons`, `configuration.md` § *Self-upgrade* under *Versioning and builds* (variables, cache layout, lock, limits, lifecycle rows), `architecture.md` § *Self-upgrade flow* after the attach-time freshness check; the worker had already done the `CLAUDE.md` row and the `README.md` quick-menu line and upgrade walkthrough. A separate user-requested stale-doc fix rode along: `architecture.md` and `agents.md` now say the Codex **test** role gets the Go caches)
 
 ### Phase 6: Integration test
 
@@ -246,7 +246,7 @@ no `--expect-tag`) still restarts every session on the machine, as above.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-202-self-upgrade-from-the-quick-menu | 1h 23m | 2026-10-06 17:25 |
+| MUX-202-self-upgrade-from-the-quick-menu | 1h 33m | 2026-10-07 09:12 |
 
 ## Status
 

@@ -326,6 +326,49 @@ Integration test: `scripts/test-version.sh` — covers the stamped identity, `ve
 
 `build.sh` calls `muxcode upgrade-daemons` after `make install`, so every install automatically rolls the new binary out to all live sessions.
 
+### `muxcode upgrade`
+
+Self-upgrade from the latest GitHub release, no checkout needed ([MUX-202](requirements/drafts/MUX-202-self-upgrade-from-the-quick-menu.md)): check, download the release source, rebuild and install locally, verify, restart the daemons, reload the tmux config. This is the non-interactive form of the **Upgrade MuxCode** modal below.
+
+```bash
+muxcode upgrade [--check] [--force] [--json] [--events <file>] [--expect-tag <tag> [--expect-session <name>]...]
+```
+
+- **Steps, in order**: `Check`, `Download`, `Build`, `Install`, `Verify`, `Restart daemons`, `Reload tmux config`. The run stops at the first failed step; an unforced run that finds nothing newer stops after `Check` and touches no file.
+- **Text output**: one line per step as it finishes — `<Step>: <note>` or `<Step>: FAILED — <cause>`; `Restart daemons` prints each session indented beneath it. On success a closing line: `upgraded vA → vB; agents keep running until restarted — Restart Agents (prefix + b, A)`. An up-to-date run prints only the `Check` line. Exit `0` on success (up-to-date included), `1` on a failed step.
+- `--check` — `Check` only. Exit `0` = nothing to upgrade (current, or a dev build **ahead** of the release), `10` = a newer release is available **and** buildable, `1` = error. A newer release with a build tool missing (`go`, `make`, `tar`) exits `1`, not `10` — `10` is a promise that the upgrade would run. An uncomparable build (`devel`, a bare commit) is verdict `unknown` and exits `1`.
+- `--check --json` — `{installed:{version,commit,date,go,os,arch}, latest:{tag,tarball_url,published_at}, verdict: current|ahead|newer|unknown, reason?, missing_tools?}`; a failed lookup prints `{installed, error}` so a script cannot misread empty release fields.
+- `--json` (full run) — `{installed, latest, verdict, upgraded, steps:[{name,success,note,error,sub,duration_ns}], error}`. `upgraded` is `false` both for a failed run and for one that stopped at `Check`.
+- `--force` — rebuild and reinstall the latest release even when current, ahead or unknown. A dev build past the latest tag is never downgraded without it.
+- `--events <file>`, `--expect-tag <tag>`, `--expect-session <name>` — the modal's detached run (below). `--events` appends each step and the run's end to the file as JSON lines; `--expect-tag` binds the run to the release the user confirmed, and each `--expect-session` to a daemon they were shown. `--expect-session` needs `--expect-tag`.
+- Where it writes: the release source and build log under `~/.cache/muxcode/upgrade/<tag>/`, the binary and configs where `make install` puts them (`BINDIR`/`CONFIGDIR`). Every step writes a lifecycle row — see [Configuration → Self-upgrade](configuration.md#self-upgrade) for the cache layout, limits and overrides, and [Architecture → Self-upgrade flow](architecture.md#self-upgrade-flow) for why `Build` and `Install` are separate and why the daemon restart runs the *new* binary.
+
+### `muxcode upgrade-ui`
+
+Upgrade MuxCode TUI — the interactive face of `muxcode upgrade`, used by the `upgrade` modal.
+
+```bash
+muxcode upgrade-ui
+```
+
+Launched via `muxcode modal open upgrade` — the **`Upgrade MuxCode`** entry (key `U`) in the `prefix + b` quick menu, next to `Restart Agents`; the modal is registered in `bus/modal.go` with the `provider`/`restart` sizes.
+
+**Screens:**
+
+| Screen | Shows |
+|--------|-------|
+| Confirm | The check result and the consequence: `installed vA → latest vB; rebuilds and installs to <BINDIR> and <CONFIGDIR>, then restarts N daemons: <sessions>`. Up-to-date and ahead are explicit states, not an empty body — they offer only `f` |
+| Progress | One row per step — `○` pending, `⟳` running, `✓` done, `✗` failed with the cause wrapped to the pane — session sub-rows under `Restart daemons`, and a bar |
+| Done | The version delta and the follow-up the upgrade does not do (`Restart Agents`), or where it stopped and why |
+
+**Keys** (every one is in the footer): `⏎` Upgrade — only when a newer release is available; `f` Force rebuild; `q` / `Esc` Quit. After a failed check, `⏎` re-checks.
+
+**Confirm then re-check.** On `⏎` or `f` the modal re-reads the latest release **and** the daemon list; if either changed since the confirm was shown it starts nothing and says what changed. The upgrade then runs as a detached `muxcode upgrade --events <file> --expect-tag <confirmed> --expect-session …` child, so `q` closes the modal at any point and the upgrade carries on (the reload modal's shape). The bound run refuses at `Check` any release other than the confirmed one — nothing mutated — and restarts only the confirmed sessions' daemons (`upgrade-daemons --session` each); a daemon started after the confirm is left on the old build and named in the step note. A child that dies without writing its end is shown as failed.
+
+**Fits the pane.** Every screen honours width and height: a short pane drops the session sub-rows, then folds the step list to one status line — a failed run keeps the failed step's cause and log path — and the footer is always kept. Rendering is pure (snapshot in, string out) and readable without colour; the glyph carries the state.
+
+Core code: `tui/upgrade_ui.go`, `bus/selfupgrade_run.go` (the events file and detached start), `cmd/upgrade_self.go`.
+
 ### `muxcode dashboard`
 
 Launch the Dracula-themed terminal dashboard TUI.
