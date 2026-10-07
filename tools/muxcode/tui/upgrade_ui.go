@@ -89,7 +89,7 @@ func processAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-// UpgradeUI is the `Upgrade MuxCode` modal (MUX-202): check the latest
+// UpgradeUI is the `Check for Updates` modal (MUX-202): check the latest
 // release, confirm what the upgrade will do, then follow it. The upgrade runs
 // as its own detached `muxcode upgrade --events` process, so q closes the
 // modal at any point and the upgrade carries on.
@@ -528,7 +528,7 @@ func stepRows(results []bus.StepResult, withSub bool) []batchRow {
 func upgradeHeader(subtitle string, width int) []string {
 	return []string{
 		"",
-		TruncateAnsi(fmt.Sprintf("  %s%sUpgrade MuxCode%s", Bold, Purple, RST), width),
+		TruncateAnsi(fmt.Sprintf("  %s%sCheck for Updates%s", Bold, Purple, RST), width),
 		TruncateAnsi(fmt.Sprintf("  %s%s%s", Comment, subtitle, RST), width),
 		"",
 	}

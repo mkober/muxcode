@@ -210,7 +210,7 @@ Commands:
   pane          Resolve a role's tmux pane target by identity and print it
   upgrade-daemons  Restart all running session daemons on the installed binary (--dry-run)
   upgrade       Self-upgrade from the latest GitHub release (--force, --json; --check exits 0 current, 10 newer, 1 error)
-  upgrade-ui    Upgrade MuxCode TUI — check, confirm, follow the upgrade (used by modal)
+  upgrade-ui    Check for Updates TUI — check, confirm, follow the upgrade (used by modal)
   uitest        Run integration tests in a live tmux session (--list, --verbose)
   tasks         List delegated tasks tracked via --wait (--all, --status)
   track         Show delivery status for a message ID

@@ -75,7 +75,7 @@ func TestRenderUpgradeConfirm_UpToDateAndAheadAreExplicit(t *testing.T) {
 	} {
 		v := upgradeConfirmView{Reading: upgradeReading{Check: upgradeCheckOf(c.installed, "v0.1.21", c.verdict), Target: upgradeTestTarget}}
 		frame := StripAnsi(renderUpgradeConfirm(v, 200, 30))
-		for _, want := range []string{"Upgrade MuxCode", "✓ " + c.summary, "f rebuilds and reinstalls v0.1.21", "f Force rebuild  q Quit"} {
+		for _, want := range []string{"Check for Updates", "✓ " + c.summary, "f rebuilds and reinstalls v0.1.21", "f Force rebuild  q Quit"} {
 			if !strings.Contains(frame, want) {
 				t.Errorf("%s: frame missing %q:\n%s", c.name, want, frame)
 			}

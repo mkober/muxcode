@@ -202,7 +202,7 @@ func DefaultModalConfigs() []ModalConfig {
 		},
 		{
 			Name:    "upgrade",
-			Title:   " Upgrade MuxCode ",
+			Title:   " Check for Updates ",
 			Width:   "50%",
 			Height:  "60%",
 			Command: "muxcode upgrade-ui",
