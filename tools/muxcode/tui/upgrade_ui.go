@@ -384,6 +384,9 @@ func confirmBody(v upgradeConfirmView, compact bool, width int) ([]string, strin
 	default:
 		body = append(body, verdictLines(r.Check, width)...)
 		if w := r.Check.DevBuildWarning(); w != "" {
+			if compact {
+				w = fmt.Sprintf("unreleased dev build — %s drops its changes", r.Check.Latest.Tag)
+			}
 			body = append(body, wrapStyled("  ", Yellow, "⚠ "+w, width)...)
 		}
 		body = append(body, "")

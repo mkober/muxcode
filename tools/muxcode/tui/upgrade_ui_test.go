@@ -86,6 +86,22 @@ func TestRenderUpgradeConfirm_WarnsBeforeReplacingDevBuild(t *testing.T) {
 	}
 }
 
+// A short pane must not trade the consequence for the warning: ⏎ stays live,
+// so what it installs and restarts has to stay on screen beside the warning
+// (review should-fix). The full-size frame above is the negative control —
+// there the long warning is shown.
+func TestRenderUpgradeConfirm_ShortPaneKeepsWarningAndConsequence(t *testing.T) {
+	v := upgradeConfirmView{Reading: upgradeReading{Check: upgradeCheckOf("v0.1.20-16-gfeb4a13-dirty", "v0.1.21", bus.UpgradeNewer), Target: upgradeTestTarget}}
+	frame := renderUpgradeConfirm(v, 80, 12)
+	flat := strings.Join(strings.Fields(StripAnsi(frame)), " ")
+	for _, want := range []string{"⚠ unreleased dev build", "/home/u/.local/bin", "/home/u/.config/muxcode", "restarts 2 daemons", "⏎ Upgrade"} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("80x12 frame missing %q:\n%s", want, StripAnsi(frame))
+		}
+	}
+	assertUpgradeFrameFits(t, frame, 80, 12)
+}
+
 // Nothing newer is an explicit state with the header and a footer naming only
 // the keys it takes; a newer release is the half that states the full
 // consequence and offers ⏎.
