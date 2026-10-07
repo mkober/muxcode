@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // PII patterns compiled once at package init.
@@ -31,8 +32,17 @@ var (
 	// AWS secret key: 40-char base64-like string after common key labels
 	piiAWSSecretRe = regexp.MustCompile(`(?i)(?:aws_secret_access_key|secret.?key|SecretAccessKey)\s*[=:]\s*["']?([A-Za-z0-9/+=]{40})["']?`)
 
-	// Generic API key/token patterns (key=..., token=..., password=...)
-	piiGenericSecretRe = regexp.MustCompile(`(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|bearer|password|passwd|secret|token|authorization)\s*[=:]\s*["']?([^\s"',;]{8,})["']?`)
+	// Authorization header: one Bearer/Basic/Token token, or Digest's field list to end of line
+	piiAuthHeaderRe = regexp.MustCompile(`(?i)\bauthorization["']?\s*[=:]\s*["']?(?:(?:bearer|basic|token)\s+[^\s"',;]{8,}["']?|digest\s+[^\r\n]+)`)
+
+	// Generic API key/token patterns (token=..., "password": "...")
+	piiGenericSecretRe = regexp.MustCompile(`(?i)(?:api[_-]?key|api[_-]?secret|auth[_-]?token|bearer|password|passwd|secret|token|authorization)["']?\s*[=:]\s*["']?([^\s"',;]{8,})["']?`)
+
+	// Bare key label: --key=..., "key": "..." — kept only when secretShaped
+	piiBareKeyRe = regexp.MustCompile(`(?i)\bkey["']?\s*[=:]\s*["']?[^\s"',;]{8,}["']?`)
+
+	// A whole value that is an earlier rule's placeholder, closing JSON punctuation allowed
+	piiPlaceholderRe = regexp.MustCompile(`^\[[A-Z_]+_REDACTED\][)\]}>]*$`)
 
 	// JWT tokens: three base64 segments separated by dots
 	piiJWTRe = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`)
@@ -55,25 +65,55 @@ const (
 
 // scrubRule is one redaction. A rule with no placeholder matches a
 // label=value pair and keeps the label, redacting only what follows its = or :.
+// A rule with accept redacts only the matches accept approves.
 type scrubRule struct {
 	re          *regexp.Regexp
 	placeholder string
 	credential  bool
+	accept      func(match string) bool
 }
 
-// scrubRules run in order: specific patterns before broad ones — JWTs ahead of
-// the generic secret, whose dots confuse it — and the generic label=value
-// secret last.
+// scrubRules run in order: specific patterns before broad ones — the
+// Authorization header first, so a JWT inside it is one redaction rather than
+// two, JWTs ahead of the generic secret, whose dots confuse it, and the
+// label=value rules last. The generic rule skips a value that is exactly an
+// earlier placeholder (token=[JWT_REDACTED]) so a redaction is counted once,
+// but still takes one that merely contains a placeholder:
+// password=[EMAIL_REDACTED]!secret987 would otherwise leak its suffix.
 var scrubRules = []scrubRule{
-	{piiJWTRe, piiRedactJWT, true},
-	{piiAWSKeyRe, piiRedactAWSKey, true},
-	{piiAWSSecretRe, "", true},
-	{piiSSNRe, piiRedactSSN, false},
-	{piiCCRe, piiRedactCC, false},
-	{piiEmailRe, piiRedactEmail, false},
-	{piiPhoneRe, piiRedactPhone, false},
-	{piiDOBRe, piiRedactDOB, false},
-	{piiGenericSecretRe, "", true},
+	{piiAuthHeaderRe, "", true, nil},
+	{piiJWTRe, piiRedactJWT, true, nil},
+	{piiAWSKeyRe, piiRedactAWSKey, true, nil},
+	{piiAWSSecretRe, "", true, nil},
+	{piiSSNRe, piiRedactSSN, false, nil},
+	{piiCCRe, piiRedactCC, false, nil},
+	{piiEmailRe, piiRedactEmail, false, nil},
+	{piiPhoneRe, piiRedactPhone, false, nil},
+	{piiDOBRe, piiRedactDOB, false, nil},
+	{piiGenericSecretRe, "", true, notPlaceholder},
+	{piiBareKeyRe, "", true, secretShaped},
+}
+
+// labelValue returns a label=value match's value, unquoted.
+func labelValue(match string) string {
+	return strings.Trim(match[strings.IndexAny(match, "=:")+1:], ` "'`)
+}
+
+func notPlaceholder(match string) bool {
+	return !piiPlaceholderRe.MatchString(labelValue(match))
+}
+
+// secretShaped reports whether a bare key= match carries a credential rather
+// than an ordinary key: a value of 16+ characters mixing letters and digits,
+// with no '.' or ':' and no leading '/' or '~', so key=timestamp,
+// key=/etc/a.pem and an SSH "key: SHA256:…" fingerprint stay readable while
+// key=sk0123456789abcdefXYZ goes.
+func secretShaped(match string) bool {
+	v := labelValue(match)
+	if len(v) < 16 || strings.ContainsAny(v, ".:") || strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~") {
+		return false
+	}
+	return strings.IndexFunc(v, unicode.IsLetter) >= 0 && strings.IndexFunc(v, unicode.IsDigit) >= 0
 }
 
 var credentialScrubRules = func() []scrubRule {
@@ -87,19 +127,21 @@ var credentialScrubRules = func() []scrubRule {
 }()
 
 func (r scrubRule) apply(text string) (string, int) {
-	n := len(r.re.FindAllStringIndex(text, -1))
-	if n == 0 {
-		return text, 0
-	}
-	if r.placeholder != "" {
-		return r.re.ReplaceAllString(text, r.placeholder), n
-	}
-	return r.re.ReplaceAllStringFunc(text, func(m string) string {
+	n := 0
+	out := r.re.ReplaceAllStringFunc(text, func(m string) string {
+		if r.accept != nil && !r.accept(m) {
+			return m
+		}
+		n++
+		if r.placeholder != "" {
+			return r.placeholder
+		}
 		if idx := strings.IndexAny(m, "=:"); idx >= 0 {
 			return m[:idx+1] + " " + piiRedactSecret
 		}
 		return piiRedactSecret
-	}), n
+	})
+	return out, n
 }
 
 func applyScrubRules(text string, rules []scrubRule) (string, int) {
@@ -118,8 +160,9 @@ func ScrubPII(text string) (string, int) {
 	return applyScrubRules(text, scrubRules)
 }
 
-// ScrubSecrets redacts credentials alone — JWTs, AWS keys and labelled
-// secrets such as api_key=, token= and password= — and leaves PII-shaped text
+// ScrubSecrets redacts credentials alone — JWTs, AWS keys, Authorization
+// headers and labelled secrets such as api_key=, token= and "password": — and
+// leaves PII-shaped text
 // (emails, phone- and SSN-shaped numbers) untouched. Returns the scrubbed text
 // and the count of redactions made.
 func ScrubSecrets(text string) (string, int) {
@@ -173,8 +216,10 @@ func IsPIISensitiveRole(role string) bool {
 // with high precision, so redacting them everywhere costs little. The PII
 // patterns match ordinary output agents reason over — a commit's author email,
 // an SSN-shaped id in a test log — so they stay gated on the roles that
-// handle external data.
+// handle external data. ANSI escapes are stripped first on every writer: a
+// color code between a label and its = defeats every label=value pattern.
 func ScrubForRole(role, text string) (string, int) {
+	text = StripANSI(text)
 	if IsPIISensitiveRole(role) {
 		return ScrubPII(text)
 	}

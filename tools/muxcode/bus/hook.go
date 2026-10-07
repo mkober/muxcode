@@ -179,7 +179,7 @@ func (ev *ToolEvent) GetOutput(maxLines, maxChars int) string {
 // redaction in the response, kept lines or not. Output with nothing to redact
 // is byte-identical to GetOutput's.
 func (ev *ToolEvent) GetScrubbedOutput(role string, maxLines, maxChars int) string {
-	scrubbed, n := ScrubForRole(role, StripANSI(ev.responseText()))
+	scrubbed, n := ScrubForRole(role, ev.responseText())
 	out := clipOutput(scrubbed, maxLines, maxChars)
 	if n > 0 {
 		out = PIIScrubNotice(n) + out

@@ -185,6 +185,81 @@ func TestScrubPII_Multiple(t *testing.T) {
 	}
 }
 
+// The four credential shapes MUX-179's coverage docs once listed as misses:
+// an Authorization header's scheme hid its token from the label=value rule, a
+// JSON key's closing quote broke the label from its colon, and a bare key=
+// had no label at all. Each must go, counted once; the controls are the
+// lookalikes that must stay, so a pattern widened to match everything fails.
+func TestScrubSecrets_HeaderQuotedLabelAndBareKey(t *testing.T) {
+	jwt := "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc123def456ghi789"
+	redacted := []struct {
+		name, input, secret string
+	}{
+		{"bearer header", "Authorization: Bearer opaque0123456789abcdef", "opaque0123456789abcdef"},
+		{"basic header", `-H 'authorization: Basic dXNlcjpwYXNzd29yZDEyMw=='`, "dXNlcjpwYXNzd29yZDEyMw=="},
+		{"json bearer header", `{"Authorization": "Bearer opaque0123456789abcdef"}`, "opaque0123456789abcdef"},
+		{"jwt in bearer header", "Authorization: Bearer " + jwt, "eyJhbGci"},
+		{"digest header", `Authorization: Digest username="alice", realm="example", nonce="abcdef0123456789", response="0123456789abcdef0123456789abcdef"`, "0123456789abcdef0123456789abcdef"},
+		{"jwt behind token label", "token=" + jwt, "eyJhbGci"},
+		{"bracketed password", "password=[hunter2secret0]", "hunter2secret0"},
+		{"json password", `{"user": "svc", "password": "hunter2secret"}`, "hunter2secret"},
+		{"json token", `{"token": "tok_0123456789abcdef"}`, "tok_0123456789abcdef"},
+		{"bare key flag", "openssl enc --key=sk0123456789abcdefXYZ", "sk0123456789abcdefXYZ"},
+		{"json bare key", `{"key": "a1b2c3d4e5f6g7h8i9j0"}`, "a1b2c3d4e5f6g7h8i9j0"},
+	}
+	for _, tc := range redacted {
+		out, n := ScrubSecrets(tc.input)
+		if n != 1 {
+			t.Errorf("%s: redactions = %d, want 1: %q", tc.name, n, out)
+		}
+		if strings.Contains(out, tc.secret) {
+			t.Errorf("%s: credential survived: %q", tc.name, out)
+		}
+	}
+
+	kept := []string{
+		"key=timestamp",
+		"sort key=user_profile_settings",
+		"key=/etc/ssl/private/server.pem",
+		"partition_key=user_0123456789abcdef",
+		"monkey=a1b2c3d4e5f6g7h8i9j0",
+		"256 key: SHA256:AbCdEf0123456789AbCdEf0123456789 (ED25519)",
+		`{"token_type": "Bearer", "expires_in": 3600}`,
+		"Bearer tokens are documented in RFC 6750",
+	}
+	for _, input := range kept {
+		if out, n := ScrubSecrets(input); n != 0 || out != input {
+			t.Errorf("lookalike redacted (%d): %q -> %q", n, input, out)
+		}
+	}
+}
+
+// On a PII-sensitive role the email rule runs before the label=value rule and
+// leaves a placeholder at the head of the value; the rest of the secret must
+// still go. Exempting every '['-prefixed value leaked "!secret987".
+func TestScrubPII_PlaceholderPrefixedSecretRedacted(t *testing.T) {
+	out, n := ScrubPII("password=alice@example.com!secret987")
+	if n != 2 || strings.Contains(out, "secret987") {
+		t.Errorf("secret suffix survived (%d): %q", n, out)
+	}
+}
+
+// An ANSI color code between a label and its '=' hid the pair from every
+// label=value rule on the writers that scrub raw text (reply rows, muxcode
+// log, muxcode agent). ScrubForRole strips escapes first, for every role.
+func TestScrubForRole_ColoredLabelRedacted(t *testing.T) {
+	input := "\x1b[33mpassword\x1b[0m=hunter2secret0"
+	for _, role := range []string{"plan", "run"} {
+		out, n := ScrubForRole(role, input)
+		if n != 1 || strings.Contains(out, "hunter2secret0") {
+			t.Errorf("%s: colored label not redacted (%d): %q", role, n, out)
+		}
+	}
+	if out, n := ScrubForRole("plan", "\x1b[32mok\x1b[0m build passed"); n != 0 || out != "ok build passed" {
+		t.Errorf("clean colored output: got (%d) %q, want escapes stripped and nothing redacted", n, out)
+	}
+}
+
 // ScrubSecrets is the every-role scrub (MUX-179): credentials go, and
 // PII-shaped text stays — the half that separates it from ScrubPII, without
 // which every role's build, test and git output would be rewritten.
