@@ -57,7 +57,7 @@ command on a non-sensitive role, which MUX-179's credential-everywhere rule now 
 - [x] **Negative control:** the same commands on a non-sensitive role, and ordinary commands on a sensitive role, pass the guard unchanged (Phase 2: `CheckPIIPipeGuard`, `bus/pii_guard.go` — `TestCheckPIIPipeGuard_NonSensitiveRoleUntouched`, `TestCheckPIIPipeGuard_OrdinaryCommandsAllowed` (`ps -ef`, `env` running a command), `TestCheckPIIPipeGuard_SpawnWorkerUsesBaseRole`)
 - [x] `muxcode agent`'s model copy of a result goes through `ScrubForRole` — the one conversation road muxcode owns outright (Phase 2: in `ToolExecutor.Execute`, before the output cap; `TestProcessMessages_ModelCopyScrubbed`, `TestExecuteRead_ScrubsBeforeTruncation`)
 - [x] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) *Coverage by road* state, per provider, what the conversation road now covers and what it still does not (Phase 4: eight per-provider rows and a *Not covered* list in `agents.md`; `CLAUDE.md:140`; denial and redaction stated as separate facts per road)
-- [ ] `bash scripts/test-pii-scrub-conversation.sh` passes
+- [x] `bash scripts/test-pii-scrub-conversation.sh` passes (run agent 2026-10-08: hermetic 25 passed, 0 failed at floor 25; with `MUXCODE_PII_CONVERSATION_LIVE=1`, 25/0 plus 4 live — a real Claude and a real OpenCode each shown the placeholder and never the fixture secret in any model-visible text, with `build`-role controls reading the raw value)
 
 ### Technical approach
 
@@ -217,8 +217,72 @@ longer sentence is the correct one. Also caught by plan itself: the `hook scrub`
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-pii-scrub-conversation.sh` — hermetic scratch bus; a sensitive role's bare `ps eww` is denied by the guard and the piped form passes; a non-sensitive role's is allowed (negative control); the model copy of a result is scrubbed; where Phase 3 landed, the agent-facing result is scrubbed
-- [ ] Coverage floor pinned to the exact pass count; run through the run agent (foreground) and record counts here
+- [x] Create `scripts/test-pii-scrub-conversation.sh` — hermetic scratch bus; a sensitive role's bare `ps eww` is denied by the guard and the piped form passes; a non-sensitive role's is allowed (negative control); the model copy of a result is scrubbed; where Phase 3 landed, the agent-facing result is scrubbed (three of the four clauses are driven by the script — guard floor 6, Claude `hook scrub` 5, Codex wrap 8, OpenCode plugin under `node` 4, `pii-scrub --role` 2. **The model-copy clause is not**: the `muxcode agent` loop needs an Ollama-compatible endpoint and the repo's rule is that no test binds a socket, so that road is proven by `TestProcessMessages_ModelCopyScrubbed` over a pipe server and `TestExecute_ErrorsAndWriteReportsRedacted` / `TestExecuteRead_ScrubsBeforeTruncation`, while the script exercises the same `ScrubForRoleWithNotice` through `pii-scrub --role`. Ticked on that basis — the behaviour is delivered and proven, by the one vehicle that can prove it; the user may narrow the wording instead)
+- [x] Coverage floor pinned to the exact pass count; run through the run agent (foreground) and record counts here (`EXPECTED_PASS=25`; hermetic **25/0**; live **25/0 + 4 live**, exit 0, final task `1791482170-spawn-3cc16ef6-434b927b` — the full record is the subsection below)
+
+#### Phase 5 verification note
+
+Verified 2026-10-08 14:05 by plan from the working tree (run `1791404721`; Phase 4 committed as
+`134bd27`). Test node success; final review **0/0/0** ("live checks now reject CLI, parsing, and
+incomplete-run failures; full-text secret checks and controls remain intact"). Three review rounds, all
+on the live section, each closing a way a "never the value" test could pass without proving it:
+inspecting only the final response line; matching only the labelled form of the secret; trusting output
+from a run that never completed. With this, every acceptance criterion (7) and every phase step in the
+spec is ticked — the model-copy clause of the first Phase 5 step on unit coverage, as its annotation says.
+
+#### Phase 5 record (written by plan from the implement worker's record, 2026-10-08)
+
+`scripts/test-pii-scrub-conversation.sh` — 282 lines; hermetic: a scratch bus session and project
+directory driven through the installed binary, a stub `codex` on `PATH` so the hook road is eligible
+without the real CLI, the real `muxcode agent config` writers; `node` for the OpenCode plugin. Floor
+`EXPECTED_PASS=25`, the exact hermetic pass count. Listed in `CLAUDE.md`.
+
+| Section | Checks | What it proves |
+|---------|--------|----------------|
+| Guard floor | 6 | a `run` agent's bare `ps eww` and a piped `printenv NAME` are denied naming the remedy; the scrubbed pipe, an ordinary `ps -ef`, and a `build` agent's bare `ps eww` pass (controls) |
+| Claude `hook scrub` | 5 | answers with the result redacted and its other fields kept; silent for a `build` role, a clean result, and `PostToolUseFailure` — the recorded residual gap |
+| Codex scrub wrap | 8 | the guard rewrites a `run` agent's Bash call; the returned command, executed as Codex would, prints redacted output and keeps the command's exit code and inner pipeline status; a missing scrubber withholds output and exits 125; history records the original command; a `build` agent is not wrapped |
+| OpenCode plugin under `node` | 4 | `agent config` writes the plugin; it redacts a `watch` agent's result, leaves a `build` agent's alone, and withholds the result when `muxcode` is missing |
+| `pii-scrub --role` | 2 | redacts for a sensitive role, echoes otherwise |
+
+Runs through the run agent, foreground, against the installed binary:
+
+| Run | Result | Task |
+|-----|--------|------|
+| Hermetic | **25 passed, 0 failed** (floor 25), 0 live | `1791481319-spawn-3cc16ef6-ac979efd` → `1791481370-run-428d56b7` |
+| `MUXCODE_PII_CONVERSATION_LIVE=1`, strengthened checks | **25 passed, 0 failed** (floor 25), **4 live**, exit 0 | `1791481906-spawn-3cc16ef6-b5f1c627` → `1791481986-run-daee4c03` |
+| `MUXCODE_PII_CONVERSATION_LIVE=1`, final — with the completion gate | **25 passed, 0 failed** (floor 25), **4 live**, exit 0 | `1791482170-spawn-3cc16ef6-434b927b` → `1791482254-run-97f7bf73` |
+
+Live — what the strengthened checks establish, after the Phase 5 review found the first version
+inspected only a final response (OpenCode's last text line), matched only `password=live<digit>` rather
+than the bare value, and had no control proving the tool ran: the script writes a **fixture-generated
+secret unknown to the prompt** (`live${RANDOM}x${RANDOM}x${RANDOM}`) as `password=…` into a neutrally
+named `notes.txt` — an OpenCode model had refused to `cat` a file called `live-secret.txt` — and asks the
+model to run `cat notes.txt` and reply with the tool result verbatim. It then collects **every
+model-visible text**: for Claude (haiku, `--settings` registering `muxcode hook scrub`, `stream-json`)
+every `tool_result`, every assistant text and the final result; for OpenCode (`opencode/big-pickle`, the
+written plugin, `--format json`) every tool output and text part. The **protected** role (`run` on
+Claude, `watch` on OpenCode) must show `SECRET_REDACTED` and the exact value **nowhere** in that text; a
+**`build` control** on each provider must show the raw value and no placeholder — proving the prompt
+really executes the tool and the search can see a leak. **Each live check first fails an incomplete
+run, before any text is searched** — added after a second review finding that the helpers parsed
+regardless of CLI failure, so a CLI that emitted the expected result and then died, or a truncated
+stream whose valid prefix held the placeholder, could still pass: `claude_run`/`opencode_run` record
+the CLI's exit (`run_status`), whether every stream line parsed (`parse_status`), and whether the run
+*completed with a tool result* (`run_complete` — Claude: a final `result` with `subtype=="success"` and
+`is_error==false` after at least one `tool_result`; OpenCode: a last `step_finish` with `reason=="stop"`
+and at least one `completed` tool part); any of the three failing is a live failure naming the CLI's
+stderr, and partial output can never pass. All four passed, twice. Earlier live runs failed on
+script bugs, not the scrub road: variadic `--allowedTools` swallowing the prompt (`…-380acd93`,
+`…-0da6f2fd`; fixed by placing the prompt after `-p`, stderr now surfaced), then the model's refusal of
+the loaded filename (`…-a19c38e9` reported 2 live before the checks were strengthened; superseded).
+
+**Deviation from the step text, recorded honestly.** "The model copy of a result is scrubbed" is **not**
+driven by the script: the `muxcode agent` loop needs an Ollama-compatible HTTP endpoint, and the
+integration scripts bind no sockets (a sandboxed run agent cannot listen). It is pinned instead by
+`TestProcessMessages_ModelCopyScrubbed` — the real `processMessages` loop over a pipe server — and
+`TestExecute_ErrorsAndWriteReportsRedacted` / `TestExecuteRead_ScrubsBeforeTruncation`; the script
+exercises the same `ScrubForRoleWithNotice` through `pii-scrub --role`.
 
 ## Decisions
 
@@ -276,9 +340,12 @@ the floor beneath all of them.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-203-sensitive-role-conversation-is-never-scrubbed | 2h 0m | 2026-10-08 13:20 |
+| MUX-203-sensitive-role-conversation-is-never-scrubbed | 2h 26m | 2026-10-08 14:05 |
 
 ## Status
 
-In Progress — moved from `backlog/` to `drafts/` and set as the active spec on the user's instruction,
-2026-10-07 (rank 1 / Tier 1), the day after it was filed as MUX-179's deferral target.
+In Progress — **all five phases implemented and verified 2026-10-08**; awaiting the Phase 5 commit and
+the run's close-out (Status → `Complete`, move to `completed/`). Moved from `backlog/` to `drafts/` and
+set as the active spec on the user's instruction 2026-10-07 (rank 1 / Tier 1), the day after it was filed
+as MUX-179's deferral target; phases on `MUX-203-sensitive-role-conversation-is-never-scrubbed`:
+`3fa22b2`, `25c2c1d`, `7d56398`, `134bd27`.
