@@ -64,6 +64,8 @@ Hooks are configured in `.claude/settings.json` in your project:
 }
 ```
 
+One Claude hook is deliberately **not** in that file: PII-sensitive roles (`api`, `run`, `runner`, `watch`) also get a **synchronous** `muxcode hook scrub` on `PostToolUse`/`Bash`, passed per launch by `--settings` (`ClaudeScrubSettings`), which adds to the user's hooks rather than replacing them (verified on claude 2.1.293). It answers `updatedToolOutput` with the `ScrubForRole` text under the `PIIScrubNotice`, so the model reads the redacted result — for a command that exits 0; a non-zero exit fires `PostToolUseFailure`, which cannot replace a result ([MUX-203](requirements/drafts/MUX-203-sensitive-role-conversation-is-never-scrubbed.md)).
+
 You can copy a pre-configured template:
 ```bash
 cp ~/.config/muxcode/settings.json .claude/settings.json
@@ -75,7 +77,7 @@ Codex agents on the hook road ([MUX-159](requirements/completed/MUX-159-codex-ho
 
 | Codex event | Matcher | Handler | Answer shape |
 |-------------|---------|---------|--------------|
-| `PreToolUse` | `Bash\|apply_patch` | `muxcode hook guard` | `hookSpecificOutput.permissionDecision: "deny"` + `permissionDecisionReason` (`FormatCodexGuardDeny`); silence allows |
+| `PreToolUse` | `Bash\|apply_patch` | `muxcode hook guard` | `hookSpecificOutput.permissionDecision: "deny"` + `permissionDecisionReason` (`FormatCodexGuardDeny`); silence allows — except an allowed `Bash` call from a PII-sensitive role, which is answered `permissionDecision: "allow"` + `updatedInput.command` = the scrub wrap (`CodexScrubWrapAnswer`, [MUX-203](requirements/drafts/MUX-203-sensitive-role-conversation-is-never-scrubbed.md)): `WrapForScrub` pipes the command's stdout and stderr through `muxcode pii-scrub --role <base role>` before Codex reads them, keeps the command's exit code, exits 125 when the scrubber fails, and `ParseToolEvent` unwraps it for history and chains |
 | `PostToolUse` | `Bash` | `muxcode hook bash` | none — writes the console-history row with the real exit code and fires the chain |
 | `PostToolUse` | `apply_patch` | `muxcode hook analyze` | none — one analyze trigger per path the patch names |
 | `Stop` | — | `muxcode hook stop` | `{"decision":"block","reason":…}` when an actionable request is pending (`CodexStopDelivery`); nothing otherwise |

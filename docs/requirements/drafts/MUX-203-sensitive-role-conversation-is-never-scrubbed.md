@@ -56,7 +56,7 @@ command on a non-sensitive role, which MUX-179's credential-everywhere rule now 
 - [x] Where no road can, the guard enforces the pipe for the commands known to leak: a bare `ps eww`, `ps e`, `env`, `printenv`, `cat` of a muxcode config file, in a PII-sensitive role, is **denied** with the piped form named in the reason; the piped form (`… | muxcode pii-scrub`) is allowed; non-sensitive roles are untouched (`CheckGuard`) (Phase 2: `CheckPIIPipeGuard` — with one sharpening the review forced: a piped form is allowed only when it hands the scrubber **labelled** text, so `printenv NAME | …` and `env | cut -d= -f2 | …` are refused and the remedy filters *after* the scrub)
 - [x] **Negative control:** the same commands on a non-sensitive role, and ordinary commands on a sensitive role, pass the guard unchanged (Phase 2: `CheckPIIPipeGuard`, `bus/pii_guard.go` — `TestCheckPIIPipeGuard_NonSensitiveRoleUntouched`, `TestCheckPIIPipeGuard_OrdinaryCommandsAllowed` (`ps -ef`, `env` running a command), `TestCheckPIIPipeGuard_SpawnWorkerUsesBaseRole`)
 - [x] `muxcode agent`'s model copy of a result goes through `ScrubForRole` — the one conversation road muxcode owns outright (Phase 2: in `ToolExecutor.Execute`, before the output cap; `TestProcessMessages_ModelCopyScrubbed`, `TestExecuteRead_ScrubsBeforeTruncation`)
-- [ ] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) *Coverage by road* state, per provider, what the conversation road now covers and what it still does not
+- [x] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) *Coverage by road* state, per provider, what the conversation road now covers and what it still does not (Phase 4: eight per-provider rows and a *Not covered* list in `agents.md`; `CLAUDE.md:140`; denial and redaction stated as separate facts per road)
 - [ ] `bash scripts/test-pii-scrub-conversation.sh` passes
 
 ### Technical approach
@@ -200,7 +200,20 @@ three `TestOpenCodeScrubPlugin_*` tests under `node`.
 
 ### Phase 4: Docs
 
-- [ ] `CLAUDE.md` PII bullet and `docs/agents.md` *Coverage by road*: the conversation row per provider; the definitions' pipe instruction becomes "enforced by the guard"
+- [x] `CLAUDE.md` PII bullet and `docs/agents.md` *Coverage by road*: the conversation row per provider; the definitions' pipe instruction becomes "enforced by the guard" (`CLAUDE.md:140` by edit — per-provider conversation road, guard floor, not-covered list, scrubbed `ps eww` idiom; `agents/api-tester.md`, `command-runner.md`, `log-watcher.md` by edit — auto-scrub per road, env dumps guard-enforced on Claude and hook-road Codex, the `printenv NAME` remedy; `README.md` by edit. By plan: `docs/agents.md` — the opt-in-pipe paragraph rewritten, *Coverage by road*'s conversation rows replaced by eight per-provider rows (Claude exit 0, Claude non-zero, Codex hook road, OpenCode, model copy, scrape road, guard floor, uncovered copies), the whole-result rule, a *Not covered* list, the scrub-first idiom, the MUX-203 tests on the pinned line; `docs/hooks.md` — the Codex `PreToolUse` row's scrub-wrap exception and the per-launch sync `hook scrub` as prose after the Claude settings block; `docs/architecture.md` — the `hook scrub` row; `docs/agent-bus.md` — `pii-scrub --role`)
+
+#### Phase 4 verification note
+
+Verified 2026-10-08 13:20 by plan from the working tree (run `1791404721`; Phase 3 committed as
+`7d56398`). Docs-only phase; test node success; final review **0/0/0** ("guard enforcement and
+model-output scrubbing are now distinguished"). Three review rounds, all three against plan's own
+sentences in `docs/agents.md`: an unqualified "enforced by the guard" when `CheckPIIPipeGuard` runs
+only where the `PreToolUse` guard does — Claude and hook-road Codex; the safe-idiom clause conflating
+*not denied* with *not redacted* on OpenCode, where the plugin does scrub a sensitive role's output;
+and "every other role anywhere", which overran `muxcode agent`'s credential scrub for every role. Each
+time the compression of two mechanisms into one clause was false somewhere; on a coverage table the
+longer sentence is the correct one. Also caught by plan itself: the `hook scrub` note first placed as
+`//` comments inside a `json`-fenced settings block, moved to prose so the sample stays copyable.
 
 ### Phase 5: Integration test
 
@@ -263,7 +276,7 @@ the floor beneath all of them.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-203-sensitive-role-conversation-is-never-scrubbed | 1h 48m | 2026-10-08 13:10 |
+| MUX-203-sensitive-role-conversation-is-never-scrubbed | 2h 0m | 2026-10-08 13:20 |
 
 ## Status
 

@@ -887,6 +887,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 | `muxcode-diff-cleanup.sh` | PreToolUse | Read/Bash/etc | async | Clean stale diff preview |
 | `muxcode hook analyze` | PostToolUse | Write/Edit | async | Route file events, trigger daemon |
 | `muxcode hook bash` | PostToolUse | Bash | async | Drive build-test-review, deploy-run-watch chains + conditional evaluation + subscription fan-out |
+| `muxcode hook scrub` | PostToolUse | Bash | **sync** | PII-sensitive Claude roles only, registered by `--settings` at launch (`ClaudeScrubSettings`), not in `config/settings.json`: replaces the result the model reads with the `ScrubForRole` text under the `PIIScrubNotice` (`updatedToolOutput`, exit 0 only — a non-zero exit fires `PostToolUseFailure`, which cannot replace; MUX-203) |
 
 ### Hook Chain Guarantee
 
