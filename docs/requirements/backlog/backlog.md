@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-203 closed 2026-10-08; the next active spec is the user's call_ | — | — |
+| [`MUX-204`](../drafts/MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash Calls on Claude Never Reach `hook bash` — Only `PostToolUse` Is Registered | 2026-10-08 | In Progress — moved to `drafts/` and set as the active spec on the user's instruction; rank 1 by defect order |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -46,7 +46,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-204`](./MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash calls on Claude never reach `hook bash` — only `PostToolUse` is registered | High | — |
+| 1 | 1 | [`MUX-204`](../drafts/MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash calls on Claude never reach `hook bash` — only `PostToolUse` is registered | High | — |
 | 2 | 1 | [`MUX-174`](./MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) | `./test.sh` exits 1 repo-wide on the `test` role | High | — |
 | 3 | 1 | [`MUX-176`](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | The run chain fires `success` for a call that has not finished | High | ⇄ [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) |
 | 4 | 1 | [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The watch chain fires on every bash call and pastes the raw command into the message | Medium | ⇄ [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) |
@@ -102,7 +102,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
-| [`MUX-204`](./MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash Calls on Claude Never Reach `hook bash` — Only `PostToolUse` Is Registered | High | — |
+| [`MUX-204`](../drafts/MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash Calls on Claude Never Reach `hook bash` — Only `PostToolUse` Is Registered | High | — |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned Session Processes Are Never Reaped | High | — |

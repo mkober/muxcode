@@ -98,8 +98,16 @@ transcript read).
 
 ### Phase 1: Pin
 
-- [ ] Unit test: a `PostToolUseFailure` payload (`error: "Exit code 3\n…"`, no `tool_response`) through `ParseToolEvent` resolves to `0` today — pin red, inverted in Phase 2
-- [ ] Unit test (negative control, stays green): a `PostToolUse` success payload resolves `0`
+- [x] Unit test: a `PostToolUseFailure` payload (`error: "Exit code 3\n…"`, no `tool_response`) through `ParseToolEvent` resolves to `0` today — pin red, inverted in Phase 2 (`TestGetExitCode_ClaudeFailureEventPinnedToZero`, `bus/hook_test.go`: a realistic payload — `hook_event_name`, `transcript_path`, `tool_use_id`, `error: "Exit code 3\nX"`, `is_interrupt: false`, no `tool_response` — asserts `GetExitCode() == "0"`, the defect; its comment names Phase 2 as the inversion. Test-only, no production change)
+- [x] Unit test (negative control, stays green): a `PostToolUse` success payload resolves `0` (`TestGetExitCode_ClaudeSuccessEventIsZero`: a real `PostToolUse` payload with the same context fields and a `tool_response` resolves `"0"` and `HookOutcome` → `OutcomeSuccess`)
+
+#### Phase 1 verification note
+
+Verified 2026-10-08 19:55 by plan from the working tree (run `1791503217`, launched by the user; branch
+`MUX-204-claude-failing-bash-calls-never-reach-hook-bash` created by the run). Build, test and review
+nodes all success; review **0/0/0** ("defect characterization and success control match the parser").
+No acceptance criterion is ticked: a pin proves the defect, and every criterion describes the fixed state.
+Decision 1 (the exit code when the `Exit code` line is missing) is Phase 2's, where the parse is written.
 
 ### Phase 2: Parse the failure shape
 
@@ -138,9 +146,16 @@ what `history` and the chain conditions (`exit_code`) read.
 |------|--------------|
 | [MUX-203](../completed/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | Where this was found (Phase 1 findings, "surfaced, out of scope") |
 | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The history scrub a failure row's output must pass through |
-| [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | Same instrument, different fault — a success the run chain should not have fired |
-| [MUX-185](./MUX-185-history-row-provenance-declared-not-proven.md) | The history row as evidence — this spec is about rows that never exist |
+| [MUX-176](../backlog/MUX-176-run-chain-fires-success-on-backgrounded-call.md) | Same instrument, different fault — a success the run chain should not have fired |
+| [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) | The history row as evidence — this spec is about rows that never exist |
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 3m | 2026-10-08 19:55 |
 
 ## Status
 
-Backlog
+In Progress — moved from `backlog/` to `drafts/` and set as the active spec on the user's instruction,
+2026-10-08 (rank 1 / Tier 1), the day MUX-203 — whose Phase 1 probes surfaced this defect — merged.

@@ -174,6 +174,47 @@ func TestGetExitCode_Default(t *testing.T) {
 	}
 }
 
+// TestGetExitCode_ClaudeFailureEventPinnedToZero pins MUX-204's defect: Claude
+// sends a non-zero Bash exit as PostToolUseFailure, whose status lives in
+// `error` ("Exit code N") with no tool_response, so resolveExitCode falls
+// through to its "0" default and the failure would read as success. Phase 2
+// inverts this assertion once the failure shape is parsed.
+func TestGetExitCode_ClaudeFailureEventPinnedToZero(t *testing.T) {
+	raw := `{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",` +
+		`"hook_event_name":"PostToolUseFailure","tool_name":"Bash",` +
+		`"tool_input":{"command":"echo X; exit 3","description":"Fail on purpose"},` +
+		`"tool_use_id":"toolu_fail","error":"Exit code 3\nX","is_interrupt":false}`
+	ev, err := ParseToolEvent([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if got := ev.GetExitCode(); got != "0" {
+		t.Errorf("GetExitCode = %q, want the pinned defect %q (MUX-204 Phase 2 inverts this)", got, "0")
+	}
+}
+
+// TestGetExitCode_ClaudeSuccessEventIsZero is the negative control for the
+// MUX-204 failure-shape parse: a real Claude PostToolUse payload, carrying the
+// same hook_event_name, transcript_path and tool_use_id context as a failure,
+// must keep resolving to "0".
+func TestGetExitCode_ClaudeSuccessEventIsZero(t *testing.T) {
+	raw := `{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",` +
+		`"hook_event_name":"PostToolUse","tool_name":"Bash",` +
+		`"tool_input":{"command":"echo X","description":"Succeed"},` +
+		`"tool_response":{"stdout":"X","stderr":"","interrupted":false,"isImage":false},` +
+		`"tool_use_id":"toolu_ok"}`
+	ev, err := ParseToolEvent([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if got := ev.GetExitCode(); got != "0" {
+		t.Errorf("GetExitCode = %q, want %q", got, "0")
+	}
+	if got := HookOutcome(ev.GetExitCode()); got != OutcomeSuccess {
+		t.Errorf("HookOutcome = %q, want %q", got, OutcomeSuccess)
+	}
+}
+
 func TestGetOutput_StringResponse(t *testing.T) {
 	raw := `{"tool_input":{"command":"ls"},"tool_response":"line1\nline2\nline3"}`
 	ev, _ := ParseToolEvent([]byte(raw))
