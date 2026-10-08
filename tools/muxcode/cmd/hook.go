@@ -13,10 +13,10 @@ import (
 )
 
 // Hook handles the "muxcode hook" subcommand.
-// Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|prompt-submit|comment-block|record>
+// Usage: muxcode hook <bash|scrub|guard|analyze|inbox-poll|stop|prompt-submit|comment-block|record>
 func Hook(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|guard|analyze|inbox-poll|stop|prompt-submit|comment-block|record>\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode hook <bash|scrub|guard|analyze|inbox-poll|stop|prompt-submit|comment-block|record>\n")
 		os.Exit(1)
 	}
 
@@ -24,6 +24,8 @@ func Hook(args []string) {
 	switch subcmd {
 	case "bash":
 		hookBash()
+	case "scrub":
+		hookScrub()
 	case "guard":
 		hookGuard()
 	case "analyze":
@@ -39,7 +41,7 @@ func Hook(args []string) {
 	case "record":
 		hookRecord()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, guard, analyze, inbox-poll, stop, prompt-submit, comment-block, record\n", subcmd)
+		fmt.Fprintf(os.Stderr, "Unknown hook: %s\nAvailable: bash, scrub, guard, analyze, inbox-poll, stop, prompt-submit, comment-block, record\n", subcmd)
 		os.Exit(1)
 	}
 }
@@ -93,6 +95,29 @@ func hookBash() {
 	}
 	exitCode := ev.GetExitCode()
 	triggerChain(session, role, result.Chain, bus.HookOutcome(exitCode), exitCode, ev.ToolInput.Command, bus.BuildChainContext(ev))
+}
+
+// hookScrub implements the synchronous Claude PostToolUse Bash hook (MUX-203):
+// for a PII-sensitive role it answers with the result redacted, so the model
+// and transcript never hold the raw text (bus.ClaudeScrubAnswer). It must stay
+// registered without "async" — an async hook's answer is ignored — and apart
+// from hookBash, whose history and chain work is async on purpose.
+func hookScrub() {
+	session := hookSession()
+	if session == "" {
+		return
+	}
+	role := bus.BusRole()
+	if !bus.ConversationScrubRole(session, role) {
+		return
+	}
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	if answer, ok := bus.ClaudeScrubAnswer(role, data); ok {
+		fmt.Println(answer)
+	}
 }
 
 // triggerChain fires the event chain and analyst notifications.
@@ -223,7 +248,9 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 // providers on the hook road; scrape-road OpenCode agents use permission.bash
 // deny rules in their agent config instead. There is no role gate: the
 // inbox-listener rule binds every role, and Atlassian write authority and the
-// hook-road evidence rule bind roles that have no delegation rules.
+// hook-road evidence rule bind roles that have no delegation rules. An allowed
+// Bash call from a hook-road Codex agent of a PII-sensitive role is answered
+// with the scrub wrap instead of silence (bus.CodexScrubWrapAnswer, MUX-203).
 func hookGuard() {
 	session := hookSession()
 	if session == "" {
@@ -250,6 +277,10 @@ func hookGuard() {
 		fmt.Println(bus.FormatGuardBlockFor(provider, d.Reason))
 		bus.LogLifecycle(session, "info", "hook", "guard-denied",
 			fmt.Sprintf("%s: %s — %s", role, ev.ToolName, firstLine(d.Reason, 160)))
+		return
+	}
+	if answer, ok := bus.CodexScrubWrapAnswer(session, role, provider, ev); ok {
+		fmt.Println(answer)
 	}
 }
 

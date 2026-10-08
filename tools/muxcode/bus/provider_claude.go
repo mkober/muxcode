@@ -85,6 +85,10 @@ func boundDefinition(agentName, agentFile string) (name, agentJSON string, err e
 // --resume <id> is appended to the full flag set, never substituted for it: a
 // bare `claude --resume` restores the conversation and drops every launch flag
 // (MUX-126).
+//
+// A PII-sensitive role also gets --settings ClaudeScrubSettings, the
+// synchronous hook that redacts its Bash results before the model reads them
+// (MUX-203).
 func (p *ClaudeCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	var args []string
 
@@ -96,6 +100,10 @@ func (p *ClaudeCodeProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string)
 	args = append(args, cfg.ModelFlags...)
 	args = append(args, cfg.PermFlags...)
 	args = append(args, cfg.ToolFlags...)
+
+	if IsPIISensitiveRole(cfg.Role) {
+		args = append(args, "--settings", ClaudeScrubSettings)
+	}
 
 	if cfg.SharedPrompt != "" {
 		args = append(args, "--append-system-prompt", cfg.SharedPrompt)

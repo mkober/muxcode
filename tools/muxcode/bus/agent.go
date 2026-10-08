@@ -73,6 +73,7 @@ func AgentLoop(ctx context.Context, cfg AgentConfig) error {
 
 	client := NewOllamaClient(cfg.Ollama)
 	executor := NewToolExecutor(cfg.Role)
+	executor.ScrubRole = cfg.busRole()
 	tools := BuildToolDefs(cfg.Role)
 
 	// Build system prompt once
@@ -183,7 +184,6 @@ func processMessages(ctx context.Context, cfg AgentConfig, client *OllamaClient,
 		for _, tc := range choice.Message.ToolCalls {
 			result := executor.Execute(ctx, tc)
 
-			// Log bash commands to history
 			if tc.Function.Name == "bash" {
 				logBashToHistory(cfg, tc, result)
 			}
@@ -349,7 +349,8 @@ func stripFrontmatter(content string) string {
 
 // logBashToHistory appends a bash command execution to the role's history
 // JSONL, its output redacted for the bus role by ScrubForRole before the
-// length cap (MUX-179). The model's own copy of result is not scrubbed.
+// length cap (MUX-179). The executor has already redacted result before its
+// own cut (MUX-203), so this pass is the row's guarantee for any other caller.
 func logBashToHistory(cfg AgentConfig, tc ToolCall, result string) {
 	var args struct {
 		Command string `json:"command"`

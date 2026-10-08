@@ -18,11 +18,17 @@ const (
 	MaxOutputLen = 10000
 )
 
-// ToolExecutor executes tool calls with allowedTools enforcement.
+// ToolExecutor executes tool calls with allowedTools enforcement. Every
+// result — output, error, or write/edit report, which can echo a command or
+// path — is redacted by ScrubForRole for ScrubRole once, in Execute, before it
+// is cut to MaxOutputLen (MUX-203): cut first, a secret split at the boundary
+// leaves a fragment — two JWT segments, a short password — that no pattern
+// matches.
 type ToolExecutor struct {
 	Patterns    []string      // resolved tool patterns for the role
 	WorkDir     string        // working directory for commands
 	BashTimeout time.Duration // per-role bash timeout, 0 = DefaultBashTimeout
+	ScrubRole   string        // bus role whose redaction rule applies; "" redacts credentials only
 }
 
 // NewToolExecutor creates a new executor with the resolved tool patterns for a role.
@@ -33,6 +39,7 @@ func NewToolExecutor(role string) *ToolExecutor {
 		Patterns:    ResolveTools(role),
 		WorkDir:     wd,
 		BashTimeout: timeout,
+		ScrubRole:   role,
 	}
 }
 
@@ -44,32 +51,44 @@ func (e *ToolExecutor) bashTimeout() time.Duration {
 	return DefaultBashTimeout
 }
 
-// Execute runs a tool call and returns the result text.
-// Returns an error description if the tool call is denied or fails.
+// Execute runs a tool call and returns the result text, redacted for
+// ScrubRole under the PIIScrubNotice when anything was, then truncated. A
+// bash or grep status line is appended after the cut, so it survives
+// truncation. Returns an error description if the tool call is denied or fails.
 func (e *ToolExecutor) Execute(ctx context.Context, call ToolCall) string {
-	name := call.Function.Name
-	args := call.Function.Arguments
+	body, status := e.run(ctx, call)
+	body, _ = ScrubForRoleWithNotice(e.ScrubRole, body)
+	if len(body) > MaxOutputLen {
+		body = body[:MaxOutputLen] + "\n... [output truncated]"
+	}
+	return body + status
+}
 
-	switch name {
+// run dispatches a tool call, returning its raw result and, for bash and
+// grep, the status line Execute appends after truncation.
+func (e *ToolExecutor) run(ctx context.Context, call ToolCall) (body, status string) {
+	args := call.Function.Arguments
+	switch call.Function.Name {
 	case "bash":
 		return e.executeBash(ctx, args)
 	case "read_file":
-		return e.executeRead(args)
+		return e.executeRead(args), ""
 	case "glob":
-		return e.executeGlob(args)
+		return e.executeGlob(args), ""
 	case "grep":
 		return e.executeGrep(ctx, args)
 	case "write_file":
-		return e.executeWrite(args)
+		return e.executeWrite(args), ""
 	case "edit_file":
-		return e.executeEdit(args)
+		return e.executeEdit(args), ""
 	default:
-		return fmt.Sprintf("Error: unknown tool %q", name)
+		return fmt.Sprintf("Error: unknown tool %q", call.Function.Name), ""
 	}
 }
 
-// executeBash runs a bash command with timeout and output truncation.
-func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage) string {
+// executeBash runs a bash command with a timeout, returning its combined
+// output and, when it failed, the status line.
+func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage) (string, string) {
 	var args struct {
 		Command string `json:"command"`
 	}
@@ -79,16 +98,16 @@ func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage
 		if err2 := json.Unmarshal(argsJSON, &cmdStr); err2 == nil && cmdStr != "" {
 			args.Command = unwrapCommand(cmdStr)
 		} else {
-			return fmt.Sprintf("Error: invalid arguments: %v", err)
+			return fmt.Sprintf("Error: invalid arguments: %v", err), ""
 		}
 	}
 	if args.Command == "" {
-		return "Error: command is required"
+		return "Error: command is required", ""
 	}
 
 	// Check allowedTools
 	if !IsToolAllowed("bash", args.Command, e.Patterns) {
-		return fmt.Sprintf("Error: command not allowed by tool profile: %s", args.Command)
+		return fmt.Sprintf("Error: command not allowed by tool profile: %s", args.Command), ""
 	}
 
 	// Execute with timeout
@@ -99,21 +118,13 @@ func (e *ToolExecutor) executeBash(ctx context.Context, argsJSON json.RawMessage
 	cmd.Dir = e.WorkDir
 
 	out, err := cmd.CombinedOutput()
-	result := string(out)
-
-	// Truncate if too long
-	if len(result) > MaxOutputLen {
-		result = result[:MaxOutputLen] + "\n... [output truncated]"
-	}
-
 	if err != nil {
 		if cmdCtx.Err() == context.DeadlineExceeded {
-			return result + "\nError: command timed out after 60 seconds"
+			return string(out), "\nError: command timed out after 60 seconds"
 		}
-		return result + "\nExit code: " + exitCodeStr(err)
+		return string(out), "\nExit code: " + exitCodeStr(err)
 	}
-
-	return result
+	return string(out), ""
 }
 
 // unwrapCommand handles double-encoded JSON from small LLMs.
@@ -190,12 +201,7 @@ func (e *ToolExecutor) executeRead(argsJSON json.RawMessage) string {
 		return fmt.Sprintf("Error: %v", err)
 	}
 
-	result := string(data)
-	if len(result) > MaxOutputLen {
-		result = result[:MaxOutputLen] + "\n... [output truncated]"
-	}
-
-	return result
+	return string(data)
 }
 
 // executeGlob finds files matching a glob pattern.
@@ -228,16 +234,12 @@ func (e *ToolExecutor) executeGlob(argsJSON json.RawMessage) string {
 		return "No matches found"
 	}
 
-	result := strings.Join(matches, "\n")
-	if len(result) > MaxOutputLen {
-		result = result[:MaxOutputLen] + "\n... [output truncated]"
-	}
-
-	return result
+	return strings.Join(matches, "\n")
 }
 
-// executeGrep searches files using grep -rn.
-func (e *ToolExecutor) executeGrep(ctx context.Context, argsJSON json.RawMessage) string {
+// executeGrep searches files using grep -rn, returning the matches and, when
+// grep timed out, the status line.
+func (e *ToolExecutor) executeGrep(ctx context.Context, argsJSON json.RawMessage) (string, string) {
 	var args struct {
 		Pattern string `json:"pattern"`
 		Path    string `json:"path"`
@@ -247,15 +249,15 @@ func (e *ToolExecutor) executeGrep(ctx context.Context, argsJSON json.RawMessage
 		if err2 := json.Unmarshal(argsJSON, &patStr); err2 == nil && patStr != "" {
 			args.Pattern = unwrapPattern(patStr)
 		} else {
-			return fmt.Sprintf("Error: invalid arguments: %v", err)
+			return fmt.Sprintf("Error: invalid arguments: %v", err), ""
 		}
 	}
 	if args.Pattern == "" {
-		return "Error: pattern is required"
+		return "Error: pattern is required", ""
 	}
 
 	if !IsToolAllowed("grep", "", e.Patterns) {
-		return "Error: grep not allowed by tool profile"
+		return "Error: grep not allowed by tool profile", ""
 	}
 
 	path := args.Path
@@ -275,27 +277,22 @@ func (e *ToolExecutor) executeGrep(ctx context.Context, argsJSON json.RawMessage
 	out, err := cmd.CombinedOutput()
 	result := string(out)
 
-	// Truncate if too long
-	if len(result) > MaxOutputLen {
-		result = result[:MaxOutputLen] + "\n... [output truncated]"
-	}
-
 	if err != nil {
 		// grep returns exit 1 for no matches — not a real error
 		if exitCodeStr(err) == "1" && result == "" {
-			return "No matches found"
+			return "No matches found", ""
 		}
 		if cmdCtx.Err() == context.DeadlineExceeded {
-			return result + "\nError: grep timed out"
+			return result, "\nError: grep timed out"
 		}
 		// Some grep errors, but we may still have partial output
 		if result != "" {
-			return result
+			return result, ""
 		}
-		return fmt.Sprintf("Error: %v", err)
+		return fmt.Sprintf("Error: %v", err), ""
 	}
 
-	return result
+	return result, ""
 }
 
 // executeWrite writes content to a file.

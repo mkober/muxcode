@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -245,9 +246,10 @@ func (p *OpenCodeProvider) IdlePromptChar() string { return "" }
 
 // WriteAgentConfig generates the OpenCode agent definition file at
 // .opencode/agents/<role>.md with YAML frontmatter containing
-// permissions translated from muxcode tool profiles.
+// permissions translated from muxcode tool profiles, and the conversation
+// scrub plugin beside it (MUX-203).
 func (p *OpenCodeProvider) WriteAgentConfig(role string) error {
-	return writeOpenCodeAgentConfig(role)
+	return errors.Join(writeOpenCodeAgentConfig(role), writeOpenCodeScrubPlugin())
 }
 
 // --- Agent config generation ---

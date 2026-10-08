@@ -147,6 +147,8 @@ cat /tmp/export.json | muxcode pii-scrub
 
 This redacts emails, SSNs, credit cards, phone numbers, AWS keys, JWTs, API tokens, and passwords. If `muxcode pii-scrub` is not available, manually redact PII before reporting.
 
+muxcode also scrubs your Bash output before you read it — on Claude when the command exits 0, on Codex with hooks, and on OpenCode — so the pipe is usually a second layer. It is the only cover for a Claude command that exits non-zero and for Codex without hooks. On Claude and on Codex with hooks, environment dumps are **enforced by the guard** — on OpenCode and Codex without hooks nothing refuses them, so pipe them yourself: a bare `env`, `printenv`, `ps eww`/`ps e`/`ps -E` or `cat` of a muxcode config is denied unless it pipes straight into `muxcode pii-scrub` (`env | muxcode pii-scrub`), and `printenv NAME` is denied even piped — run `printenv | muxcode pii-scrub | grep -E '^(NAME)='`. Narrow with grep after the scrub, never before it.
+
 ## Scope Boundaries
 
 - **Execute, never author** — you run commands, scripts, and AWS/cloud operations. You do **not** create, edit, or write source files (`.sql`, `.ts`, `.py`, `.json`, config, tests, migrations, etc.) in the repository.

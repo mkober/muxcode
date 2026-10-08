@@ -114,6 +114,50 @@ func TestExecuteRead(t *testing.T) {
 	}
 }
 
+// A secret straddling the MaxOutputLen cut must be redacted before the cut:
+// cut first, `password=hunt` is too short for the label rule and its prefix
+// reaches the model and the history row (MUX-203 Phase 2 review).
+func TestExecuteRead_ScrubsBeforeTruncation(t *testing.T) {
+	testFile := filepath.Join(t.TempDir(), "big.txt")
+	content := strings.Repeat("x", MaxOutputLen-14) + " password=hunter2secret0"
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	e := &ToolExecutor{Patterns: []string{"Read"}}
+	result := e.Execute(context.Background(), ToolCall{Function: FunctionCall{
+		Name: "read_file", Arguments: json.RawMessage(`{"path":"` + testFile + `"}`),
+	}})
+	if strings.Contains(result, "password=hunt") || !strings.Contains(result, "[muxcode pii-scrub: 1 value(s)") {
+		t.Errorf("secret at the cut: want it redacted before truncation, got tail %q", result[len(result)-80:])
+	}
+	if !strings.Contains(result, "truncated") {
+		t.Errorf("long output should still be truncated")
+	}
+}
+
+// An error or a write/edit report reaches the model too, and can echo a secret
+// from the command or path the model sent; Execute redacts every result, not
+// only tool output (MUX-203 Phase 2 review).
+func TestExecute_ErrorsAndWriteReportsRedacted(t *testing.T) {
+	const token, key = "abc123token456xyz", "sk0123456789abcdefXYZ"
+	denied, _ := json.Marshal(map[string]string{"command": "curl -H 'Authorization: Bearer " + token + "' https://api.example.com"})
+	e := &ToolExecutor{Patterns: []string{"Bash(echo *)", "Write"}}
+	got := e.Execute(context.Background(), ToolCall{Function: FunctionCall{Name: "bash", Arguments: denied}})
+	if !strings.Contains(got, "not allowed") || strings.Contains(got, token) || !strings.Contains(got, "[muxcode pii-scrub: 1 value(s)") {
+		t.Errorf("denied-command error: want it redacted under the notice, got %q", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "api_key="+key)
+	write, _ := json.Marshal(map[string]string{"path": path, "content": "x"})
+	got = e.Execute(context.Background(), ToolCall{Function: FunctionCall{Name: "write_file", Arguments: write}})
+	if !strings.Contains(got, "Wrote") || strings.Contains(got, key) {
+		t.Errorf("write report: want the path's credential redacted, got %q", got)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("write itself must still happen: %v", err)
+	}
+}
+
 func TestExecuteRead_NotAllowed(t *testing.T) {
 	e := &ToolExecutor{
 		Patterns: []string{"Bash(echo *)"},

@@ -35,10 +35,12 @@ func (ev *ToolEvent) codexShaped() bool {
 	return len(ev.ToolResponse) > 0 && json.Unmarshal(ev.ToolResponse, &s) == nil
 }
 
-// normalizeCodex folds the dialect into the shared shape: an apply_patch call
-// moves its patch out of Command, and the patched paths are extracted so file
-// guards and the analyze hook read FilePath for both CLIs.
+// normalizeCodex folds the dialect into the shared shape: a command the scrub
+// wrap rewrote (CodexScrubWrapAnswer) reads as the one the agent sent, an
+// apply_patch call moves its patch out of Command, and the patched paths are
+// extracted so file guards and the analyze hook read FilePath for both CLIs.
 func (ev *ToolEvent) normalizeCodex() {
+	ev.ToolInput.Command, _ = UnwrapScrub(ev.ToolInput.Command)
 	if ev.ToolName == "apply_patch" && ev.ToolInput.Patch == "" && ev.ToolInput.Command != "" {
 		ev.ToolInput.Patch, ev.ToolInput.Command = ev.ToolInput.Command, ""
 	}

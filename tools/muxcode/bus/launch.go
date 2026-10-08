@@ -938,6 +938,34 @@ func refuseWithoutDefinition(session string, cfg *LaunchConfig) error {
 	return errors.New(detail)
 }
 
+// writeLaunchAgentConfig writes the provider's agent config before launch. A
+// failure is a warning, except on a role whose conversation is scrubbed
+// (MUX-203): there the config carries the scrub — OpenCode's plugin, Codex's
+// hooks.json — so the agent is refused rather than launched reading raw tool
+// output.
+func writeLaunchAgentConfig(session string, cfg *LaunchConfig, role string) error {
+	if cfg.Provider == nil {
+		return nil
+	}
+	err := cfg.Provider.WriteAgentConfig(role)
+	if err == nil {
+		return nil
+	}
+	if !ConversationScrubRole(session, role) {
+		fmt.Fprintf(os.Stderr, "Warning: WriteAgentConfig(%s): %v\n", role, err)
+		return nil
+	}
+	detail := fmt.Sprintf("%s: agent config could not be written (%v) — refusing to launch a PII-sensitive role without its conversation scrub",
+		role, err)
+	if session != "" {
+		LogLifecycle(session, "error", "launch", "launch-refused", detail)
+		m := NewMessage(NormalizeBusRole(role), "edit", "event", "agent-scrub-unavailable",
+			detail+". Fix the cause and relaunch: muxcode agent launch "+role, "")
+		_ = SendNoCC(session, m)
+	}
+	return errors.New(detail)
+}
+
 // applyResume sets cfg.ResumeSessionID for a Claude Code launch. Any other
 // provider has no resume road, so the id is dropped with a `resume-ignored`
 // lifecycle row rather than handed to a CLI that would misread it.
@@ -1054,11 +1082,8 @@ func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 		return err
 	}
 
-	// Pre-launch: generate agent config for non-Claude providers
-	if cfg.Provider != nil {
-		if err := cfg.Provider.WriteAgentConfig(role); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: WriteAgentConfig(%s): %v\n", role, err)
-		}
+	if err := writeLaunchAgentConfig(session, cfg, role); err != nil {
+		return err
 	}
 
 	// Pre-launch: startup inbox message + lifecycle log
