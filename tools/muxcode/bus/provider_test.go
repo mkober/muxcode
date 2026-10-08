@@ -281,6 +281,24 @@ func TestClaudeBuildExecArgs(t *testing.T) {
 	}
 }
 
+// A PII-sensitive Claude agent launches with the synchronous scrub hook; no
+// other role pays for one, and --resume still closes the flag set.
+func TestClaudeBuildExecArgs_ScrubSettingsForSensitiveRoles(t *testing.T) {
+	p := &ClaudeCodeProvider{}
+	_, args := p.BuildExecArgs(&LaunchConfig{Role: "watch", CLI: "claude", ResumeSessionID: "abc"})
+	i := slices.Index(args, "--settings")
+	if i < 0 || i+1 >= len(args) || args[i+1] != ClaudeScrubSettings {
+		t.Errorf("watch: want --settings ClaudeScrubSettings, got %q", args)
+	}
+	if args[len(args)-2] != "--resume" {
+		t.Errorf("watch: --resume must stay last, got %q", args)
+	}
+	_, args = p.BuildExecArgs(&LaunchConfig{Role: "build", CLI: "claude"})
+	if slices.Contains(args, "--settings") {
+		t.Errorf("build: want no --settings, got %q", args)
+	}
+}
+
 func TestClaudeBuildExecArgs_FallbackPrompt(t *testing.T) {
 	p := &ClaudeCodeProvider{}
 	cfg := &LaunchConfig{

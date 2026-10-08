@@ -52,7 +52,7 @@ command on a non-sensitive role, which MUX-179's credential-everywhere rule now 
 ### Acceptance criteria
 
 - [x] For each provider road (Claude hooks, Codex hook road, Codex/OpenCode scrape road) the spec records, with evidence, whether a hook or wrapper can **alter a tool result before the agent sees it** — a decision per road, not a hope ([Decision 1](#decision-1--per-provider-mechanism)) (Phase 1: live probes with random sentinels and negative controls on claude 2.1.293, codex-cli 0.160.0 and OpenCode 1.18.34; the findings table and Decision 1)
-- [ ] Where a road can, a sensitive role's tool output is scrubbed **before** it enters the conversation, with the `PIIScrubNotice` banner, and a test proves the agent-facing text is the scrubbed one
+- [x] Where a road can, a sensitive role's tool output is scrubbed **before** it enters the conversation, with the `PIIScrubNotice` banner, and a test proves the agent-facing text is the scrubbed one (Phase 3: Claude on exit 0 via the sync `hook scrub` answer; the Codex hook road on both outcomes via the `PreToolUse` wrap; OpenCode via the generated plugin — each tested on the agent-facing result, never the history row. The Claude non-zero-exit gap and the scrape road are the recorded residuals of Decision 1)
 - [x] Where no road can, the guard enforces the pipe for the commands known to leak: a bare `ps eww`, `ps e`, `env`, `printenv`, `cat` of a muxcode config file, in a PII-sensitive role, is **denied** with the piped form named in the reason; the piped form (`… | muxcode pii-scrub`) is allowed; non-sensitive roles are untouched (`CheckGuard`) (Phase 2: `CheckPIIPipeGuard` — with one sharpening the review forced: a piped form is allowed only when it hands the scrubber **labelled** text, so `printenv NAME | …` and `env | cut -d= -f2 | …` are refused and the remedy filters *after* the scrub)
 - [x] **Negative control:** the same commands on a non-sensitive role, and ordinary commands on a sensitive role, pass the guard unchanged (Phase 2: `CheckPIIPipeGuard`, `bus/pii_guard.go` — `TestCheckPIIPipeGuard_NonSensitiveRoleUntouched`, `TestCheckPIIPipeGuard_OrdinaryCommandsAllowed` (`ps -ef`, `env` running a command), `TestCheckPIIPipeGuard_SpawnWorkerUsesBaseRole`)
 - [x] `muxcode agent`'s model copy of a result goes through `ScrubForRole` — the one conversation road muxcode owns outright (Phase 2: in `ToolExecutor.Execute`, before the output cap; `TestProcessMessages_ModelCopyScrubbed`, `TestExecuteRead_ScrubsBeforeTruncation`)
@@ -160,8 +160,43 @@ writer passes.
 
 ### Phase 3: Pre-conversation scrub where a road allows it
 
-- [ ] Implement for each road Phase 1 found able; a test that reads the agent-facing result, not the history row
-- [ ] Skip, with the reason recorded, for each road that cannot
+- [x] Implement for each road Phase 1 found able; a test that reads the agent-facing result, not the history row (`bus/conversation_scrub.go`. **Claude**: a PII-sensitive role launches with a `--settings` file registering a *synchronous* `muxcode hook scrub` on `PostToolUse`/Bash; `ClaudeScrubAnswer` returns `updatedToolOutput` in the Bash output shape carrying `ScrubForRole` text and the notice, only when something was redacted — the test reads the hook's answer, the agent-facing result (`TestClaudeScrubAnswer_RedactsSensitiveResult`, `…_SilentOtherwise`, `TestClaudeScrubSettings_SynchronousScrubHook`, `TestClaudeBuildExecArgs_ScrubSettingsForSensitiveRoles`). **Codex hook road**: the guard rewrites a sensitive role's Bash call via `WrapForScrub` — `{ <cmd>\n} 2>&1 | muxcode pii-scrub --role <role>` with a tail that captures **both** pipeline statuses (`set -- ${PIPESTATUS[@]} ${pipestatus[@]}`, unquoted so bash and zsh agree), keeps the command's status on a successful scrub and exits **125** when the scrubber fails or is missing — answered as `updatedInput` + `allow` (`CodexScrubWrapAnswer`); `ParseToolEvent` unwraps via `UnwrapScrub` so history, chains and `command_match` read what the agent sent. Tests run the wrap under both shells and read its output (`TestCodexScrubWrap_ScrubsBothStreamsKeepsExitCode`, `…_ScrubberFailureReported`, `…_LabelAndValueOnSeparateLines`, `…_InnerPipelineStatusUnchanged`, `…_HeredocAndTrailingComment`, `TestParseToolEvent_UnwrapsScrubWrap`). **OpenCode**: `WriteAgentConfig` emits `.opencode/plugin/muxcode-scrub.ts` (`tool.execute.after` → `muxcode pii-scrub --role $AGENT_ROLE`; fails **closed**, withholding the result when the scrub fails; inert outside a session) — tests run the generated handler under `node` with a stub `muxcode` at the subprocess boundary and read `output.output` and `metadata.output` (`TestOpenCodeScrubPlugin_FailsClosed`, `…_ReplacesWithScrubberAnswer`, `…_InertOutsideSessionAndBash`, `TestWriteAgentConfig_WritesOpenCodeScrubPlugin`). Trade-off recorded: the scrub buffers the whole output, so a command killed at its timeout shows nothing)
+- [x] Skip, with the reason recorded, for each road that cannot (the Codex scrape road — `MUXCODE_CODEX_HOOKS=0`, codex < 0.153, or `[features] hooks=false` — runs no hook at all, so neither a rewrite nor the guard reaches it; skipped per [Decision 1](#decision-1--per-provider-mechanism) item 3, named in the Phase 4 "not covered" list)
+
+#### Phase 3 verification note
+
+Verified 2026-10-08 13:10 by plan from the working tree (run `1791404721`; Phase 2 committed as
+`25c2c1d`). Three review rounds: the first resolved whole-input scrubbing, inner-pipeline status on both
+shells and the OpenCode failure branch; the second left one must-fix and one should-fix (below); the
+third caught a zsh quirk the new shell tests exposed — a quoted unset `"${PIPESTATUS[@]}"` expands to
+one empty word and shifts the statuses — fixed by the unquoted `set --`. Final review **0/0/0**
+("scrubber failures now return 125; OpenCode failure and clean paths have behavioral regression
+coverage"); test node success on every pass. The second round's state, kept for the record: In the tree, `bus/conversation_scrub.go` plus
+provider and hook changes: **Claude** — a PII-sensitive role launches with a `--settings` file
+registering a **synchronous** `muxcode hook scrub` on `PostToolUse`/Bash that answers
+`updatedToolOutput` in the Bash shape with `ScrubForRole` text and the notice, only when something was
+redacted (`ClaudeScrubAnswer`, `TestClaudeScrubAnswer_RedactsSensitiveResult`, `…_SilentOtherwise`,
+`TestClaudeScrubSettings_SynchronousScrubHook`, `TestClaudeBuildExecArgs_ScrubSettingsForSensitiveRoles`);
+**Codex hook road** — the guard rewrites a sensitive role's Bash call through `WrapForScrub`, answered as
+`updatedInput` + `permissionDecision:"allow"` (`CodexScrubWrapAnswer`), and `ParseToolEvent` unwraps it
+before classification (`UnwrapScrub`; `TestCodexScrubWrap_ScrubsBothStreamsKeepsExitCode`,
+`…_LabelAndValueOnSeparateLines`, `…_InnerPipelineStatusUnchanged`, `…_HeredocAndTrailingComment`,
+`TestParseToolEvent_UnwrapsScrubWrap`); **OpenCode** — `WriteAgentConfig` emits
+`.opencode/plugin/muxcode-scrub.ts` calling `pii-scrub --conversation` from `tool.execute.after`
+(`.gitignore` carries the generated file); **scrape road** skipped per Decision 1.3. Test node success.
+Resolved in this round: whole-input scrubbing (label and value on separate lines match), inner-pipeline
+status controls on bash and zsh, the OpenCode failure branch replacing raw output in both fields; the
+streaming helper was deleted for a buffered whole-input scrub, with a recorded trade-off — a command
+that times out may show no output. **Must-fix** (`WrapForScrub`): the suffix exits on `PIPESTATUS[0]`
+alone and discards the scrubber's status, so a missing or failing `muxcode` makes a wrapped `echo hello`
+report exit 0 with no usable redacted result — both statuses must be captured at once, the command's
+kept when the scrub succeeded and a non-zero redaction failure reported when it did not, with a
+failing-scrubber test under both shells. **Should-fix**: the OpenCode regression is a source-string check
+that passes with `output withheld` in a comment; it must exercise the generated handler against a
+failing or missing scrub process and assert neither `output.output` nor `metadata.output` holds the
+secret, with clean-result and outside-session controls, stubbing only at the subprocess boundary. Both
+landed as described in the implement step above: `TestCodexScrubWrap_ScrubberFailureReported` and the
+three `TestOpenCodeScrubPlugin_*` tests under `node`.
 
 ### Phase 4: Docs
 
@@ -228,7 +263,7 @@ the floor beneath all of them.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-203-sensitive-role-conversation-is-never-scrubbed | 1h 15m | 2026-10-08 11:55 |
+| MUX-203-sensitive-role-conversation-is-never-scrubbed | 1h 48m | 2026-10-08 13:10 |
 
 ## Status
 
