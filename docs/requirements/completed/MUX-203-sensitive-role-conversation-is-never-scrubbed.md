@@ -137,7 +137,7 @@ Notes:
 
 ### Phase 2: The floor — guard-enforced pipe and the model copy
 
-- [x] `CheckGuard`: deny the bare leaky commands on a PII-sensitive role, reason naming `… | muxcode pii-scrub`; allow the piped form (`CheckPIIPipeGuard`, `bus/pii_guard.go`, chained into `GuardDecisionFor` after the listener guard: on `api`/`run`/`runner`/`watch` — spawn workers by base role — a bare `env`, `printenv`, `ps eww`/`e`/`-E` or `cat` of a muxcode config is denied, `piiPipeReason` naming the remedy; `| muxcode pii-scrub` as the very next stage is allowed. After the review must-fix, **`printenv NAME` is denied even when piped** — it prints bare values no label rule can match — and the remedy preserves labels first: `printenv | muxcode pii-scrub | grep -E '^(NAME)='`; `env | cut -d= -f2 | …` is likewise refused)
+- [x] `CheckGuard`: deny the bare leaky commands on a PII-sensitive role, reason naming `… | muxcode pii-scrub`; allow the piped form (`CheckPIIPipeGuard`, `bus/pii_guard.go`, chained into `GuardDecisionFor` after the listener guard: on `api`/`run`/`runner`/`watch` — spawn workers by base role — a bare `env`, `printenv`, `ps eww`/`e`/`-E` or `cat` of a muxcode config is denied, `piiPipeReason` naming the remedy; `| muxcode pii-scrub` as the very next stage is allowed — the **bare** form only, since the PR 159 review round: a scrubber given any argument, `--role build` say, is no scrub. After the review must-fix, **`printenv NAME` is denied even when piped** — it prints bare values no label rule can match — and the remedy preserves labels first: `printenv | muxcode pii-scrub | grep -E '^(NAME)='`; `env | cut -d= -f2 | …` is likewise refused)
 - [x] `muxcode agent`'s model copy through `ScrubForRole` (after the review must-fix, redaction moved **into `ToolExecutor.Execute`** as the single scrub-then-cut point for every tool result — output, errors, write/edit reports, which can echo a command or path — `ScrubRole` set from the bus role, `ScrubForRoleWithNotice` before the `MaxOutputLen` cut, the bash/grep status line appended after it so truncation cannot drop it; `logBashToHistory` keeps its own pass as the row's guarantee for any other caller)
 - [x] Tests: denied bare, allowed piped; **negative control:** non-sensitive role and ordinary commands untouched (`pii_guard_test.go`: `…_DeniesBareLeakyCommands`, `…_RemedyPassesGuard`, `…_AllowsScrubbedPipe`, `…_OrdinaryCommandsAllowed`, `…_NonSensitiveRoleUntouched`, `…_SpawnWorkerUsesBaseRole`, `TestGuardDecisionFor_PIIPipeGuardWired`; `TestProcessMessages_ModelCopyScrubbed`; `TestExecuteRead_ScrubsBeforeTruncation` and `TestExecute_ErrorsAndWriteReportsRedacted` — a denied-command error carrying a Bearer token, a write report with a credential path)
 
@@ -182,7 +182,7 @@ redacted (`ClaudeScrubAnswer`, `TestClaudeScrubAnswer_RedactsSensitiveResult`, `
 before classification (`UnwrapScrub`; `TestCodexScrubWrap_ScrubsBothStreamsKeepsExitCode`,
 `…_LabelAndValueOnSeparateLines`, `…_InnerPipelineStatusUnchanged`, `…_HeredocAndTrailingComment`,
 `TestParseToolEvent_UnwrapsScrubWrap`); **OpenCode** — `WriteAgentConfig` emits
-`.opencode/plugin/muxcode-scrub.ts` calling `pii-scrub --conversation` from `tool.execute.after`
+`.opencode/plugin/muxcode-scrub.ts` calling `pii-scrub --role $AGENT_ROLE` from `tool.execute.after`
 (`.gitignore` carries the generated file); **scrape road** skipped per Decision 1.3. Test node success.
 Resolved in this round: whole-input scrubbing (label and value on separate lines match), inner-pipeline
 status controls on bash and zsh, the OpenCode failure branch replacing raw output in both fields; the
@@ -235,7 +235,9 @@ spec is ticked — the model-copy clause of the first Phase 5 step on unit cover
 `scripts/test-pii-scrub-conversation.sh` — 282 lines; hermetic: a scratch bus session and project
 directory driven through the installed binary, a stub `codex` on `PATH` so the hook road is eligible
 without the real CLI, the real `muxcode agent config` writers; `node` for the OpenCode plugin. Floor
-`EXPECTED_PASS=25`, the exact hermetic pass count. Listed in `CLAUDE.md`.
+`EXPECTED_PASS=25`, the exact hermetic pass count, at the Phase 5 commit; **27** since the PR 159 review
+round (two checks added, below — the run records that follow state the floor as it stood for each run).
+Listed in `CLAUDE.md`.
 
 | Section | Checks | What it proves |
 |---------|--------|----------------|
@@ -283,6 +285,23 @@ integration scripts bind no sockets (a sandboxed run agent cannot listen). It is
 `TestProcessMessages_ModelCopyScrubbed` — the real `processMessages` loop over a pipe server — and
 `TestExecute_ErrorsAndWriteReportsRedacted` / `TestExecuteRead_ScrubsBeforeTruncation`; the script
 exercises the same `ScrubForRoleWithNotice` through `pii-scrub --role`.
+
+## PR review round (PR 159, Copilot comment 4222653024; 2026-10-08)
+
+Code changes made by the `80-pr-review-fix` run after close-out, recorded here so the spec matches
+what shipped:
+
+| Change | Where | Why |
+|--------|-------|-----|
+| The PII pipe guard accepts only a **bare** `muxcode pii-scrub` as a leaky command's next stage; any argument (`--role build`) does not count | `scrubbedNext`, `bus/pii_guard.go` | the role decides whether anything is redacted, so `env \| muxcode pii-scrub --role build` on a `run` agent would have passed the guard and echoed the environment |
+| `muxcode pii-scrub` rejects a bare `--role`, an empty role, anything after the role, or an unknown argument with **exit 2 before reading stdin** | `parseScrubArgs`, `cmd/scrub.go` (`cmd/scrub_test.go`) | both callers withhold output on a non-zero exit; a misparsed role would have echoed it unredacted |
+| The OpenCode plugin is inert without `AGENT_ROLE` (as it already was without `BUS_SESSION`) | `bus/conversation_scrub.go` | the plugin loads in every OpenCode process in the repo, including the user's own |
+| A PII-sensitive role whose `WriteAgentConfig` fails is **refused at launch** — lifecycle `launch-refused`, `agent-scrub-unavailable` event to edit — instead of a warning; other roles still warn | `writeLaunchAgentConfig`, `bus/launch.go` (`bus/exec_check_test.go`) | on OpenCode and hook-road Codex the config *is* the scrub, so a warned-and-launched sensitive agent reads raw output |
+| `scripts/test-pii-scrub-conversation.sh` floor **25 → 27** | guard floor section: `env \| muxcode pii-scrub --role build` on `run` is denied naming the bare remedy; `pii-scrub` section: `--role` with no name exits non-zero and prints nothing | the two new rules each get a check |
+
+Docs synced in the same round: `CLAUDE.md` and `README.md` (by the fix worker); `docs/agents.md`
+*Coverage by road* (OpenCode and guard-floor rows), `docs/agent-bus.md` (`pii-scrub` argument contract)
+and this spec (by plan). The Phase 5 run records above keep the floor as it stood when they ran.
 
 ## Decisions
 

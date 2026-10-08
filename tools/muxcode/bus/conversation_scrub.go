@@ -136,7 +136,7 @@ var openCodeScrubPluginPath = filepath.Join(".opencode", "plugin", "muxcode-scru
 // $AGENT_ROLE`'s answer, which decides whether the role is sensitive and
 // leaves the text alone when there is nothing to hide. It is project-scoped,
 // so it loads in every OpenCode process in the repo and stays inert outside a
-// muxcode session. A scrub that fails — muxcode missing, a timeout, output
+// muxcode agent — no BUS_SESSION or AGENT_ROLE. A scrub that fails — muxcode missing, a timeout, output
 // past the buffer — withholds the result rather than show it unscrubbed, for
 // every role, since only muxcode can say which roles are sensitive.
 // metadata.output is what the TUI renders, so it is replaced too. The source is
@@ -148,8 +148,8 @@ import { spawnSync } from "child_process"
 
 export const MuxcodeScrub = async () => ({
   "tool.execute.after": async (input, output) => {
-    if (input.tool !== "bash" || !process.env.BUS_SESSION || typeof output.output !== "string") return
-    const r = spawnSync("muxcode", ["pii-scrub", "--role", process.env.AGENT_ROLE ?? ""], {
+    if (input.tool !== "bash" || !process.env.BUS_SESSION || !process.env.AGENT_ROLE || typeof output.output !== "string") return
+    const r = spawnSync("muxcode", ["pii-scrub", "--role", process.env.AGENT_ROLE], {
       input: output.output,
       encoding: "utf8",
       timeout: 30000,

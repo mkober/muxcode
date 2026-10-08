@@ -32,6 +32,8 @@ func TestCheckPIIPipeGuard_DeniesBareLeakyCommands(t *testing.T) {
 		"printenv AWS_SECRET_ACCESS_KEY | muxcode pii-scrub",
 		"env | cut -d= -f2 | muxcode pii-scrub",
 		"env | grep AWS | muxcode pii-scrub",
+		"env | muxcode pii-scrub --role build",
+		"env | muxcode pii-scrub --role",
 	}
 	for _, cmd := range cases {
 		d := CheckPIIPipeGuard("run", cmd)
@@ -79,6 +81,7 @@ func TestCheckPIIPipeGuard_AllowsScrubbedPipe(t *testing.T) {
 		"printenv | muxcode pii-scrub | grep -E '^(AWS_REGION)='",
 		"ps eww -p 123 | muxcode pii-scrub | tr ' ' '\\n' | grep -E '^(AGENT_ROLE|BUS_SESSION)='",
 		"cat ~/.config/muxcode/config | ./bin/muxcode pii-scrub",
+		"env | muxcode pii-scrub >/tmp/env.txt",
 	}
 	for _, cmd := range cases {
 		if d := CheckPIIPipeGuard("watch", cmd); d != nil {

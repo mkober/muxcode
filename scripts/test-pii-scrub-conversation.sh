@@ -6,7 +6,8 @@
 # Hermetic section: a scratch bus session and project dir driven through the
 # installed binary, a stub `codex` on PATH so the hook road is eligible without
 # the real CLI, and the real `muxcode agent config` writers. Asserts:
-#   guard floor  — a run agent's bare `ps eww` and a piped `printenv NAME` are
+#   guard floor  — a run agent's bare `ps eww`, a piped `printenv NAME` and a
+#                  pipe into `pii-scrub --role build` are
 #                  denied naming the remedy; the scrubbed pipe, an ordinary
 #                  `ps -ef`, and a build agent's bare `ps eww` pass (controls)
 #   Claude       — `muxcode hook scrub` answers with the result redacted and
@@ -20,7 +21,8 @@
 #   OpenCode     — `agent config` writes the plugin; run under node it redacts
 #                  a watch agent's result, leaves a build agent's alone, and
 #                  withholds the result when muxcode is missing
-#   pii-scrub    — `--role` redacts for a sensitive role, echoes otherwise
+#   pii-scrub    — `--role` redacts for a sensitive role, echoes otherwise, and
+#                  fails with no role named rather than echo
 # The `muxcode agent` model copy is not driven here: its loop needs an
 # Ollama endpoint, and these scripts bind no sockets. It is pinned by
 # TestProcessMessages_ModelCopyScrubbed and TestExecute_* instead.
@@ -43,7 +45,7 @@ set -uo pipefail
 PASS=0
 FAIL=0
 LIVE_PASS=0
-EXPECTED_PASS=25
+EXPECTED_PASS=27
 
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
@@ -114,6 +116,12 @@ else
 fi
 out=$(claude_pre "ps eww -p 1 | muxcode pii-scrub | tr ' ' '\n' | grep -E '^AGENT_ROLE='" | MUXCODE_RUN_CLI=claude AGENT_ROLE=run "$MUX" hook guard 2>/dev/null)
 [ -z "$out" ] && ok "run: the scrubbed pipe passes" || fail "run: scrubbed pipe denied: $out"
+out=$(claude_pre "env | muxcode pii-scrub --role build" | MUXCODE_RUN_CLI=claude AGENT_ROLE=run "$MUX" hook guard 2>/dev/null)
+if jq -e '.decision=="block" and (.reason|contains("`env | muxcode pii-scrub`"))' <<<"$out" >/dev/null 2>&1; then
+  ok "run: a scrubber told --role build is no scrub — denied"
+else
+  fail "run: env | muxcode pii-scrub --role build: ${out:-<allowed>}"
+fi
 out=$(claude_pre "printenv AWS_SECRET_ACCESS_KEY | muxcode pii-scrub" | MUXCODE_RUN_CLI=claude AGENT_ROLE=run "$MUX" hook guard 2>/dev/null)
 if jq -e '.decision=="block" and (.reason|contains("printenv | muxcode pii-scrub | grep -E '"'"'^(AWS_SECRET_ACCESS_KEY)='"'"'"))' <<<"$out" >/dev/null 2>&1; then
   ok "run: printenv NAME denied even piped, the remedy keeping labels"
@@ -241,6 +249,8 @@ else
 fi
 res=$(printf '%s' "$colored" | "$MUX" pii-scrub --role plan 2>/dev/null)
 [ "$res" = "$colored" ] && ok "--role plan: echoed byte-for-byte (negative control)" || fail "--role plan altered the input: $res"
+res=$(printf '%s' "$colored" | "$MUX" pii-scrub --role 2>/dev/null); rc=$?
+[ "$rc" -ne 0 ] && [ -z "$res" ] && ok "--role with no name: exits $rc, prints nothing" || fail "--role with no name: exit $rc, printed $res"
 
 # ── Live: the model's own answer ──────────────────────────────────
 if [ "${MUXCODE_PII_CONVERSATION_LIVE:-}" != 1 ]; then

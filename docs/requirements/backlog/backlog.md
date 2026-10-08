@@ -103,7 +103,6 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
 | [`MUX-204`](./MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash Calls on Claude Never Reach `hook bash` — Only `PostToolUse` Is Registered | High | — |
-| [`MUX-203`](../completed/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | A Sensitive Role's Own Conversation Is Never Scrubbed — PostToolUse Cannot Reach It | High | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned Session Processes Are Never Reaped | High | — |

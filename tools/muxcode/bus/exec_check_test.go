@@ -232,3 +232,54 @@ func TestRunAgentLaunch_RefusesUnexecutableCLI(t *testing.T) {
 		})
 	}
 }
+
+// An OpenCode agent's conversation scrub is the plugin WriteAgentConfig
+// writes, so a PII-sensitive role whose config cannot be written is refused —
+// no exec, no startup message, an agent-scrub-unavailable event to edit — while
+// any other role still launches on a warning (negative control; PR 159 review).
+func TestRunAgentLaunch_RefusesSensitiveRoleWithoutScrubConfig(t *testing.T) {
+	for _, c := range []struct {
+		role    string
+		refused bool
+	}{
+		{"run", true},
+		{"build", false},
+	} {
+		t.Run(c.role, func(t *testing.T) {
+			session := "test-launch-scrub-config-" + c.role
+			_, argv := launchSandbox(t, session)
+			bin := t.TempDir()
+			writeExe(t, filepath.Join(bin, "opencode"), []byte("#!/bin/sh\nexit 0\n"))
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("MUXCODE_"+strings.ToUpper(c.role)+"_CLI", "opencode")
+			if err := os.WriteFile(".opencode", []byte("a file, so no config dir can be made"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err := RunAgentLaunch(c.role)
+			if !c.refused {
+				if err != nil || len(*argv) == 0 || (*argv)[0] != "opencode" {
+					t.Fatalf("err = %v, argv = %v, want opencode launched despite the config warning", err, *argv)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "refusing to launch") {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			if len(*argv) != 0 {
+				t.Fatalf("exec ran for a sensitive role with no scrub plugin: %v", *argv)
+			}
+			edit, _ := Peek(session, "edit")
+			loud := false
+			for _, m := range edit {
+				loud = loud || m.Action == "agent-scrub-unavailable"
+			}
+			if !loud {
+				t.Fatal("refusal did not reach edit's inbox")
+			}
+			if inbox, _ := Peek(session, c.role); len(inbox) != 0 {
+				t.Fatalf("startup message seeded for an agent that never came up: %v", inbox)
+			}
+		})
+	}
+}

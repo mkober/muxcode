@@ -28,8 +28,8 @@ const (
 )
 
 // CheckPIIPipeGuard denies a leaky statement on a PII-sensitive role — a spawn
-// worker judged by its base role — unless it pipes straight into `muxcode
-// pii-scrub` and prints labelled lines. Nil for any other role or call.
+// worker judged by its base role — unless it pipes straight into a bare
+// `muxcode pii-scrub` and prints labelled lines. Nil for any other role or call.
 func CheckPIIPipeGuard(role, command string) *GuardDecision {
 	base := SpawnBaseRole(BusSession(), role)
 	if !IsPIISensitiveRole(base) {
@@ -212,14 +212,15 @@ func isMuxcodeConfigPath(word string) bool {
 	return parent == "muxcode" || parent == ".muxcode"
 }
 
-// scrubbedNext reports whether statement i pipes straight into `muxcode
+// scrubbedNext reports whether statement i pipes straight into a bare `muxcode
 // pii-scrub`. A stage in between does not count: it could strip the labels.
+// Nor does an argument: `--role build` echoes its input byte-for-byte.
 func scrubbedNext(stmts, seps []string, i int) bool {
 	if i+1 >= len(stmts) || seps[i] != "|" {
 		return false
 	}
 	words, k, _ := leakCommand(stmts[i+1])
-	return k+1 < len(words) && filepath.Base(words[k]) == "muxcode" && words[k+1] == "pii-scrub"
+	return len(words) == k+2 && filepath.Base(words[k]) == "muxcode" && words[k+1] == "pii-scrub"
 }
 
 // piiRemedy is the compliant form of a leaky statement, which itself passes

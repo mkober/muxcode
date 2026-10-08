@@ -379,12 +379,16 @@ func TestOpenCodeScrubPlugin_ReplacesWithScrubberAnswer(t *testing.T) {
 	}
 }
 
-// Negative controls: outside a muxcode session, or for a tool other than
-// bash, the plugin does nothing — even a failing scrubber withholds nothing.
+// Negative controls: outside a muxcode agent, or for a tool other than bash,
+// the plugin does nothing — even a failing scrubber withholds nothing. With no
+// role it must not call `pii-scrub --role ""`, which exits non-zero.
 func TestOpenCodeScrubPlugin_InertOutsideSessionAndBash(t *testing.T) {
 	failing := "cat >/dev/null\nexit 1\n"
 	if out, _, args := runPlugin(t, failing, "bash", "plain output", "AGENT_ROLE=watch"); out != "plain output" || args != "" {
 		t.Errorf("no session: got %q, scrubber called with %q", out, args)
+	}
+	if out, _, args := runPlugin(t, failing, "bash", "plain output", "BUS_SESSION=s"); out != "plain output" || args != "" {
+		t.Errorf("no role: got %q, scrubber called with %q", out, args)
 	}
 	if out, _, args := runPlugin(t, failing, "read", "plain output", inSession...); out != "plain output" || args != "" {
 		t.Errorf("read tool: got %q, scrubber called with %q", out, args)
@@ -406,7 +410,7 @@ func TestWriteAgentConfig_WritesOpenCodeScrubPlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plugin not written: %v", err)
 	}
-	for _, want := range []string{`"tool.execute.after"`, `["pii-scrub", "--role", process.env.AGENT_ROLE`, "output withheld"} {
+	for _, want := range []string{`"tool.execute.after"`, `["pii-scrub", "--role", process.env.AGENT_ROLE]`, "output withheld"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("plugin missing %s", want)
 		}
