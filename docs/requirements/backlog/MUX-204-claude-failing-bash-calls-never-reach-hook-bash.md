@@ -4,7 +4,7 @@
 
 **Provenance:** filed 2026-10-08 by plan on the user's request, through the `20-defect-to-spec` run
 `1791469376` (launched by the MUX-203 Phase 1 worker). Found during
-[MUX-203](../drafts/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) Phase 1's live hook probes
+[MUX-203](../completed/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) Phase 1's live hook probes
 on 2026-10-07 and surfaced there as out of scope; the evidence below is the run's evidence node plus
 plan's own reading of this session's history files.
 
@@ -136,7 +136,7 @@ what `history` and the chain conditions (`exit_code`) read.
 
 | Spec | Relationship |
 |------|--------------|
-| [MUX-203](../drafts/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | Where this was found (Phase 1 findings, "surfaced, out of scope") |
+| [MUX-203](../completed/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | Where this was found (Phase 1 findings, "surfaced, out of scope") |
 | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The history scrub a failure row's output must pass through |
 | [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) | Same instrument, different fault — a success the run chain should not have fired |
 | [MUX-185](./MUX-185-history-row-provenance-declared-not-proven.md) | The history row as evidence — this spec is about rows that never exist |

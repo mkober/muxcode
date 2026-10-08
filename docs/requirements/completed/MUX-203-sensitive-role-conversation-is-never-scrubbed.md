@@ -344,8 +344,9 @@ the floor beneath all of them.
 
 ## Status
 
-In Progress — **all five phases implemented and verified 2026-10-08**; awaiting the Phase 5 commit and
-the run's close-out (Status → `Complete`, move to `completed/`). Moved from `backlog/` to `drafts/` and
-set as the active spec on the user's instruction 2026-10-07 (rank 1 / Tier 1), the day after it was filed
-as MUX-179's deferral target; phases on `MUX-203-sensitive-role-conversation-is-never-scrubbed`:
-`3fa22b2`, `25c2c1d`, `7d56398`, `134bd27`.
+Complete — closed out 2026-10-08 by run `1791404721-50-spec-to-pr`: all five phases implemented and
+verified, every acceptance criterion (7) and phase step ticked, moved from `drafts/` to `completed/`.
+Moved from `backlog/` to `drafts/` and set as the active spec on the user's instruction 2026-10-07
+(rank 1 / Tier 1), the day after it was filed as MUX-179's deferral target. Phases on
+`MUX-203-sensitive-role-conversation-is-never-scrubbed`: `3fa22b2` (Phase 1), `25c2c1d` (Phase 2),
+`7d56398` (Phase 3), `134bd27` (Phase 4), `a084182` (Phase 5).
