@@ -53,9 +53,9 @@ command on a non-sensitive role, which MUX-179's credential-everywhere rule now 
 
 - [x] For each provider road (Claude hooks, Codex hook road, Codex/OpenCode scrape road) the spec records, with evidence, whether a hook or wrapper can **alter a tool result before the agent sees it** — a decision per road, not a hope ([Decision 1](#decision-1--per-provider-mechanism)) (Phase 1: live probes with random sentinels and negative controls on claude 2.1.293, codex-cli 0.160.0 and OpenCode 1.18.34; the findings table and Decision 1)
 - [ ] Where a road can, a sensitive role's tool output is scrubbed **before** it enters the conversation, with the `PIIScrubNotice` banner, and a test proves the agent-facing text is the scrubbed one
-- [ ] Where no road can, the guard enforces the pipe for the commands known to leak: a bare `ps eww`, `ps e`, `env`, `printenv`, `cat` of a muxcode config file, in a PII-sensitive role, is **denied** with the piped form named in the reason; the piped form (`… | muxcode pii-scrub`) is allowed; non-sensitive roles are untouched (`CheckGuard`)
-- [ ] **Negative control:** the same commands on a non-sensitive role, and ordinary commands on a sensitive role, pass the guard unchanged
-- [ ] `muxcode agent`'s model copy of a result goes through `ScrubForRole` — the one conversation road muxcode owns outright
+- [x] Where no road can, the guard enforces the pipe for the commands known to leak: a bare `ps eww`, `ps e`, `env`, `printenv`, `cat` of a muxcode config file, in a PII-sensitive role, is **denied** with the piped form named in the reason; the piped form (`… | muxcode pii-scrub`) is allowed; non-sensitive roles are untouched (`CheckGuard`) (Phase 2: `CheckPIIPipeGuard` — with one sharpening the review forced: a piped form is allowed only when it hands the scrubber **labelled** text, so `printenv NAME | …` and `env | cut -d= -f2 | …` are refused and the remedy filters *after* the scrub)
+- [x] **Negative control:** the same commands on a non-sensitive role, and ordinary commands on a sensitive role, pass the guard unchanged (Phase 2: `CheckPIIPipeGuard`, `bus/pii_guard.go` — `TestCheckPIIPipeGuard_NonSensitiveRoleUntouched`, `TestCheckPIIPipeGuard_OrdinaryCommandsAllowed` (`ps -ef`, `env` running a command), `TestCheckPIIPipeGuard_SpawnWorkerUsesBaseRole`)
+- [x] `muxcode agent`'s model copy of a result goes through `ScrubForRole` — the one conversation road muxcode owns outright (Phase 2: in `ToolExecutor.Execute`, before the output cap; `TestProcessMessages_ModelCopyScrubbed`, `TestExecuteRead_ScrubsBeforeTruncation`)
 - [ ] `CLAUDE.md` and [`docs/agents.md`](../../agents.md) *Coverage by road* state, per provider, what the conversation road now covers and what it still does not
 - [ ] `bash scripts/test-pii-scrub-conversation.sh` passes
 
@@ -137,9 +137,26 @@ Notes:
 
 ### Phase 2: The floor — guard-enforced pipe and the model copy
 
-- [ ] `CheckGuard`: deny the bare leaky commands on a PII-sensitive role, reason naming `… | muxcode pii-scrub`; allow the piped form
-- [ ] `muxcode agent`'s model copy through `ScrubForRole`
-- [ ] Tests: denied bare, allowed piped; **negative control:** non-sensitive role and ordinary commands untouched
+- [x] `CheckGuard`: deny the bare leaky commands on a PII-sensitive role, reason naming `… | muxcode pii-scrub`; allow the piped form (`CheckPIIPipeGuard`, `bus/pii_guard.go`, chained into `GuardDecisionFor` after the listener guard: on `api`/`run`/`runner`/`watch` — spawn workers by base role — a bare `env`, `printenv`, `ps eww`/`e`/`-E` or `cat` of a muxcode config is denied, `piiPipeReason` naming the remedy; `| muxcode pii-scrub` as the very next stage is allowed. After the review must-fix, **`printenv NAME` is denied even when piped** — it prints bare values no label rule can match — and the remedy preserves labels first: `printenv | muxcode pii-scrub | grep -E '^(NAME)='`; `env | cut -d= -f2 | …` is likewise refused)
+- [x] `muxcode agent`'s model copy through `ScrubForRole` (after the review must-fix, redaction moved **into `ToolExecutor.Execute`** as the single scrub-then-cut point for every tool result — output, errors, write/edit reports, which can echo a command or path — `ScrubRole` set from the bus role, `ScrubForRoleWithNotice` before the `MaxOutputLen` cut, the bash/grep status line appended after it so truncation cannot drop it; `logBashToHistory` keeps its own pass as the row's guarantee for any other caller)
+- [x] Tests: denied bare, allowed piped; **negative control:** non-sensitive role and ordinary commands untouched (`pii_guard_test.go`: `…_DeniesBareLeakyCommands`, `…_RemedyPassesGuard`, `…_AllowsScrubbedPipe`, `…_OrdinaryCommandsAllowed`, `…_NonSensitiveRoleUntouched`, `…_SpawnWorkerUsesBaseRole`, `TestGuardDecisionFor_PIIPipeGuardWired`; `TestProcessMessages_ModelCopyScrubbed`; `TestExecuteRead_ScrubsBeforeTruncation` and `TestExecute_ErrorsAndWriteReportsRedacted` — a denied-command error carrying a Bearer token, a write report with a credential path)
+
+#### Phase 2 verification note
+
+Verified 2026-10-08 11:55 by plan from the working tree (run `1791404721`; Phase 1 committed as
+`3fa22b2`). First review pass **failed with two must-fixes**, both leak shapes no existing test covered:
+the guard's own suggested remedy, `printenv AWS_SECRET_ACCESS_KEY | muxcode pii-scrub`, was allowed yet
+leaked — `printenv` with an argument emits the bare value, and every secret rule needs a label — and the
+model copy was scrubbed *after* `ToolExecutor` clipped at `MaxOutputLen=10000`, so a key spanning the cap
+reached the model as an unmatchable prefix with no notice (the shape MUX-179's first review caught in
+hook capture). Second pass, after the `fix` worker: `printenv NAME` is denied even when piped and the
+remedy keeps labels ahead of the scrub (`printenv | muxcode pii-scrub | grep -E '^(NAME)='`); and
+redaction moved into `ToolExecutor.Execute` as the **single scrub-then-cut point for every tool result**
+— output, errors and write/edit reports alike — with the status line appended after the cut and
+`clip()` removed. Review 0/0/0 ("central result redaction closes error/write paths before clipping and
+preserves status lines"); test node success on the full suite both passes. The "scrub before you
+truncate" rule the two incidents share is now written once, in `Execute`'s doc comment, where every
+writer passes.
 
 ### Phase 3: Pre-conversation scrub where a road allows it
 
@@ -211,7 +228,7 @@ the floor beneath all of them.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-203-sensitive-role-conversation-is-never-scrubbed | 13m | 2026-10-07 17:00 |
+| MUX-203-sensitive-role-conversation-is-never-scrubbed | 1h 15m | 2026-10-08 11:55 |
 
 ## Status
 

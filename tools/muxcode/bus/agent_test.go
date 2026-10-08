@@ -264,6 +264,76 @@ func TestProcessMessages_WithToolCall(t *testing.T) {
 	}
 }
 
+// toolResultSeenByModel runs one bash tool call through processMessages as
+// role and returns the tool message the model receives on its next turn.
+func toolResultSeenByModel(t *testing.T, role, command string) string {
+	t.Helper()
+	session := fmt.Sprintf("test-agent-copy-%d", rand.Int())
+	if err := Init(session, t.TempDir()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	t.Cleanup(func() { _ = Cleanup(session) })
+
+	args, _ := json.Marshal(map[string]string{"command": command})
+	calls, seen := 0, ""
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var req ChatRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		msg := ChatMessage{Role: "assistant", Content: "done"}
+		if calls == 1 {
+			msg = ChatMessage{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Type: "function",
+				Function: FunctionCall{Name: "bash", Arguments: args}}}}
+		} else if n := len(req.Messages); n > 0 && req.Messages[n-1].Role == "tool" {
+			seen = req.Messages[n-1].Content
+		}
+		_ = json.NewEncoder(w).Encode(ChatResponse{Choices: []ChatChoice{{Message: msg}}})
+	}))
+	defer server.Close()
+
+	oldCfg := configSingleton
+	t.Cleanup(func() { configSingleton = oldCfg })
+	SetConfig(&MuxcodeConfig{
+		SharedTools:  DefaultConfig().SharedTools,
+		ToolProfiles: map[string]ToolProfile{role: {Include: []string{"bus", "readonly", "common"}, Tools: []string{"Bash(echo *)"}}},
+		EventChains:  DefaultConfig().EventChains,
+		AutoCC:       DefaultConfig().AutoCC,
+	})
+
+	cfg := AgentConfig{Role: role, Session: session, Ollama: OllamaConfig{
+		BaseURL: server.URL, HTTPClient: server.Client(), Model: "test-model", Timeout: 10,
+	}}
+	msgs := []Message{NewMessage("edit", role, "request", "test", "run it", "")}
+	processMessages(context.Background(), cfg, NewOllamaClient(cfg.Ollama), NewToolExecutor(role), BuildToolDefs(role),
+		"You are a test agent", msgs, &agentState{})
+	if calls != 2 {
+		t.Fatalf("%s: Ollama calls = %d, want 2 (tool call + final)", role, calls)
+	}
+	return seen
+}
+
+// muxcode agent is the one conversation road muxcode owns outright (MUX-203):
+// the model reads a tool result redacted for its role under the notice, as the
+// history row is. commit is the non-sensitive control — its credential still
+// goes, its email stays — and clean output reaches the model unannotated.
+func TestProcessMessages_ModelCopyScrubbed(t *testing.T) {
+	const secret, email = "sk0123456789abcdefXYZ", "jane.doe@example.com"
+	cmd := "echo api_key=" + secret + " " + email
+
+	run := toolResultSeenByModel(t, "run", cmd)
+	if strings.Contains(run, secret) || strings.Contains(run, email) || !strings.Contains(run, "[muxcode pii-scrub: 2 value(s)") {
+		t.Errorf("run: model copy not scrubbed under the notice: %q", run)
+	}
+	commit := toolResultSeenByModel(t, "commit", cmd)
+	if strings.Contains(commit, secret) || !strings.Contains(commit, email) || !strings.Contains(commit, "[muxcode pii-scrub: 1 value(s)") {
+		t.Errorf("commit: want the credential redacted and the email kept: %q", commit)
+	}
+	clean := toolResultSeenByModel(t, "commit", "echo test-output")
+	if strings.Contains(clean, "[muxcode pii-scrub") || !strings.Contains(clean, "test-output") {
+		t.Errorf("clean output: want it unannotated, got %q", clean)
+	}
+}
+
 func TestBuildSystemPrompt(t *testing.T) {
 	prompt := buildSystemPrompt("commit")
 	// Should at least include the shared coordination prompt

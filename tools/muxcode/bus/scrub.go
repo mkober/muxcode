@@ -228,3 +228,14 @@ func ScrubForRole(role, text string) (string, int) {
 	}
 	return ScrubSecrets(text)
 }
+
+// ScrubForRoleWithNotice is ScrubForRole for text an agent's model reads: the
+// PIIScrubNotice banner is prepended when anything was redacted, so a
+// placeholder is never taken for data (MUX-203).
+func ScrubForRoleWithNotice(role, text string) (string, int) {
+	out, n := ScrubForRole(role, text)
+	if n > 0 {
+		out = PIIScrubNotice(n) + out
+	}
+	return out, n
+}
