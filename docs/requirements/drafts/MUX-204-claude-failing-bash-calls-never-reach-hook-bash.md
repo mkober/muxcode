@@ -67,11 +67,11 @@ gap into a wrong signal.
 - [x] `muxcode hook bash` is registered on **`PostToolUseFailure`** (matcher `Bash`) wherever muxcode writes Claude hook settings — `config/settings.json` and the install road — alongside the existing `PostToolUse` entry (Phase 3: the template entry, async like the success one; `install.sh`'s merge loop covers all three matcher-bearing phases)
 - [x] A `PostToolUseFailure` payload resolves to a **non-zero** exit code, never `0`: the `Exit code N` line of `error` when present; `is_interrupt` → non-zero; no exit-code line → non-zero/unknown. `resolveExitCode`'s `"0"` default never applies to a failure event (Phase 2: `failureExitCode`; the no-line case is `"1"` per Decision 1; five cases pinned in `TestGetExitCode_ClaudeFailureEvent`)
 - [x] The failure event's output is taken from `error` and written to the history row through the MUX-179 scrub (`GetScrubbedOutput` for a sensitive role) (Phase 2: `responseText` → `errorText()`; `TestGetOutput_ClaudeFailureEventReadsError` asserts `GetScrubbedOutput` redacts a secret in the error's output)
-- [ ] A failing Claude Bash call now writes a history row, a console line, and fires the role's **failure** chain edge; a graph node's hook-road evidence records the failure
+- [x] A failing Claude Bash call now writes a history row, a console line, and fires the role's **failure** chain edge; a graph node's hook-road evidence records the failure (Phase 5: the hermetic sections assert row, console line and chain notice through the real binary; the **live** section proves a real Claude (2.1.295) fires the async `PostToolUseFailure` hook — row `exit 3` / `failure`, `Run FAILED (exit 3)` to edit, control `0`. The hook-road evidence a graph node reads is that same history row)
 - [x] **Negative control:** a `PostToolUse` success payload still resolves `0` and fires success only; a Codex event is untouched (Phase 2 for the resolution — `TestGetExitCode_ClaudeSuccessEventIsZero`; Phase 3 for the firing — the success case of `TestProcessBashHook_ClaudeFailureEventFiresFailureChain` resolves to the watch edge alone. The Codex path is untouched by either diff — `failureExitCode` is reached only on `hook_event_name == PostToolUseFailure`, which Codex never sends — and its existing tests pass)
 - [x] **Negative control:** a failure payload without the `Exit code` line is never recorded as success (Phase 2: the "interrupt without exit line", "shell never started" and "exit line echoed below a missing status line" cases each resolve `"1"` and `OutcomeFailure`)
 - [x] `CLAUDE.md`'s hook-driven-chains bullet and [`docs/hooks.md`](../../hooks.md) state that both events are registered and how the failure shape is read (Phase 4: both documents name `PostToolUse` and `PostToolUseFailure`, the leading `Exit code N` line of `error`, `"1"` for the no-line cases, and the `"0"` default's boundary)
-- [ ] `bash scripts/test-hook-bash-failure.sh` passes
+- [x] `bash scripts/test-hook-bash-failure.sh` passes (run agent 2026-10-09, `--live`: 13 passed, 0 failed at floor 13, 4 live, exit 0 — twice)
 
 ### Technical approach
 
@@ -152,8 +152,44 @@ ticked from both documents' text. Criterion 4 still open, awaiting Phase 5.
 
 ### Phase 5: Integration test
 
-- [ ] Create `scripts/test-hook-bash-failure.sh` — hermetic scratch bus; drive a `PostToolUseFailure` payload and a `PostToolUse` payload through `muxcode hook bash` for a Claude role; assert the failure row's non-zero exit, its console line and the failure-chain trigger; **negative control:** the success payload's row reads `0` and triggers success only; a failure payload without the exit line never reads `0`
-- [ ] Coverage floor pinned to the exact pass count; run through the run agent (foreground) and record counts here
+- [x] Create `scripts/test-hook-bash-failure.sh` — hermetic scratch bus; drive a `PostToolUseFailure` payload and a `PostToolUse` payload through `muxcode hook bash` for a Claude role; assert the failure row's non-zero exit, its console line and the failure-chain trigger; **negative control:** the success payload's row reads `0` and triggers success only; a failure payload without the exit line never reads `0` (227 lines, four hermetic sections — see the record below — plus an **opt-in live section** (`--live` / `MUXCODE_HOOK_BASH_FAILURE_LIVE=1`) the spec did not ask for and that proves what no hermetic section can: a real `claude -p` fires the async `PostToolUseFailure` hook)
+- [x] Coverage floor pinned to the exact pass count; run through the run agent (foreground) and record counts here (`EXPECTED_PASS=13`; **13 passed, 0 failed, 4 live, exit 0**, twice — record below)
+
+#### Phase 5 verification note
+
+Verified 2026-10-09 10:00 by plan from the working tree (run `1791503217`; Phase 4 committed as
+`90e4245`). Test node success; review **0/0/0** ("live polling now waits for both history rows and the
+matching failure notice; the async assertion race is resolved"). Criteria 4 and 8 ticked — criterion 4
+on the **live** section's assertions, read in full, not on the hermetic ones: the defect was a hook that
+looked registered and never fired, so only a real Claude firing it could close that box. With this,
+every acceptance criterion (8) and every phase step in the spec is ticked. `CLAUDE.md`'s integration
+test list did not name the script; plan added the entry during this verification.
+
+#### Phase 5 record
+
+`scripts/test-hook-bash-failure.sh` — hermetic: a scratch bus session through the installed binary,
+chain config pinned to the defaults (`MUXCODE_CONFIG_DIR` scratch), Claude payloads fed to the real
+`muxcode hook bash`. Floor `EXPECTED_PASS=13`, the exact hermetic pass count.
+
+| Section | What it proves |
+|---------|----------------|
+| `run` agent, failure | `PostToolUseFailure` with `Exit code 3`: `run-history` row exit `3` / `failure`, the console row `FAIL … exit 3`, edit notified `Run FAILED (exit 3)`, and **no** watch request |
+| `run` agent, negative control | the same kind of call as a `PostToolUse` success: row `0` / `success`, console `OK`, the watch request, and **no** notice to edit — success fires success only |
+| `run` agent, no exit line | a shell that never started records exit `1` and the failure edge, never `0` |
+| `build` agent | a failing `./build.sh` records exit `2` and notifies edit with no test request; its success requests test — the chain edges hold for a second role |
+| Live (`--live`) | hook entries taken from `config/settings.json` (the Bash `PostToolUse` and `PostToolUseFailure` registrations, nothing else) and passed by `--settings` to one real `claude -p` (haiku, 2.1.295) as `AGENT_ROLE=run`, which runs a script exiting 3 then one exiting 0. **Completeness gate first**: CLI exit 0, at least two tool results, at least one `is_error`. Then, polled for up to 20 s because the hook is async: the red row `exit_code "3"` / `failure`; the green control `"0"` / `success`; at least one `Run FAILED (exit 3)` notice to edit naming the red script. The user's own `~/.claude/settings.json` hooks load beside `--settings`, so a row may appear twice and every check asks for at least one |
+
+Runs through the run agent, foreground, against the installed binary, both with `--live`:
+
+| Run | Result | Task |
+|-----|--------|------|
+| First | **13 passed, 0 failed** (floor 13), **4 live**, exit 0 | `1791553765-spawn-65bbe1b7-81516558` → `1791553798-run-608fe11c` |
+| After the review fix — live polling also waits for the failure notice, closing an async assertion race | **13 passed, 0 failed** (floor 13), **4 live**, exit 0 | `1791553916-spawn-65bbe1b7-09d7b442` → `1791553938-run-d5d39fdf` |
+
+What the live run establishes: on claude 2.1.295, with exactly the hook entries muxcode ships, a Bash call
+that exits non-zero **does** reach `muxcode hook bash` as `PostToolUseFailure`, writes its row with the real
+code and fires the failure edge; the passing call records `0`. The Phase 1 probe (2.1.293) showed the
+event fires; this shows muxcode's registration and parse receive it end to end.
 
 ## Decisions
 
@@ -187,9 +223,13 @@ non-zero int, so the sentinel cannot creep back.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 34m | 2026-10-09 09:45 |
+| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 44m | 2026-10-09 10:00 |
 
 ## Status
 
-In Progress — moved from `backlog/` to `drafts/` and set as the active spec on the user's instruction,
-2026-10-08 (rank 1 / Tier 1), the day MUX-203 — whose Phase 1 probes surfaced this defect — merged.
+In Progress — **all five phases implemented and verified 2026-10-09**; awaiting the Phase 5 commit and
+the run's close-out (Status → `Complete`, move to `completed/`). Moved from `backlog/` to `drafts/` and
+set as the active spec on the user's instruction 2026-10-08 (rank 1 / Tier 1), the day MUX-203 — whose
+Phase 1 probes surfaced this defect — merged. Phases on
+`MUX-204-claude-failing-bash-calls-never-reach-hook-bash`: `8defcf7` (Phase 1), `4b9aa27` (Phase 2),
+`5ade53e` (Phase 3), `90e4245` (Phase 4).
