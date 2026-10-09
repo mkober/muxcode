@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -174,22 +175,79 @@ func TestGetExitCode_Default(t *testing.T) {
 	}
 }
 
-// TestGetExitCode_ClaudeFailureEventPinnedToZero pins MUX-204's defect: Claude
-// sends a non-zero Bash exit as PostToolUseFailure, whose status lives in
-// `error` ("Exit code N") with no tool_response, so resolveExitCode falls
-// through to its "0" default and the failure would read as success. Phase 2
-// inverts this assertion once the failure shape is parsed.
-func TestGetExitCode_ClaudeFailureEventPinnedToZero(t *testing.T) {
-	raw := `{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",` +
-		`"hook_event_name":"PostToolUseFailure","tool_name":"Bash",` +
-		`"tool_input":{"command":"echo X; exit 3","description":"Fail on purpose"},` +
-		`"tool_use_id":"toolu_fail","error":"Exit code 3\nX","is_interrupt":false}`
-	ev, err := ParseToolEvent([]byte(raw))
+// claudeFailurePayload is a realistic Claude PostToolUseFailure Bash event;
+// errorJSON is the raw `error` value, so a test can send a non-string.
+func claudeFailurePayload(errorJSON string, interrupt bool) []byte {
+	return []byte(fmt.Sprintf(`{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",`+
+		`"hook_event_name":"PostToolUseFailure","tool_name":"Bash",`+
+		`"tool_input":{"command":"echo X; exit 3","description":"Fail on purpose"},`+
+		`"tool_use_id":"toolu_fail","error":%s,"is_interrupt":%t}`, errorJSON, interrupt))
+}
+
+// TestGetExitCode_ClaudeFailureEvent covers MUX-204: a PostToolUseFailure event
+// carries its status in `error`, with no tool_response, and must never resolve
+// to "0" — the first case is the inverted Phase 1 pin. Every code must also
+// parse as a non-zero int, because chain conditions Atoi it and an unparseable
+// sentinel would read as exit 0 there (Decision 1).
+func TestGetExitCode_ClaudeFailureEvent(t *testing.T) {
+	cases := []struct {
+		name      string
+		errorJSON string
+		interrupt bool
+		want      string
+	}{
+		{"exit line", `"Exit code 3\nX"`, false, "3"},
+		{"interrupt without exit line", `"Command interrupted"`, true, "1"},
+		{"shell never started", `"spawn /bin/bash ENOENT"`, false, "1"},
+		{"exit line echoed below a missing status line", `"Error: nope\nExit code 5"`, false, "1"},
+		{"contradictory exit code 0", `"Exit code 0\nX"`, false, "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := ParseToolEvent(claudeFailurePayload(tc.errorJSON, tc.interrupt))
+			if err != nil {
+				t.Fatalf("ParseToolEvent: %v", err)
+			}
+			got := ev.GetExitCode()
+			if got != tc.want {
+				t.Errorf("GetExitCode = %q, want %q", got, tc.want)
+			}
+			if n, err := strconv.Atoi(got); err != nil || n == 0 {
+				t.Errorf("GetExitCode = %q, want a non-zero integer", got)
+			}
+			if outcome := HookOutcome(got); outcome != OutcomeFailure {
+				t.Errorf("HookOutcome = %q, want %q", outcome, OutcomeFailure)
+			}
+		})
+	}
+}
+
+// A failure event's output is its `error`, and it reaches history through the
+// MUX-179 scrub like any other response.
+func TestGetOutput_ClaudeFailureEventReadsError(t *testing.T) {
+	const secret = "SuperSecret123"
+	ev, err := ParseToolEvent(claudeFailurePayload(`"Exit code 1\npassword=`+secret+`\nbuild failed"`, false))
 	if err != nil {
 		t.Fatalf("ParseToolEvent: %v", err)
 	}
-	if got := ev.GetExitCode(); got != "0" {
-		t.Errorf("GetExitCode = %q, want the pinned defect %q (MUX-204 Phase 2 inverts this)", got, "0")
+	if out := ev.GetOutput(15, 1000); !strings.Contains(out, "build failed") {
+		t.Errorf("GetOutput = %q, want the error's output", out)
+	}
+	out := ev.GetScrubbedOutput("run", 15, 1000)
+	if !strings.Contains(out, "build failed") || strings.Contains(out, secret) {
+		t.Errorf("GetScrubbedOutput = %q, want the error's output with %q redacted", out, secret)
+	}
+}
+
+// Every hook returns silently on a parse error, the guard included, so an
+// `error` that is not a string — on any event — must still parse.
+func TestParseToolEvent_NonStringErrorStillParses(t *testing.T) {
+	ev, err := ParseToolEvent([]byte(`{"hook_event_name":"Stop","stop_hook_active":true,"error":{"type":"rate_limit"}}`))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if !ev.StopHookActive {
+		t.Errorf("StopHookActive = false, want true")
 	}
 }
 

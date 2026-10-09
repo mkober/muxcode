@@ -65,11 +65,11 @@ gap into a wrong signal.
 ### Acceptance criteria
 
 - [ ] `muxcode hook bash` is registered on **`PostToolUseFailure`** (matcher `Bash`) wherever muxcode writes Claude hook settings — `config/settings.json` and the install road — alongside the existing `PostToolUse` entry
-- [ ] A `PostToolUseFailure` payload resolves to a **non-zero** exit code, never `0`: the `Exit code N` line of `error` when present; `is_interrupt` → non-zero; no exit-code line → non-zero/unknown. `resolveExitCode`'s `"0"` default never applies to a failure event
-- [ ] The failure event's output is taken from `error` and written to the history row through the MUX-179 scrub (`GetScrubbedOutput` for a sensitive role)
+- [x] A `PostToolUseFailure` payload resolves to a **non-zero** exit code, never `0`: the `Exit code N` line of `error` when present; `is_interrupt` → non-zero; no exit-code line → non-zero/unknown. `resolveExitCode`'s `"0"` default never applies to a failure event (Phase 2: `failureExitCode`; the no-line case is `"1"` per Decision 1; five cases pinned in `TestGetExitCode_ClaudeFailureEvent`)
+- [x] The failure event's output is taken from `error` and written to the history row through the MUX-179 scrub (`GetScrubbedOutput` for a sensitive role) (Phase 2: `responseText` → `errorText()`; `TestGetOutput_ClaudeFailureEventReadsError` asserts `GetScrubbedOutput` redacts a secret in the error's output)
 - [ ] A failing Claude Bash call now writes a history row, a console line, and fires the role's **failure** chain edge; a graph node's hook-road evidence records the failure
 - [ ] **Negative control:** a `PostToolUse` success payload still resolves `0` and fires success only; a Codex event is untouched
-- [ ] **Negative control:** a failure payload without the `Exit code` line is never recorded as success
+- [x] **Negative control:** a failure payload without the `Exit code` line is never recorded as success (Phase 2: the "interrupt without exit line", "shell never started" and "exit line echoed below a missing status line" cases each resolve `"1"` and `OutcomeFailure`)
 - [ ] `CLAUDE.md`'s hook-driven-chains bullet and [`docs/hooks.md`](../../hooks.md) state that both events are registered and how the failure shape is read
 - [ ] `bash scripts/test-hook-bash-failure.sh` passes
 
@@ -111,9 +111,18 @@ Decision 1 (the exit code when the `Exit code` line is missing) is Phase 2's, wh
 
 ### Phase 2: Parse the failure shape
 
-- [ ] `resolveExitCode`: on `hook_event_name == PostToolUseFailure`, read `error`'s `Exit code N`; `is_interrupt` and a missing line → non-zero per Decision 1; never `0`
-- [ ] `responseText`: on a failure event, the output is `error`
-- [ ] Tests: exit line present, interrupt, missing line; **negative control:** success and Codex events unchanged; invert the Phase 1 pin
+- [x] `resolveExitCode`: on `hook_event_name == PostToolUseFailure`, read `error`'s `Exit code N`; `is_interrupt` and a missing line → non-zero per Decision 1; never `0` (`bus/hook.go`: `claudeFailureEvent` const; `failureExitCode` matches `failureExitLineRe` — `\A\s*Exit code (\d+)\b`, **anchored to the start** so an `Exit code N` echoed below a missing status line is read as output — and returns `"1"` for an interrupt, a shell that never started, or a contradictory `Exit code 0`; `resolveExitCode` routes the failure event there before every other source, so its `"0"` default never applies. `error` is kept as `json.RawMessage` (`RawError`, read by `errorText`) so a non-string `error` on any event cannot fail the parse every hook returns silently on — the guard included)
+- [x] `responseText`: on a failure event, the output is `error` (`responseText` returns `errorText()` for `claudeFailureEvent`, which carries neither `tool_response` nor `tool_result`)
+- [x] Tests: exit line present, interrupt, missing line; **negative control:** success and Codex events unchanged; invert the Phase 1 pin (`TestGetExitCode_ClaudeFailureEvent`, table-driven over `claudeFailurePayload`: exit line → `"3"`; interrupt without a line → `"1"`; shell never started → `"1"`; exit line echoed below a missing status line → `"1"`; contradictory `Exit code 0` → `"1"` — every case also asserted to parse as a non-zero int and to give `OutcomeFailure`; the first case is the Phase 1 pin inverted. `TestGetOutput_ClaudeFailureEventReadsError` — `GetOutput` is the error's output and `GetScrubbedOutput` redacts a secret in it. `TestParseToolEvent_NonStringErrorStillParses`. `TestGetExitCode_ClaudeSuccessEventIsZero` kept as the control; the Codex path is untouched by the diff and its existing tests pass)
+
+#### Phase 2 verification note
+
+Verified 2026-10-08 20:08 by plan from the working tree (run `1791503217`; Phase 1 committed as
+`8defcf7`). Build, test and review nodes all success; review **0/0/0** ("failure parsing and scrubbed
+output match Phase 2; success and Codex paths remain unchanged"). Criteria 2, 3 and 6 ticked on the
+parser tests; criterion 5 stays open because "fires success only" is a chain claim — provable once the
+event is registered (Phase 3) and the chain runs (Phase 5), not by a parser test. Decision 1 recorded
+below as decided in this phase.
 
 ### Phase 3: Register and wire
 
@@ -134,11 +143,20 @@ Decision 1 (the exit code when the `Exit code` line is missing) is Phase 2's, wh
 
 ### Decision 1 — the exit code when the line is missing
 
-Open. A `PostToolUseFailure` whose `error` has no `Exit code` line (the shell could not start) or whose
+**Decided in Phase 2 (2026-10-08): `"1"`.** Made by the implement worker and accepted by review
+(0/0/0); recorded by plan, who checked the reason against the code. The user may reverse it.
+
+A `PostToolUseFailure` whose `error` has no `Exit code` line (the shell could not start) or whose
 `is_interrupt` is set has no numeric code to record. The history row's `exit_code` is a string; the
-options are a sentinel (`"unknown"`, matching the `bus-response` sentinel reply rows already use) or a
-conventional non-zero (`"1"`). Either must make `OutcomeFailure`, never success; the choice is about
-what `history` and the chain conditions (`exit_code`) read.
+options were a sentinel (`"unknown"`, matching the `bus-response` sentinel reply rows already use) or a
+conventional non-zero (`"1"`). Either makes `OutcomeFailure`, never success; the choice is about what
+`history` and the chain conditions (`exit_code`) read — and that is what decides it. `BuildChainContext`
+(`bus/conditions.go:626`) sets `ctx.ExitCode` with `strconv.Atoi` **only when it parses**, so an
+`"unknown"` sentinel would leave the context's exit code at its zero value and an `exit_code: 0`
+condition would match a failure. `"1"` is also what an interrupted `tool_response` already records on
+the success event. The same `"1"` covers a contradictory `Exit code 0` on a failure event, since the
+event itself says the call failed. `TestGetExitCode_ClaudeFailureEvent` asserts every case parses as a
+non-zero int, so the sentinel cannot creep back.
 
 ## Related
 
@@ -153,7 +171,7 @@ what `history` and the chain conditions (`exit_code`) read.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 3m | 2026-10-08 19:55 |
+| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 13m | 2026-10-08 20:08 |
 
 ## Status
 
