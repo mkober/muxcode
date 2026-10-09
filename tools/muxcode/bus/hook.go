@@ -22,6 +22,12 @@ import (
 // inspect. StopHookActive is set on Stop events when a Stop hook already
 // blocked once this turn — the loop guard for the self-poll re-launch hook.
 // ToolUseID and TranscriptPath locate a Codex shell command's real exit code.
+//
+// RawError is the `error` of Claude's PostToolUseFailure event — the event a
+// Bash call that exits non-zero arrives on instead of PostToolUse — holding
+// both its status line and its output, with no tool_response (MUX-204). It is
+// kept raw because every hook returns silently on a parse error, the guard
+// included: a non-string `error` on some other event must not fail the parse.
 type ToolEvent struct {
 	HookEventName string          `json:"hook_event_name,omitempty"`
 	ToolName      string          `json:"tool_name,omitempty"`
@@ -29,6 +35,7 @@ type ToolEvent struct {
 	ToolResponse  json.RawMessage `json:"tool_response,omitempty"`
 	ToolResult    json.RawMessage `json:"tool_result,omitempty"`
 	RawExitCode   interface{}     `json:"exit_code,omitempty"`
+	RawError      json.RawMessage `json:"error,omitempty"`
 	// Codex event context: transcript lookup, UserPromptSubmit and Stop fields.
 	ToolUseID            string `json:"tool_use_id,omitempty"`
 	TranscriptPath       string `json:"transcript_path,omitempty"`
@@ -121,10 +128,11 @@ func ParseToolEvent(data []byte) (*ToolEvent, error) {
 }
 
 // GetExitCode extracts the exit code from a tool event.
-// Checks top-level exit_code, then tool_response/tool_result exit_code,
-// then interrupted flag, then stderr prefix; a Codex event resolves through
-// the transcript instead (hook_codex.go) and yields "" — unknown — rather
-// than the Claude default when nothing recorded a status.
+// A Claude PostToolUseFailure event resolves through failureExitCode and is
+// never "0". Otherwise: top-level exit_code, then tool_response/tool_result
+// exit_code, then interrupted flag, then stderr prefix; a Codex event resolves
+// through the transcript instead (hook_codex.go) and yields "" — unknown —
+// rather than the Claude default when nothing recorded a status.
 func (ev *ToolEvent) GetExitCode() string {
 	if ev.exitCode != nil {
 		return *ev.exitCode
@@ -134,7 +142,40 @@ func (ev *ToolEvent) GetExitCode() string {
 	return code
 }
 
+// claudeFailureEvent is the hook event Claude Code fires instead of
+// PostToolUse for a tool call that fails — for Bash, a non-zero exit.
+const claudeFailureEvent = "PostToolUseFailure"
+
+// failureExitLineRe matches the status line Claude puts first in a
+// PostToolUseFailure error. Anchored to the start of the text: with no status
+// line (the shell never started), a later "Exit code N" is command output.
+var failureExitLineRe = regexp.MustCompile(`\A\s*Exit code (\d+)\b`)
+
+// failureExitCode resolves a PostToolUseFailure event: the code on error's
+// leading "Exit code N" line, else "1" — for an interrupt or a shell that never
+// started, neither of which names a code, and for a contradictory "Exit code 0".
+// "1" rather than an "unknown" sentinel (MUX-204 Decision 1): HookOutcome would
+// call either a failure, but chain conditions parse the code with Atoi, and an
+// unparseable one leaves ChainContext.ExitCode at 0, matching `exit_code: 0`.
+// It is also what an interrupted tool_response already records.
+func (ev *ToolEvent) failureExitCode() string {
+	if m := failureExitLineRe.FindStringSubmatch(ev.errorText()); m != nil && m[1] != "0" {
+		return m[1]
+	}
+	return "1"
+}
+
+// errorText is RawError when it is a JSON string, else "".
+func (ev *ToolEvent) errorText() string {
+	var s string
+	_ = json.Unmarshal(ev.RawError, &s)
+	return s
+}
+
 func (ev *ToolEvent) resolveExitCode() string {
+	if ev.HookEventName == claudeFailureEvent {
+		return ev.failureExitCode()
+	}
 	if code := interfaceToString(ev.RawExitCode); code != "" {
 		return code
 	}
@@ -204,8 +245,12 @@ func clipOutput(text string, maxLines, maxChars int) string {
 	return out
 }
 
-// responseText extracts the text content from tool_response or tool_result.
+// responseText extracts the text content from tool_response or tool_result —
+// or, for a Claude PostToolUseFailure event, which carries neither, from error.
 func (ev *ToolEvent) responseText() string {
+	if ev.HookEventName == claudeFailureEvent {
+		return ev.errorText()
+	}
 	for _, raw := range []json.RawMessage{ev.ToolResponse, ev.ToolResult} {
 		if len(raw) == 0 {
 			continue
@@ -778,7 +823,8 @@ func precheckPassed(cmdType CommandType, outcome string) bool {
 	return cmdType == CmdTestPrecheck && outcome == OutcomeSuccess
 }
 
-// ProcessBashHook processes a PostToolUse Bash event: classifies the command,
+// ProcessBashHook processes a PostToolUse or PostToolUseFailure Bash event
+// (GetExitCode and GetScrubbedOutput read either shape): classifies the command,
 // transitions the workflow and writes the history row. Chain firing is the
 // caller's (cmd/hook.go) — it reads result.Chain.
 //

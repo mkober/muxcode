@@ -55,6 +55,12 @@ Hooks are configured in `.claude/settings.json` in your project:
         "hooks": [{"type": "command", "command": "muxcode hook comment-block"}]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "muxcode hook bash", "async": true}]
+      }
+    ],
     "Stop": [
       {
         "hooks": [{"type": "command", "command": "muxcode hook stop"}]
@@ -70,6 +76,8 @@ You can copy a pre-configured template:
 ```bash
 cp ~/.config/muxcode/settings.json .claude/settings.json
 ```
+
+**Existing installs and new hooks.** Claude reads these hooks from `~/.claude/settings.json`, and one helper keeps an existing file current on every road: `scripts/merge-claude-settings.sh [--upgrade] <muxcode-settings> <claude-settings>` merges muxcode's hooks and permissions idempotently — `jq` runs the merge, `python3` is the fallback (pinned to identical results by `scripts/test-claude-settings-merge.sh`), and with neither tool it skips with a note. `./install.sh` creates the file when it is missing and otherwise merges through the helper. `make install` — which `./build.sh` and `muxcode upgrade` run — calls it with `--upgrade` on `CLAUDE_SETTINGS` (default `~/.claude/settings.json`), so a hook added upstream, such as `PostToolUseFailure` from [MUX-204](requirements/completed/MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md), reaches an install that predates it on the next build or upgrade. `--upgrade` **never opts a user in**: a missing file is skipped (the merge never creates one), and a file carrying no muxcode hook is left alone, since that user declined Claude at install; the file is rewritten only on a semantic change, after a backup to `settings.json.pre-muxcode`, keeping its mode. A merge or write failure never fails the install — `make install` prints a warning naming `./install.sh` and continues. Before PR 160 only `install.sh` merged, so an upgraded install never received the failure hook until the installer was re-run.
 
 ## Codex hooks
 
@@ -219,10 +227,14 @@ Signals that a file was edited. Performs three tasks:
 ### hook bash (bash hook)
 
 **Command:** `muxcode hook bash`
-**Phase:** PostToolUse
+**Phase:** PostToolUse — and, on Claude, PostToolUseFailure
 **Trigger:** Bash
 
-Detects build, test, deploy, and git commands, drives event chains, transitions the [workflow state machine](architecture.md#workflow-state-machine), and logs history with error extraction:
+Detects build, test, deploy, and git commands, drives event chains, transitions the [workflow state machine](architecture.md#workflow-state-machine), and logs history with error extraction.
+
+**The failure event** ([MUX-204](requirements/completed/MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md)). Claude Code (verified on 2.1.293) fires `PostToolUseFailure`, **not** `PostToolUse`, for a Bash call that exits non-zero. Until MUX-204 only `PostToolUse` was registered, so on every Claude role a failing command wrote no history row, no console line and fired no failure chain — the chains below could only ever see success. Codex fires `PostToolUse` on a non-zero exit and was unaffected. The failure payload has **no `tool_response`**; it carries `error` (first line `Exit code N`, then the interleaved stdout and stderr) and `is_interrupt`. When `hook_event_name` is `PostToolUseFailure`, `GetExitCode` resolves through `failureExitCode` before every other source: the code on `error`'s **leading** `Exit code N` line (`failureExitLineRe`, anchored to the start — an `Exit code N` further down is command output), else `"1"` — for an interrupt, a shell that never started, or a contradictory `Exit code 0`. Never `"0"`. The `"1"` is MUX-204's Decision 1, chosen over an `"unknown"` sentinel: `HookOutcome` would call either a failure, but `BuildChainContext` parses the code with `strconv.Atoi` and an unparseable one leaves `ChainContext.ExitCode` at 0, so an `exit_code: 0` condition would match a failure; `"1"` is also what an interrupted `tool_response` already records. The output (`GetOutput`/`GetScrubbedOutput`) is `error`, so the MUX-179 history scrub applies unchanged. `error` is decoded as raw JSON (`RawError`) because every hook, the guard included, returns silently on a parse error — a non-string `error` on some other event must not fail the parse. **The `"0"` default's boundary**: `resolveExitCode` still defaults to `"0"`, but now only for a Claude `PostToolUse` (success) payload that carries no code — never for a failure event. Pinned by `TestGetExitCode_ClaudeFailureEvent`, `TestGetOutput_ClaudeFailureEventReadsError`, `TestParseToolEvent_NonStringErrorStillParses`, `TestGetExitCode_ClaudeSuccessEventIsZero` (the control) and `TestProcessBashHook_ClaudeFailureEventFiresFailureChain` (`bus/hook_test.go`). Live firing of the async failure hook on a real Claude agent is **proven** by `scripts/test-hook-bash-failure.sh`'s opt-in live section (`--live` or `MUXCODE_HOOK_BASH_FAILURE_LIVE=1`): one real `claude -p` on 2.1.295, with exactly the Bash hook entries `config/settings.json` ships passed by `--settings`, runs a script that exits 3 and then one that exits 0 — the failing call leaves a `run-history` row at exit 3 / failure and fires the failure edge (`Run FAILED (exit 3)` to edit), the passing call's row reads 0. The hermetic sections, floor 13, prove the same through the real binary with payloads fed directly to `hook bash`.
+
+The chain edges:
 
 ```
 Build success        → trigger test agent
@@ -310,6 +322,7 @@ Hooks receive JSON on stdin with this structure:
 
 PreToolUse hooks receive `tool_input` only (no response yet).
 PostToolUse hooks receive both `tool_input` and `tool_response`.
+Claude's `PostToolUseFailure` (a Bash call that exited non-zero) receives `tool_input` plus `error` and `is_interrupt`, and **no `tool_response`** — see [hook bash](#hook-bash-bash-hook).
 
 Codex CLI sends the same envelope plus `hook_event_name`, `session_id`, `turn_id`, `transcript_path`, `cwd`, `model`, `permission_mode` and `tool_use_id`. Three shape differences: `tool_input.command` is a plain string (argv is also accepted), `apply_patch` puts the whole patch text in `tool_input.command`, and `tool_response` for `Bash` is a bare stdout string with **no exit code** — the real code is read from the rollout transcript. See [Codex hooks](#codex-hooks); every shape is pinned by a fixture in `bus/testdata/codex-hooks/`.
 

@@ -59,7 +59,9 @@ func hookSession() string {
 	return os.Getenv("BUS_SESSION")
 }
 
-// hookBash implements the PostToolUse Bash hook (replaces muxcode-bash-hook.sh).
+// hookBash implements the Bash hook (replaces muxcode-bash-hook.sh), registered
+// on Claude's PostToolUse and PostToolUseFailure — a non-zero exit arrives only
+// on the latter (MUX-204) — and on Codex's PostToolUse.
 // Detects build/test/deploy/git commands, writes history, and fires the one
 // chain bus.ChainEvent names for the call — none for a bus command, a git or
 // deploy-diff call, or a passing test precheck.

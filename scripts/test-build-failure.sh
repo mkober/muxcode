@@ -39,6 +39,7 @@ hermetic_install() {
     CONFIGDIR="$dest/config" \
     NVIM_CONFIGDIR="$dest/config/nvim" \
     NVIM_PLUGIN_DIR="$dest/nvim-plugin" \
+    CLAUDE_SETTINGS="$dest/claude/settings.json" \
     >"$dest/install.log" 2>&1
 }
 

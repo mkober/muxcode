@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -171,6 +172,104 @@ func TestGetExitCode_Default(t *testing.T) {
 	ev, _ := ParseToolEvent([]byte(raw))
 	if got := ev.GetExitCode(); got != "0" {
 		t.Errorf("GetExitCode = %q, want %q", got, "0")
+	}
+}
+
+// claudeFailurePayload is a realistic Claude PostToolUseFailure Bash event;
+// errorJSON is the raw `error` value, so a test can send a non-string.
+func claudeFailurePayload(errorJSON string, interrupt bool) []byte {
+	return []byte(fmt.Sprintf(`{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",`+
+		`"hook_event_name":"PostToolUseFailure","tool_name":"Bash",`+
+		`"tool_input":{"command":"echo X; exit 3","description":"Fail on purpose"},`+
+		`"tool_use_id":"toolu_fail","error":%s,"is_interrupt":%t}`, errorJSON, interrupt))
+}
+
+// TestGetExitCode_ClaudeFailureEvent covers MUX-204: a PostToolUseFailure event
+// carries its status in `error`, with no tool_response, and must never resolve
+// to "0" — the first case is the inverted Phase 1 pin. Every code must also
+// parse as a non-zero int, because chain conditions Atoi it and an unparseable
+// sentinel would read as exit 0 there (Decision 1).
+func TestGetExitCode_ClaudeFailureEvent(t *testing.T) {
+	cases := []struct {
+		name      string
+		errorJSON string
+		interrupt bool
+		want      string
+	}{
+		{"exit line", `"Exit code 3\nX"`, false, "3"},
+		{"interrupt without exit line", `"Command interrupted"`, true, "1"},
+		{"shell never started", `"spawn /bin/bash ENOENT"`, false, "1"},
+		{"exit line echoed below a missing status line", `"Error: nope\nExit code 5"`, false, "1"},
+		{"contradictory exit code 0", `"Exit code 0\nX"`, false, "1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := ParseToolEvent(claudeFailurePayload(tc.errorJSON, tc.interrupt))
+			if err != nil {
+				t.Fatalf("ParseToolEvent: %v", err)
+			}
+			got := ev.GetExitCode()
+			if got != tc.want {
+				t.Errorf("GetExitCode = %q, want %q", got, tc.want)
+			}
+			if n, err := strconv.Atoi(got); err != nil || n == 0 {
+				t.Errorf("GetExitCode = %q, want a non-zero integer", got)
+			}
+			if outcome := HookOutcome(got); outcome != OutcomeFailure {
+				t.Errorf("HookOutcome = %q, want %q", outcome, OutcomeFailure)
+			}
+		})
+	}
+}
+
+// A failure event's output is its `error`, and it reaches history through the
+// MUX-179 scrub like any other response.
+func TestGetOutput_ClaudeFailureEventReadsError(t *testing.T) {
+	const secret = "SuperSecret123"
+	ev, err := ParseToolEvent(claudeFailurePayload(`"Exit code 1\npassword=`+secret+`\nbuild failed"`, false))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if out := ev.GetOutput(15, 1000); !strings.Contains(out, "build failed") {
+		t.Errorf("GetOutput = %q, want the error's output", out)
+	}
+	out := ev.GetScrubbedOutput("run", 15, 1000)
+	if !strings.Contains(out, "build failed") || strings.Contains(out, secret) {
+		t.Errorf("GetScrubbedOutput = %q, want the error's output with %q redacted", out, secret)
+	}
+}
+
+// Every hook returns silently on a parse error, the guard included, so an
+// `error` that is not a string — on any event — must still parse.
+func TestParseToolEvent_NonStringErrorStillParses(t *testing.T) {
+	ev, err := ParseToolEvent([]byte(`{"hook_event_name":"Stop","stop_hook_active":true,"error":{"type":"rate_limit"}}`))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if !ev.StopHookActive {
+		t.Errorf("StopHookActive = false, want true")
+	}
+}
+
+// TestGetExitCode_ClaudeSuccessEventIsZero is the negative control for the
+// MUX-204 failure-shape parse: a real Claude PostToolUse payload, carrying the
+// same hook_event_name, transcript_path and tool_use_id context as a failure,
+// must keep resolving to "0".
+func TestGetExitCode_ClaudeSuccessEventIsZero(t *testing.T) {
+	raw := `{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",` +
+		`"hook_event_name":"PostToolUse","tool_name":"Bash",` +
+		`"tool_input":{"command":"echo X","description":"Succeed"},` +
+		`"tool_response":{"stdout":"X","stderr":"","interrupted":false,"isImage":false},` +
+		`"tool_use_id":"toolu_ok"}`
+	ev, err := ParseToolEvent([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	if got := ev.GetExitCode(); got != "0" {
+		t.Errorf("GetExitCode = %q, want %q", got, "0")
+	}
+	if got := HookOutcome(ev.GetExitCode()); got != OutcomeSuccess {
+		t.Errorf("HookOutcome = %q, want %q", got, OutcomeSuccess)
 	}
 }
 
@@ -883,6 +982,61 @@ func lastHookHistoryEntry(t *testing.T, path string) HookHistoryEntry {
 		t.Fatalf("history row unparseable: %v", err)
 	}
 	return entry
+}
+
+// MUX-204: a red integration script on a Claude run agent arrives as
+// PostToolUseFailure. Its row must carry the real code and its chain resolve
+// to the failure edge, which names that code to edit. The same script's
+// PostToolUse success is the negative control: "0", and only the watch edge.
+func TestProcessBashHook_ClaudeFailureEventFiresFailureChain(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-failure-event"
+	t.Setenv("BUS_SESSION", session)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	const command = "bash scripts/test-demo.sh"
+	envelope := `{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",` +
+		`"tool_name":"Bash","tool_input":{"command":%q},"tool_use_id":"toolu_1",%s}`
+	cases := []struct {
+		name, fields            string
+		wantCode, wantOutcome   string
+		wantSendTo, wantMessage string
+	}{
+		{"failure", `"hook_event_name":"PostToolUseFailure","error":"Exit code 3\nFAIL: 2 of 9 checks","is_interrupt":false`,
+			"3", OutcomeFailure, "edit", "Run FAILED (exit 3): " + command},
+		{"success", `"hook_event_name":"PostToolUse","tool_response":{"stdout":"PASS: 9 of 9 checks","stderr":"","interrupted":false,"isImage":false}`,
+			"0", OutcomeSuccess, "watch", "Run succeeded (" + command + ")"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := ParseToolEvent([]byte(fmt.Sprintf(envelope, command, tc.fields)))
+			if err != nil {
+				t.Fatalf("ParseToolEvent: %v", err)
+			}
+			res := ProcessBashHook(session, "run", ev)
+			if !res.Logged || res.Chain != "run" {
+				t.Fatalf("ProcessBashHook = %+v, want a logged row and the run chain", res)
+			}
+			entry := lastHookHistoryEntry(t, filepath.Join(busDir, "run-history.jsonl"))
+			if entry.ExitCode != tc.wantCode || entry.Outcome != tc.wantOutcome {
+				t.Errorf("row exit=%q outcome=%q, want %q/%q", entry.ExitCode, entry.Outcome, tc.wantCode, tc.wantOutcome)
+			}
+			code := ev.GetExitCode()
+			action := ResolveChain(res.Chain, HookOutcome(code), BuildChainContext(ev))
+			if action == nil {
+				t.Fatalf("ResolveChain(run, %s) = nil, want the %s edge", HookOutcome(code), tc.wantSendTo)
+			}
+			if action.SendTo != tc.wantSendTo {
+				t.Errorf("chain sends to %q, want %q", action.SendTo, tc.wantSendTo)
+			}
+			if msg := ExpandMessage(action.Message, code, command); !strings.Contains(msg, tc.wantMessage) {
+				t.Errorf("chain message = %q, want it to contain %q", msg, tc.wantMessage)
+			}
+		})
+	}
 }
 
 // MUX-179: a PII-sensitive role's history row holds the redacted output under
