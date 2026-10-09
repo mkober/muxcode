@@ -70,7 +70,7 @@ gap into a wrong signal.
 - [ ] A failing Claude Bash call now writes a history row, a console line, and fires the role's **failure** chain edge; a graph node's hook-road evidence records the failure
 - [x] **Negative control:** a `PostToolUse` success payload still resolves `0` and fires success only; a Codex event is untouched (Phase 2 for the resolution — `TestGetExitCode_ClaudeSuccessEventIsZero`; Phase 3 for the firing — the success case of `TestProcessBashHook_ClaudeFailureEventFiresFailureChain` resolves to the watch edge alone. The Codex path is untouched by either diff — `failureExitCode` is reached only on `hook_event_name == PostToolUseFailure`, which Codex never sends — and its existing tests pass)
 - [x] **Negative control:** a failure payload without the `Exit code` line is never recorded as success (Phase 2: the "interrupt without exit line", "shell never started" and "exit line echoed below a missing status line" cases each resolve `"1"` and `OutcomeFailure`)
-- [ ] `CLAUDE.md`'s hook-driven-chains bullet and [`docs/hooks.md`](../../hooks.md) state that both events are registered and how the failure shape is read
+- [x] `CLAUDE.md`'s hook-driven-chains bullet and [`docs/hooks.md`](../../hooks.md) state that both events are registered and how the failure shape is read (Phase 4: both documents name `PostToolUse` and `PostToolUseFailure`, the leading `Exit code N` line of `error`, `"1"` for the no-line cases, and the `"0"` default's boundary)
 - [ ] `bash scripts/test-hook-bash-failure.sh` passes
 
 ### Technical approach
@@ -141,7 +141,14 @@ that is proven, end to end, against a real agent.
 
 ### Phase 4: Docs
 
-- [ ] `CLAUDE.md` hook-driven-chains bullet; [`docs/hooks.md`](../../hooks.md): both events, the failure shape, the `"0"` default's new boundary
+- [x] `CLAUDE.md` hook-driven-chains bullet; [`docs/hooks.md`](../../hooks.md): both events, the failure shape, the `"0"` default's new boundary (`CLAUDE.md` by edit — both events registered, no `tool_response`, the leading `Exit code N` line, output from `error`, `"1"` never `"0"` and not `"unknown"` with the `Atoi` reason, the `"0"` default only for a code-less success payload, existing installs re-run `./install.sh`. `docs/hooks.md` by plan, from the worker's handoff with each fact checked in the tree — the settings JSON example gains the `PostToolUseFailure` block (still valid JSON); an *Existing installs and new hooks* note: only `install.sh` writes `~/.claude/settings.json`, the other roads copy the template, the automation choice left open; the `hook bash` section's Phase line names both events and a *failure event* paragraph carries the shape, the anchored regex, Decision 1, the scrub, `RawError`, the default's boundary, the five pinning tests and the unprobed live path; the envelope lines gain the failure shape)
+
+#### Phase 4 verification note
+
+Verified 2026-10-09 09:48 by plan from the working tree (run `1791503217`; Phase 3 committed as
+`5ade53e`). Docs-only phase; test node success; review **0/0/0** ("docs match failure parsing and
+registration, explain existing-install migration, and disclose the unprobed async path"). Criterion 7
+ticked from both documents' text. Criterion 4 still open, awaiting Phase 5.
 
 ### Phase 5: Integration test
 
@@ -180,7 +187,7 @@ non-zero int, so the sentinel cannot creep back.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 26m | 2026-10-09 09:40 |
+| MUX-204-claude-failing-bash-calls-never-reach-hook-bash | 34m | 2026-10-09 09:45 |
 
 ## Status
 
