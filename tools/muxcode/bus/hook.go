@@ -823,7 +823,8 @@ func precheckPassed(cmdType CommandType, outcome string) bool {
 	return cmdType == CmdTestPrecheck && outcome == OutcomeSuccess
 }
 
-// ProcessBashHook processes a PostToolUse Bash event: classifies the command,
+// ProcessBashHook processes a PostToolUse or PostToolUseFailure Bash event
+// (GetExitCode and GetScrubbedOutput read either shape): classifies the command,
 // transitions the workflow and writes the history row. Chain firing is the
 // caller's (cmd/hook.go) — it reads result.Chain.
 //

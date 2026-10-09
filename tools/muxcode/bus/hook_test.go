@@ -984,6 +984,61 @@ func lastHookHistoryEntry(t *testing.T, path string) HookHistoryEntry {
 	return entry
 }
 
+// MUX-204: a red integration script on a Claude run agent arrives as
+// PostToolUseFailure. Its row must carry the real code and its chain resolve
+// to the failure edge, which names that code to edit. The same script's
+// PostToolUse success is the negative control: "0", and only the watch edge.
+func TestProcessBashHook_ClaudeFailureEventFiresFailureChain(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-failure-event"
+	t.Setenv("BUS_SESSION", session)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+
+	const command = "bash scripts/test-demo.sh"
+	envelope := `{"session_id":"s1","transcript_path":"/tmp/claude-transcript.jsonl","cwd":"/repo",` +
+		`"tool_name":"Bash","tool_input":{"command":%q},"tool_use_id":"toolu_1",%s}`
+	cases := []struct {
+		name, fields            string
+		wantCode, wantOutcome   string
+		wantSendTo, wantMessage string
+	}{
+		{"failure", `"hook_event_name":"PostToolUseFailure","error":"Exit code 3\nFAIL: 2 of 9 checks","is_interrupt":false`,
+			"3", OutcomeFailure, "edit", "Run FAILED (exit 3): " + command},
+		{"success", `"hook_event_name":"PostToolUse","tool_response":{"stdout":"PASS: 9 of 9 checks","stderr":"","interrupted":false,"isImage":false}`,
+			"0", OutcomeSuccess, "watch", "Run succeeded (" + command + ")"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev, err := ParseToolEvent([]byte(fmt.Sprintf(envelope, command, tc.fields)))
+			if err != nil {
+				t.Fatalf("ParseToolEvent: %v", err)
+			}
+			res := ProcessBashHook(session, "run", ev)
+			if !res.Logged || res.Chain != "run" {
+				t.Fatalf("ProcessBashHook = %+v, want a logged row and the run chain", res)
+			}
+			entry := lastHookHistoryEntry(t, filepath.Join(busDir, "run-history.jsonl"))
+			if entry.ExitCode != tc.wantCode || entry.Outcome != tc.wantOutcome {
+				t.Errorf("row exit=%q outcome=%q, want %q/%q", entry.ExitCode, entry.Outcome, tc.wantCode, tc.wantOutcome)
+			}
+			code := ev.GetExitCode()
+			action := ResolveChain(res.Chain, HookOutcome(code), BuildChainContext(ev))
+			if action == nil {
+				t.Fatalf("ResolveChain(run, %s) = nil, want the %s edge", HookOutcome(code), tc.wantSendTo)
+			}
+			if action.SendTo != tc.wantSendTo {
+				t.Errorf("chain sends to %q, want %q", action.SendTo, tc.wantSendTo)
+			}
+			if msg := ExpandMessage(action.Message, code, command); !strings.Contains(msg, tc.wantMessage) {
+				t.Errorf("chain message = %q, want it to contain %q", msg, tc.wantMessage)
+			}
+		})
+	}
+}
+
 // MUX-179: a PII-sensitive role's history row holds the redacted output under
 // the notice banner, never the secret — the shape of plan's `ps eww` leak of a
 // real API key. Fails if ProcessBashHook's IsPIISensitiveRole gate is removed.

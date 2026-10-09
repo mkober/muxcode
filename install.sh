@@ -955,11 +955,11 @@ if $use_claude; then
       .permissions = (.permissions // {}) |
       .permissions.allow = (.permissions.allow // []) |
 
-      reduce ($mc[0].hooks.PreToolUse // [] | .[] | . as $entry | $entry.hooks[] | {m: $entry.matcher, h: .}) as $x (
-        .; add_hook("PreToolUse"; $x.m; $x.h)
-      ) |
-      reduce ($mc[0].hooks.PostToolUse // [] | .[] | . as $entry | $entry.hooks[] | {m: $entry.matcher, h: .}) as $x (
-        .; add_hook("PostToolUse"; $x.m; $x.h)
+      # PostToolUseFailure carries every non-zero Bash exit to hook bash (MUX-204).
+      reduce ("PreToolUse", "PostToolUse", "PostToolUseFailure") as $phase (.;
+        reduce ($mc[0].hooks[$phase] // [] | .[] | . as $entry | $entry.hooks[] | {m: $entry.matcher, h: .}) as $x (
+          .; add_hook($phase; $x.m; $x.h)
+        )
       ) |
 
       # Stop has no matcher: append a group per command not already under .hooks.Stop.
