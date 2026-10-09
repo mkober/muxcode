@@ -3,6 +3,7 @@ BINDIR ?= $(PREFIX)/bin
 CONFIGDIR ?= $(HOME)/.config/muxcode
 NVIM_CONFIGDIR ?= $(HOME)/.config/muxcode/nvim
 NVIM_PLUGIN_DIR ?= $(HOME)/.local/share/nvim/site/plugin
+CLAUDE_SETTINGS ?= $(HOME)/.claude/settings.json
 
 # Build identity stamped into both binaries (tools/muxcode/bus/version.go,
 # tools/muxcode-llm-harness/harness/version.go). `git describe` yields the
@@ -83,6 +84,9 @@ install: build
 	@# User customizations go in .muxcode/ (project-level, higher priority).
 	@cp config/muxcode.json $(CONFIGDIR)/muxcode.json
 	@cp config/settings.json $(CONFIGDIR)/settings.json
+	@# Keep an existing Claude install's hooks current; never opts a user in, never fails the install.
+	@bash scripts/merge-claude-settings.sh --upgrade config/settings.json "$(CLAUDE_SETTINGS)" \
+		|| echo "warning: muxcode hooks not merged into $(CLAUDE_SETTINGS) — run ./install.sh" >&2
 	@cp -n config/plugins.conf $(CONFIGDIR)/plugins.conf 2>/dev/null || true
 	@# models.conf overwrites (no -n, unlike plugins.conf above): it is the
 	@# provider-selector model list, so a model rename upstream must reach the

@@ -938,53 +938,9 @@ if $use_claude; then
     cp "$MUXCODE_SETTINGS" "$CLAUDE_SETTINGS"
     ok "Created ~/.claude/settings.json with muxcode hooks"
   else
-    # Always merge — add_hook is idempotent (skips existing commands)
-    jq --slurpfile mc "$MUXCODE_SETTINGS" '
-      def add_hook($phase; $matcher; $hook):
-        if (.hooks[$phase] // [] | map(select(.matcher == $matcher)) | length) > 0 then
-          .hooks[$phase] |= map(
-            if .matcher == $matcher and (.hooks | map(.command) | index($hook.command) | not) then
-              .hooks += [$hook]
-            else . end
-          )
-        else
-          .hooks[$phase] = ((.hooks[$phase] // []) + [{"matcher": $matcher, "hooks": [$hook]}])
-        end;
-
-      .hooks = (.hooks // {}) |
-      .permissions = (.permissions // {}) |
-      .permissions.allow = (.permissions.allow // []) |
-
-      # PostToolUseFailure carries every non-zero Bash exit to hook bash (MUX-204).
-      reduce ("PreToolUse", "PostToolUse", "PostToolUseFailure") as $phase (.;
-        reduce ($mc[0].hooks[$phase] // [] | .[] | . as $entry | $entry.hooks[] | {m: $entry.matcher, h: .}) as $x (
-          .; add_hook($phase; $x.m; $x.h)
-        )
-      ) |
-
-      # Stop has no matcher: append a group per command not already under .hooks.Stop.
-      reduce ($mc[0].hooks.Stop // [] | .[] | .hooks[]) as $h (
-        .;
-        if ((.hooks.Stop // []) | [.[].hooks[]?.command] | index($h.command)) then .
-        else .hooks.Stop = ((.hooks.Stop // []) + [{"hooks": [$h]}]) end
-      ) |
-
-      # Prune rules Claude Code rejects at startup — the additive union below never would.
-      .permissions.allow = (.permissions.allow - ["Write(/tmp/muxcode-*)", "Write(/private/tmp/muxcode-*)"]) |
-      .permissions.deny = ((.permissions.deny // []) - ["Bash(rm -rf /)*"]) |
-
-      .permissions.allow = (.permissions.allow + ($mc[0].permissions.allow // []) | unique) |
-      .permissions.deny = ((.permissions.deny // []) + ($mc[0].permissions.deny // []) | unique)
-    ' "$CLAUDE_SETTINGS" > "${CLAUDE_SETTINGS}.tmp"
-
-    if ! diff -q "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS" >/dev/null 2>&1; then
-      cp "$CLAUDE_SETTINGS" "${CLAUDE_SETTINGS}.pre-muxcode"
-      mv "${CLAUDE_SETTINGS}.tmp" "$CLAUDE_SETTINGS"
-      ok "Updated ~/.claude/settings.json (backup: settings.json.pre-muxcode)"
-    else
-      rm -f "${CLAUDE_SETTINGS}.tmp"
-      ok "Claude Code hooks already up-to-date"
-    fi
+    # The same idempotent merge `make install` runs on every build and upgrade.
+    bash "$REPO_DIR/scripts/merge-claude-settings.sh" "$MUXCODE_SETTINGS" "$CLAUDE_SETTINGS" \
+      || warn "Could not merge muxcode hooks into ~/.claude/settings.json"
   fi
 fi
 
