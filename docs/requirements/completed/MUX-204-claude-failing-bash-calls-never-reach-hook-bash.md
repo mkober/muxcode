@@ -227,9 +227,9 @@ non-zero int, so the sentinel cannot creep back.
 
 ## Status
 
-In Progress — **all five phases implemented and verified 2026-10-09**; awaiting the Phase 5 commit and
-the run's close-out (Status → `Complete`, move to `completed/`). Moved from `backlog/` to `drafts/` and
-set as the active spec on the user's instruction 2026-10-08 (rank 1 / Tier 1), the day MUX-203 — whose
-Phase 1 probes surfaced this defect — merged. Phases on
-`MUX-204-claude-failing-bash-calls-never-reach-hook-bash`: `8defcf7` (Phase 1), `4b9aa27` (Phase 2),
-`5ade53e` (Phase 3), `90e4245` (Phase 4).
+Complete — closed out 2026-10-09 by run `1791503217-50-spec-to-pr` (launched by the user): all five
+phases implemented and verified, every acceptance criterion (8) and phase step ticked, moved from
+`drafts/` to `completed/`. Moved from `backlog/` to `drafts/` and set as the active spec on the user's
+instruction 2026-10-08 (rank 1 / Tier 1), the day MUX-203 — whose Phase 1 probes surfaced this defect —
+merged. Phases on `MUX-204-claude-failing-bash-calls-never-reach-hook-bash`: `8defcf7` (Phase 1),
+`4b9aa27` (Phase 2), `5ade53e` (Phase 3), `90e4245` (Phase 4), `7de1356` (Phase 5).
