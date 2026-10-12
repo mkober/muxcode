@@ -80,14 +80,9 @@ func (d *Dashboard) Run() error {
 
 	defer d.cleanup(rawErr == nil)
 
+	screen := newFrameWriter()
 	for {
-		frame := d.render()
-
-		// Move cursor to 0,0 and print frame
-		fmt.Print("\033[H")
-		fmt.Print(ClearFrame(frame))
-		// Clear to end of screen
-		fmt.Print("\033[J")
+		screen.draw(d.render())
 
 		// Wait for refresh interval, checking for keys and signals
 		deadline := time.After(time.Duration(d.refresh) * time.Second)

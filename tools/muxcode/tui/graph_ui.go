@@ -1667,12 +1667,11 @@ func (ui *GraphUI) Run() {
 
 	ui.refresh()
 
+	screen := newFrameWriter()
 	for {
-		fmt.Print("\033[H")
 		// Clamp to the pane height: printing past the last row scrolls
 		// the popup, shifting the tab bar up — the header must be static.
-		fmt.Print(ClearFrame(clampLines(ui.render(), termHeight()-1)))
-		fmt.Print("\033[J")
+		screen.draw(clampLines(ui.render(), termHeight()-1))
 
 		select {
 		case <-sigCh:
