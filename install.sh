@@ -211,6 +211,68 @@ version_of() { printf '%s' "$1" | grep -oE '[0-9]+(\.[0-9]+)*[a-z]?' | head -1 |
 
 PKG_MGR=""
 PKG_INSTALL=""
+
+# A Homebrew install whose shellenv never reached the profile is invisible to
+# `command -v` — the installer prints the line to add and many users skip it,
+# so the scan read "No supported package manager" on a Mac that has one.
+BREW_PREFIXES="/opt/homebrew /usr/local"
+load_brew_shellenv() {
+  local p
+  for p in $BREW_PREFIXES; do
+    if [ -x "$p/bin/brew" ]; then
+      eval "$("$p/bin/brew" shellenv)"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# persist_brew_shellenv — add `brew shellenv` to the login profile so tmux, go
+# and nvim stay on PATH in the shells muxcode launches after this run.
+persist_brew_shellenv() {
+  local brew_bin profile line
+  brew_bin="$(command -v brew)" || return 0
+  case "$(basename "${SHELL:-bash}")" in
+    zsh)  profile="$HOME/.zprofile" ;;
+    bash) profile="$HOME/.bash_profile" ;;
+    *)    note "Add to your shell profile:  eval \"\$($brew_bin shellenv)\""; return 0 ;;
+  esac
+  grep -qF 'brew shellenv' "$profile" 2>/dev/null && return 0
+  line="eval \"\$($brew_bin shellenv)\""
+  if ask "Add Homebrew to $(basename "$profile")?" Y; then
+    printf '\n# Added by the muxcode installer\n%s\n' "$line" >> "$profile"
+    ok "Added Homebrew to $profile"
+  else
+    note "Add to your shell profile:  $line"
+  fi
+}
+
+# install_homebrew — macOS only, where Homebrew is the sole supported manager.
+# Runs the official installer in the foreground: it asks for sudo and confirms
+# before touching anything, and neither prompt may hide behind a spinner.
+install_homebrew() {
+  [ "$(uname -s)" = "Darwin" ] || return 1
+  command -v curl >/dev/null 2>&1 || { warn "curl not found — cannot install Homebrew"; return 1; }
+  info "Homebrew is required to install prerequisites on macOS"
+  ask "Install Homebrew now (https://brew.sh)?" Y || return 1
+  echo ""
+  local nonint=""
+  $INTERACTIVE || nonint=1
+  if ! NONINTERACTIVE="$nonint" /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; then
+    echo ""; warn "Homebrew install failed"
+    return 1
+  fi
+  echo ""
+  load_brew_shellenv || { warn "Homebrew installed but brew was not found"; return 1; }
+  ok "Homebrew installed"
+  persist_brew_shellenv
+}
+
+BREW_FOUND_OFF_PATH=false
+if ! command -v brew >/dev/null 2>&1 && load_brew_shellenv; then
+  BREW_FOUND_OFF_PATH=true
+fi
+
 if command -v brew >/dev/null 2>&1; then
   PKG_MGR="brew";   PKG_INSTALL="brew install"
 elif command -v apt-get >/dev/null 2>&1; then
@@ -248,6 +310,11 @@ $INTERACTIVE || note "non-interactive mode — accepting defaults"
 # ─────────────────────────────────────────────────────────────────────────────
 step "Prerequisites"
 # ─────────────────────────────────────────────────────────────────────────────
+
+if $BREW_FOUND_OFF_PATH; then
+  warn "Homebrew found at $(command -v brew) but not on your PATH"
+  persist_brew_shellenv
+fi
 
 # tool|minimum|required|version-command
 #
@@ -310,10 +377,13 @@ echo ""
 if [ ${#missing[@]} -gt 0 ]; then
   if ! $INSTALL_DEPS; then
     warn "--no-deps set; skipping automatic install of: ${missing[*]}"
-  elif [ -z "$PKG_MGR" ]; then
+  elif [ -z "$PKG_MGR" ] && ! install_homebrew; then
     warn "No supported package manager found (brew/apt/dnf/pacman/zypper)"
     note "Install manually: ${missing[*]}"
   else
+    if [ -z "$PKG_MGR" ]; then
+      PKG_MGR="brew"; PKG_INSTALL="brew install"
+    fi
     pkg_list=""; unmapped=""
     for t in "${missing[@]}"; do
       p="$(pkg_name_for "$t")"

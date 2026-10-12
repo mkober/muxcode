@@ -291,7 +291,9 @@ The tradeoff is clear: autonomous tools can handle more without you, but MuxCode
 
 `install.sh` verifies each of these — including minimum versions — and offers to
 install anything missing via your system package manager (Homebrew, apt, dnf,
-pacman, or zypper). You do not need to install them by hand first.
+pacman, or zypper). On macOS without Homebrew it offers to install Homebrew
+first, and a Homebrew that is installed but missing from your `PATH` is found and
+added to your login profile. You do not need to install them by hand first.
 
 | Tool | Minimum | Why |
 | ---- | ------- | --- |
