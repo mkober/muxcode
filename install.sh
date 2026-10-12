@@ -227,6 +227,19 @@ load_brew_shellenv() {
   return 1
 }
 
+# bash_login_profile — print the file a bash login shell actually reads.
+# Bash reads only the first of ~/.bash_profile, ~/.bash_login and ~/.profile
+# that exists and is readable, so creating ~/.bash_profile beside an existing ~/.bash_login or
+# ~/.profile would silently stop that file loading. Falls back to
+# ~/.bash_profile only when none exists.
+bash_login_profile() {
+  local f
+  for f in "$HOME/.bash_profile" "$HOME/.bash_login" "$HOME/.profile"; do
+    [ -f "$f" ] && [ -r "$f" ] && { echo "$f"; return 0; }
+  done
+  echo "$HOME/.bash_profile"
+}
+
 # persist_brew_shellenv — add `brew shellenv` to the login profile so tmux, go
 # and nvim stay on PATH in the shells muxcode launches after this run.
 persist_brew_shellenv() {
@@ -234,7 +247,7 @@ persist_brew_shellenv() {
   brew_bin="$(command -v brew)" || return 0
   case "$(basename "${SHELL:-bash}")" in
     zsh)  profile="$HOME/.zprofile" ;;
-    bash) profile="$HOME/.bash_profile" ;;
+    bash) profile="$(bash_login_profile)" ;;
     *)    note "Add to your shell profile:  eval \"\$($brew_bin shellenv)\""; return 0 ;;
   esac
   grep -qF 'brew shellenv' "$profile" 2>/dev/null && return 0
