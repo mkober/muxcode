@@ -40,6 +40,8 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 		cfg.AgentFile = agentFile
 	}
 
+	trustCodexLaunchDir(BusSession(), role)
+
 	// The road is decided first: SharedPrompt resolves the provider again and
 	// must see the same capability this instance carries.
 	if active, err := PrepareCodexHooks(BusSession(), role); err == nil {
@@ -281,12 +283,24 @@ func (p *CodexProvider) IsAlive(session, role string) bool {
 }
 
 // Codex's directory-trust prompt, shown for a project absent from
-// ~/.codex/config.toml [projects]. "Yes, continue" is pre-selected, so Enter
-// accepts it; codexTrustPromptTail is its last line.
+// ~/.codex/config.toml [projects]. The trust option is pre-selected, so Enter
+// accepts it. EnsureCodexProjectTrust normally keeps it from appearing at all.
+//
+// Codex 0.162 reworded it to "Trust this folder?" over a tail of
+// "enter continue · esc quit" — Escape quits, so an unrecognised prompt read as
+// idle is killed by the wake's Escape preamble. codexTrustPrompts holds both
+// wordings, each marker paired with its own tail.
 const (
-	codexTrustPromptMarker = "Do you trust the contents of this directory"
-	codexTrustPromptTail   = "Press enter to continue"
+	codexTrustPromptMarker   = "Do you trust the contents of this directory"
+	codexTrustPromptTail     = "Press enter to continue"
+	codexTrustPromptMarkerV2 = "Trust this folder?"
+	codexTrustPromptTailV2   = "enter continue · esc quit"
 )
+
+var codexTrustPrompts = [][2]string{
+	{codexTrustPromptMarker, codexTrustPromptTail},
+	{codexTrustPromptMarkerV2, codexTrustPromptTailV2},
+}
 
 // codexTrustPromptTailWindow is how many trailing non-blank lines may sit
 // under the prompt's last line for it to still count as live — one footer
@@ -330,7 +344,7 @@ const codexUpdateOptionsWindow = 5
 
 // codexPromptMarkers are the inline prompts that can share the bottom of a
 // pane; the newest one drawn is the one a tail belongs to.
-var codexPromptMarkers = []string{codexTrustPromptMarker, codexApprovalPromptMarker, codexUpdatePromptMarker}
+var codexPromptMarkers = []string{codexTrustPromptMarker, codexTrustPromptMarkerV2, codexApprovalPromptMarker, codexUpdatePromptMarker}
 
 // codexPromptLive reports whether content ends at the inline prompt named by
 // marker: its tail holds one of the last window non-blank lines, and no other
@@ -367,9 +381,15 @@ func codexApprovalPromptLive(content string) bool {
 }
 
 // codexTrustPromptLive reports whether content ends at the directory-trust
-// prompt; once accepted, a later Enter on it would submit an empty turn.
+// prompt, in either wording; once accepted, a later Enter on it would submit
+// an empty turn.
 func codexTrustPromptLive(content string) bool {
-	return codexPromptLive(content, codexTrustPromptMarker, codexTrustPromptTail, codexTrustPromptTailWindow)
+	for _, p := range codexTrustPrompts {
+		if codexPromptLive(content, p[0], p[1], codexTrustPromptTailWindow) {
+			return true
+		}
+	}
+	return false
 }
 
 // codexUpdatePromptLive reports whether content ends at the self-update
