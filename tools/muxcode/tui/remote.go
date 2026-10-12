@@ -92,11 +92,9 @@ func (ui *RemoteUI) Run() *RemoteSelection {
 	// Initial data load
 	ui.refreshSessions()
 
+	screen := newFrameWriter()
 	for {
-		frame := ui.render()
-		fmt.Print("\033[H")
-		fmt.Print(ClearFrame(frame))
-		fmt.Print("\033[J")
+		screen.draw(ui.render())
 
 		// Wait for key or auto-refresh (10s)
 		deadline := time.After(10 * time.Second)

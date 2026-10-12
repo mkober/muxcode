@@ -89,10 +89,9 @@ func (ui *RestartSelectUI) Run() {
 	go readKeysInto(ui.keyCh)
 	defer restoreTerminal(rawErr == nil)
 
+	screen := newFrameWriter()
 	for {
-		fmt.Print("\033[H")
-		fmt.Print(ClearFrame(ui.render(termWidth())))
-		fmt.Print("\033[J")
+		screen.draw(ui.render(termWidth()))
 
 		select {
 		case <-sigCh:

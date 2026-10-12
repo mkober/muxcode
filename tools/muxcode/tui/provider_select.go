@@ -282,16 +282,13 @@ func (ui *ProviderSelectUI) Run() (cli, model string, compact bool, roles []stri
 
 	defer ui.cleanup(rawErr == nil)
 
+	screen := newFrameWriter()
 	for {
-		var frame string
 		if ui.inProgress {
-			frame = ui.renderProgress()
+			screen.draw(ui.renderProgress())
 		} else {
-			frame = ui.render()
+			screen.draw(ui.render())
 		}
-		fmt.Print("\033[H")
-		fmt.Print(ClearFrame(frame))
-		fmt.Print("\033[J")
 
 		// Wait for key input or progress update
 		select {
