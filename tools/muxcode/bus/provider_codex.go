@@ -145,15 +145,22 @@ func codexWritableRoots(role string) []string {
 	return resolveWritableRoots(append(roots, goToolchainRoots()...))
 }
 
-// codexNeedsNetwork reports whether a role's work is network traffic, granted
-// under workspace-write with sandbox_workspace_write.network_access. Watch
-// alone: its job is `gh pr checks`, cloud log tails and health probes, all
-// refused by Codex's default no-network sandbox — on 2026-10-07 a 110-pr-merge
-// run failed at ci-watch with "error connecting to api.github.com" on a PR
-// whose CI was fine. Like the writable roots, a role is listed only once its
-// failure is observed.
+// codexNeedsNetwork reports whether a role's work needs the network, granted
+// under workspace-write with sandbox_workspace_write.network_access — a single
+// switch, not a per-host allowlist.
+//
+// Watch: its job is `gh pr checks`, cloud log tails and health probes — on
+// 2026-10-07 a 110-pr-merge run failed at ci-watch with "error connecting to
+// api.github.com" on a PR whose CI was fine.
+//
+// Build: a build fetches its dependencies — on 2026-10-13 `./build.sh` failed
+// in two projects (is-advising-gateway, is-lms-gateway) because pip could not
+// resolve pypi.org and npx could not resolve registry.npmjs.org, which read as
+// a network blip rather than the sandbox.
+//
+// Like the writable roots, a role is listed only once its failure is observed.
 func codexNeedsNetwork(role string) bool {
-	return role == "watch"
+	return role == "watch" || role == "build"
 }
 
 // resolveWritableRoots maps each root to its physical path, dropping any that

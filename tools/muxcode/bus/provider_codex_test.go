@@ -240,6 +240,19 @@ func TestCodexBuildExecArgs_WatchGetsNetworkOnly(t *testing.T) {
 	}
 }
 
+// Build fetches its dependencies; on 2026-10-13 pip could not resolve pypi.org
+// and npx could not resolve registry.npmjs.org in two projects. It keeps its
+// install roots alongside the network grant.
+func TestCodexBuildExecArgs_BuildGetsNetwork(t *testing.T) {
+	p := &CodexProvider{}
+	args := strings.Join(p.argsFor(t, "build"), " ")
+	for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true", "--add-dir"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("build missing %q: %s", want, args)
+		}
+	}
+}
+
 // Negative control: the grant is per-role, not a blanket widening. Without
 // this, granting every role would pass the tests above.
 func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
@@ -250,7 +263,7 @@ func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 			t.Errorf("role %q must not be widened: %s", role, args)
 		}
 	}
-	for _, role := range []string{"review", "analyze", "build", "test"} {
+	for _, role := range []string{"review", "analyze", "test", "run", "commit"} {
 		if args := strings.Join(p.argsFor(t, role), " "); strings.Contains(args, "network_access") {
 			t.Errorf("role %q must not get network access: %s", role, args)
 		}

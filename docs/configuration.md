@@ -230,11 +230,16 @@ Provider comparison:
 | LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | OpenAI (GPT-4.1, o3, o4-mini, etc.) | Ollama (any pulled model) |
 | Startup handling | Trust + bypass prompts | TUI frame detection | Prompt ready detection | N/A |
 
-**Codex CLI sandbox limitation**: Codex CLI sandboxes all filesystem writes to the workspace and blocks outbound network access (DNS resolution fails). This makes it unsuitable for:
-- **commit/deploy roles** — cannot write to `.git/` or push to remotes
-- **Any role requiring network** — cannot reach GitHub, npm registries, or APIs
+**Codex CLI sandbox**: Codex runs commands under a selectable sandbox (`-s workspace-write` by default here) where writes inside the workspace succeed, writes outside are refused, and outbound network is **off by default** (DNS resolution fails with `[Errno 8]`). muxcode widens it per role, and only once a role's failure has been observed (`bus/provider_codex.go`):
 
-Only assign Codex to read-only or workspace-scoped roles (review, analyze). Use Claude Code or OpenCode for git operations and network-dependent tasks.
+| Role | Grant | Why |
+|------|-------|-----|
+| `build` | Install roots + Go caches as writable (`codexWritableRoots`), **network on** | `make install` writes outside the repo; `./build.sh` fetches dependencies — pip and npx could not resolve `pypi.org`/`registry.npmjs.org` on 2026-10-13 |
+| `test` | Go caches only as writable | A test-only import no build cached must compile into them |
+| `watch` | **Network on** | Its work is `gh pr checks` and log tails — `ci-watch` died on "error connecting to api.github.com" on 2026-10-07 |
+| every other role | Default policy | — |
+
+Network is granted by `codexNeedsNetwork` as `-c sandbox_workspace_write.network_access=true` — **one switch, no per-host allowlist**: a role reaches everything or nothing. Two limits remain: the **commit** and **deploy** roles need writes to `.git/` and remote pushes that no role is granted, so use Claude Code or OpenCode for them; and a Codex **test** agent still cannot bind a loopback socket, so it cannot run a socket-binding suite ([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). Details in [Agents](agents.md) and [Architecture](architecture.md#codex-cli-agent-flow).
 
 Example — mixed session via config file:
 
@@ -244,8 +249,8 @@ MUXCODE_AGENT_CLI=claude              # default: Claude Code
 MUXCODE_EDIT_CLI=opencode             # edit uses OpenCode + DeepSeek V4 Pro
 MUXCODE_BUILD_CLI=opencode            # build uses OpenCode
 MUXCODE_TEST_CLI=opencode             # test uses OpenCode
-MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI (read-only — no git/network)
-MUXCODE_COMMIT_CLI=claude             # commit needs git/network — use Claude Code
+MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI (default sandbox: no network, no writes outside the repo)
+MUXCODE_COMMIT_CLI=claude             # commit writes .git/ and pushes — Codex grants neither, use Claude Code
 ```
 
 ### OpenCode edit agent
