@@ -1066,30 +1066,63 @@ back — the **scrape road** itself is unchanged.
 `read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
 beside the workspace, and network access is controlled separately and restricted by default.
 `BuildExecArgs` (`bus/provider_codex.go`) passes `-s workspace-write` plus one `--add-dir` per root
-**only for the `build` and `test` roles** — `codexWritableRoots` returns, for build, `~/.local/bin`,
-`~/.config/muxcode`, `~/.claude/commands` and the Go toolchain caches; for test, the **Go caches alone**
-(`GOCACHE`, `GOMODCACHE`) and none of build's install roots, because a test-only stdlib import no build
-had cached could not compile into a read-only cache — on 2026-10-06 `go vet` failed "package
-archive/tar is not in std" (user decision; `TestCodexBuildExecArgs_TestGetsGoCachesOnly`; whether `run`
-should get the same grant is left open under MUX-160 Decision 1). Every root is resolved to a physical
-path because Codex refuses a writable root containing a symlink component — and nothing is granted to
-any other role. So every other Codex agent inherits the default policy: writes inside the workspace succeed, writes outside are refused
-with `Operation not permitted`, which is why `./build.sh` used to die at `make install` on a Codex
-build agent. Two consequences follow. A role whose work ends in a write outside the repo (commit's
-`.git` and remote pushes) needs the same treatment as build, not a different provider. And network
-stays off for every role **except `watch` and `build`**: `codexNeedsNetwork` (`bus/provider_codex.go`)
-adds `-c sandbox_workspace_write.network_access=true` for the two roles whose work needs it — and like
-the writable roots, a role is listed only once its failure has been observed. `watch`'s work *is*
-network traffic (`gh pr checks` and log tails): a `110-pr-merge` run failed at `ci-watch` on 2026-10-07
-with "error connecting to api.github.com" (`TestCodexBuildExecArgs_WatchGetsNetworkOnly`; merged in
-PR 154 as `a1ee602`). `build` fetches its dependencies: on 2026-10-13 `./build.sh` failed in two
-projects (is-advising-gateway, is-lms-gateway) because pip could not resolve `pypi.org` and npx could
-not resolve `registry.npmjs.org` — `[Errno 8] nodename nor servname provided`, which reads as a
-network blip rather than the sandbox (`TestCodexBuildExecArgs_BuildGetsNetwork`). `network_access` is
-one switch, not a per-host allowlist: a role either reaches everything or nothing. No other role gets
-it, so a Codex `test` agent still cannot bind the loopback socket `httptest.NewServer` needs and
-structurally cannot run this repo's suite
-([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). An earlier
+for **every** role. `codexWritableRoots` starts every role with `muxcodeStateRoots` — the lifecycle
+log dir (`LifecycleLogDir`, `~/.config/muxcode/logs`) and global memory dir (`GlobalMemoryDir`,
+`~/.config/muxcode/memory`) that an agent's own `muxcode` calls write. Before 2026-10-13 only build
+could write them, so every other Codex role's lifecycle rows were dropped silently and
+`memory write --global` failed; per-role memory lives in the repo's `.muxcode/memory` and needs no
+grant (`TestCodexBuildExecArgs_EveryRoleGetsMuxcodeState`; a non-absolute path — no resolvable home —
+is dropped rather than granted relative to the repo, `TestCodexMuxcodeStateRoots_DropsRelativePaths`).
+Build adds the Makefile's install roots (`PREFIX`/`BINDIR`/`CONFIGDIR`, by default `~/.local/bin` and
+`~/.config/muxcode`, plus `~/.claude/commands`) and the Go toolchain caches; test adds the **Go caches
+alone** (`GOCACHE`, `GOMODCACHE`) and none of the install roots, because a test-only stdlib import no
+build had cached could not compile into a read-only cache — on 2026-10-06 `go vet` failed "package
+archive/tar is not in std" (user decision; `TestCodexBuildExecArgs_TestGetsGoCachesOnly`; whether
+`run` should get the same grant is left open under MUX-160 Decision 1). Every root is resolved to a
+physical path because Codex refuses a writable root containing a symlink component. Review and
+analyze keep `-a on-request`; the explicit `workspace-write` changes nothing for them, since it was
+already the default policy: writes inside the workspace succeed, writes outside are refused with
+`Operation not permitted` — which is why `./build.sh` used to die at `make install` on a Codex build
+agent. Build and test also get their package-manager caches pointed into `/tmp/muxcode-cache-<uid>/`
+(`codexPackageCacheEnv`, via `-c shell_environment_policy.set.*`: `npm_config_cache`, `PIP_CACHE_DIR`,
+`UV_CACHE_DIR`, `POETRY_CACHE_DIR`, `YARN_CACHE_FOLDER`; `TestCodexBuildExecArgs_PackageCachesInTmp`).
+The default caches sit under the home directory, where the sandbox refuses them, so pip ran uncached
+and npm/npx failed outright whenever they had to download; the user chose relocating into `/tmp`,
+which the sandbox already allows, over granting the shared home caches (2026-10-13). The directory is
+shared across sessions for hit rate and cleared by macOS at reboot; the disk-pressure sweep does not
+clear it (MUX-160's family). The pnpm store is deliberately **not** relocated — a store path that
+differs from the one `node_modules` was linked from makes `pnpm install` refuse with
+`ERR_PNPM_UNEXPECTED_STORE` — so a pnpm install that needs new packages can still fail on a Codex
+agent. **research** alone gets `--search`, Codex's model-side live web search (`codexNeedsWebSearch`;
+`TestCodexBuildExecArgs_ResearchGetsWebSearch`): web research is its job, no Codex session on record
+had the tool, and because it runs as a model tool it grants the role's shell no network. Two
+consequences follow. A role whose work ends in a write outside the repo needs that root named, not a
+different provider — except where Codex refuses the write outright (the list below). And network
+stays off for every role **except `watch`, `build` and `test`**: `codexNeedsNetwork`
+(`bus/provider_codex.go`) adds `-c sandbox_workspace_write.network_access=true` for the three roles
+whose work needs it — and like the writable roots, a role is listed only once its failure has been
+observed. `watch`'s work *is* network traffic (`gh pr checks` and log tails): a `110-pr-merge` run
+failed at `ci-watch` on 2026-10-07 with "error connecting to api.github.com"
+(`TestCodexBuildExecArgs_WatchGetsNetworkOnly`; merged in PR 154 as `a1ee602`). `build` and `test`
+fetch their dependencies: on 2026-10-13 `./build.sh` failed in two projects (is-advising-gateway,
+is-lms-gateway) because pip could not resolve `pypi.org` and npx could not resolve
+`registry.npmjs.org` — `[Errno 8] nodename nor servname provided`, which reads as a network blip
+rather than the sandbox (build granted in PR 167) — and the same day is-advising-gateway's `./test.sh`
+failed identically, stopping a `50-spec-to-pr` run at its test node
+(`TestCodexBuildExecArgs_BuildAndTestGetNetwork`; `TestCodexBuildExecArgs_OtherRolesUnwidened` is the
+negative control). `network_access` is one switch, not a per-host allowlist: a role either reaches
+everything or nothing. No other role gets it. Whether the grant also lets a `test` agent bind the
+loopback listener `httptest.NewServer` needs is unverified and deliberately moot: this repo's suite is
+socket-free by rule (`newPipeServer`, never `httptest.NewServer`), the option
+[MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) chose so that no
+sandbox policy decides whether the suite runs. **Still refused to every role, deliberately** (sandbox
+probe 2026-10-13, codex-cli 0.162.1): `.git` writes — Codex protects `.git` even inside the workspace,
+so commit cannot run on Codex; the tmux socket — an agent that could reach it could type into any
+pane; `ps` ([MUX-161](requirements/backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md)
+fixes daemon discovery without it); the ssh-agent and Docker sockets; and the `~/.aws` caches. So
+commit, deploy, run and serve stay on Claude. `TestCodexBuildExecArgs_OtherRolesUnwidened` is the
+negative control for the whole grant table: review, analyze, run and commit get the state roots and
+nothing else — no network, no cache environment, no `--search`. An earlier
 version of this guidance claimed Codex "sandboxes all filesystem writes" and was fit only for
 read-only roles; that conflated one policy with the CLI and was corrected 2026-09-08.
 
