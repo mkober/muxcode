@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -226,46 +227,127 @@ func TestCodexBuildExecArgs_TestGetsGoCachesOnly(t *testing.T) {
 
 // Watch's work is network traffic (gh pr checks, log tails); on 2026-10-07 a
 // merge run's ci-watch died on "error connecting to api.github.com". It gets
-// network and nothing else — no writable roots.
+// network and, like every role, muxcode's state — no other writable roots.
 func TestCodexBuildExecArgs_WatchGetsNetworkOnly(t *testing.T) {
 	p := &CodexProvider{}
-	args := strings.Join(p.argsFor(t, "watch"), " ")
+	home := codexTestHome(t)
+	args := p.argsFor(t, "watch")
+	joined := strings.Join(args, " ")
 	for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true"} {
-		if !strings.Contains(args, want) {
-			t.Errorf("watch missing %q: %s", want, args)
+		if !strings.Contains(joined, want) {
+			t.Errorf("watch missing %q: %s", want, joined)
 		}
 	}
-	if strings.Contains(args, "--add-dir") {
-		t.Errorf("watch must not be granted writable roots: %s", args)
-	}
+	assertOnlyStateRoots(t, "watch", args, home)
 }
 
-// Build fetches its dependencies; on 2026-10-13 pip could not resolve pypi.org
-// and npx could not resolve registry.npmjs.org in two projects. It keeps its
-// install roots alongside the network grant.
-func TestCodexBuildExecArgs_BuildGetsNetwork(t *testing.T) {
+// Build and test fetch dependencies; on 2026-10-13 pip could not resolve
+// pypi.org and npx could not resolve registry.npmjs.org from either role.
+func TestCodexBuildExecArgs_BuildAndTestGetNetwork(t *testing.T) {
 	p := &CodexProvider{}
-	args := strings.Join(p.argsFor(t, "build"), " ")
-	for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true", "--add-dir"} {
-		if !strings.Contains(args, want) {
-			t.Errorf("build missing %q: %s", want, args)
+	for _, role := range []string{"build", "test"} {
+		args := strings.Join(p.argsFor(t, role), " ")
+		for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true"} {
+			if !strings.Contains(args, want) {
+				t.Errorf("%s missing %q: %s", role, want, args)
+			}
 		}
 	}
 }
 
-// Negative control: the grant is per-role, not a blanket widening. Without
-// this, granting every role would pass the tests above.
+// Every role's own `muxcode` calls write the lifecycle log and global memory
+// outside the repo; the sandbox probe of 2026-10-13 found both refused to
+// every role but build, so a Codex agent's lifecycle rows were dropped.
+func TestCodexBuildExecArgs_EveryRoleGetsMuxcodeState(t *testing.T) {
+	p := &CodexProvider{}
+	home := codexTestHome(t)
+	for _, role := range []string{"build", "test", "review", "analyze", "watch", "research", "run", "commit"} {
+		args := strings.Join(p.argsFor(t, role), " ")
+		if !strings.Contains(args, "-s workspace-write") {
+			t.Errorf("%s must select the workspace-write policy: %s", role, args)
+		}
+		for _, dir := range codexStateDirs(home) {
+			if want := "--add-dir " + mustResolve(t, dir); !strings.Contains(args, want) {
+				t.Errorf("%s missing %q: %s", role, want, args)
+			}
+		}
+	}
+}
+
+// With no resolvable home the state paths come out relative; granting them
+// would create .config/muxcode inside the repo. Negative control for the test
+// above: the grant follows a real home, it is not unconditional.
+func TestCodexMuxcodeStateRoots_DropsRelativePaths(t *testing.T) {
+	t.Setenv("HOME", "")
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
+	if got := muxcodeStateRoots(); len(got) != 0 {
+		t.Errorf("relative state paths must be dropped, got %v", got)
+	}
+}
+
+// Package caches outside the repo are refused by the sandbox (pip ran
+// uncached, npm/npx fail when they must download), so build and test point
+// them into /tmp, which the sandbox allows. The pnpm store is never moved: a
+// store that differs from the one node_modules was linked from makes
+// `pnpm install` refuse.
+func TestCodexBuildExecArgs_PackageCachesInTmp(t *testing.T) {
+	p := &CodexProvider{}
+	codexTestHome(t)
+	root := fmt.Sprintf("/tmp/muxcode-cache-%d", os.Getuid())
+	for _, role := range []string{"build", "test"} {
+		args := strings.Join(p.argsFor(t, role), " ")
+		for _, want := range []string{
+			`-c shell_environment_policy.set.npm_config_cache="` + root + `/npm"`,
+			`-c shell_environment_policy.set.PIP_CACHE_DIR="` + root + `/pip"`,
+			`-c shell_environment_policy.set.UV_CACHE_DIR="` + root + `/uv"`,
+		} {
+			if !strings.Contains(args, want) {
+				t.Errorf("%s missing %q: %s", role, want, args)
+			}
+		}
+		if strings.Contains(strings.ToLower(args), "store_dir") {
+			t.Errorf("%s must not relocate the pnpm store: %s", role, args)
+		}
+	}
+	for _, role := range []string{"review", "watch", "research"} {
+		if args := strings.Join(p.argsFor(t, role), " "); strings.Contains(args, "shell_environment_policy") {
+			t.Errorf("%s installs nothing and must not get cache env: %s", role, args)
+		}
+	}
+}
+
+// Research's job is web research, and no Codex session on record had the web
+// search tool (2026-10-13). --search is a model-side tool, so research still
+// gets no shell network.
+func TestCodexBuildExecArgs_ResearchGetsWebSearch(t *testing.T) {
+	p := &CodexProvider{}
+	args := strings.Join(p.argsFor(t, "research"), " ")
+	if !strings.Contains(args, "--search") {
+		t.Errorf("research missing --search: %s", args)
+	}
+	if strings.Contains(args, "network_access") {
+		t.Errorf("research must not get shell network: %s", args)
+	}
+	for _, role := range []string{"build", "test", "review", "watch"} {
+		if args := strings.Join(p.argsFor(t, role), " "); strings.Contains(args, "--search") {
+			t.Errorf("%s must not get web search: %s", role, args)
+		}
+	}
+}
+
+// Negative control: every role-specific grant is per role, not a blanket
+// widening. Without this, granting every role would pass the tests above.
 func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 	p := &CodexProvider{}
-	for _, role := range []string{"review", "analyze"} {
-		args := strings.Join(p.argsFor(t, role), " ")
-		if strings.Contains(args, "--add-dir") || strings.Contains(args, "workspace-write") {
-			t.Errorf("role %q must not be widened: %s", role, args)
-		}
-	}
-	for _, role := range []string{"review", "analyze", "test", "run", "commit"} {
-		if args := strings.Join(p.argsFor(t, role), " "); strings.Contains(args, "network_access") {
-			t.Errorf("role %q must not get network access: %s", role, args)
+	home := codexTestHome(t)
+	for _, role := range []string{"review", "analyze", "run", "commit"} {
+		args := p.argsFor(t, role)
+		assertOnlyStateRoots(t, role, args, home)
+		joined := strings.Join(args, " ")
+		for _, banned := range []string{"network_access", "shell_environment_policy", "--search"} {
+			if strings.Contains(joined, banned) {
+				t.Errorf("role %q must not get %q: %s", role, banned, joined)
+			}
 		}
 	}
 }
@@ -277,6 +359,48 @@ func (p *CodexProvider) argsFor(t *testing.T, role string) []string {
 	t.Setenv(RoleModelEnvVar(role), "")
 	_, args := p.BuildExecArgs(&LaunchConfig{Role: role, CLI: "codex"})
 	return args
+}
+
+// codexTestHome points HOME at a temp dir with the lifecycle-log override
+// cleared, so the state roots resolve under it and no real home is touched.
+func codexTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
+	return home
+}
+
+func codexStateDirs(home string) []string {
+	return []string{
+		filepath.Join(home, ".config", "muxcode", "logs"),
+		filepath.Join(home, ".config", "muxcode", "memory"),
+	}
+}
+
+// assertOnlyStateRoots fails unless the --add-dir grants are exactly muxcode's
+// state directories under home.
+func assertOnlyStateRoots(t *testing.T, role string, args []string, home string) {
+	t.Helper()
+	want := map[string]bool{}
+	for _, dir := range codexStateDirs(home) {
+		want[mustResolve(t, dir)] = true
+	}
+	var got []string
+	for i, arg := range args {
+		if arg == "--add-dir" && i+1 < len(args) {
+			got = append(got, args[i+1])
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("%s: --add-dir grants = %v, want exactly %d state roots", role, got, len(want))
+		return
+	}
+	for _, dir := range got {
+		if !want[dir] {
+			t.Errorf("%s: unexpected writable root %q (want only state roots)", role, dir)
+		}
+	}
 }
 
 func TestCodexBuildExecArgs_WithModel(t *testing.T) {

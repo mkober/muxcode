@@ -234,12 +234,16 @@ Provider comparison:
 
 | Role | Grant | Why |
 |------|-------|-----|
-| `build` | Install roots + Go caches as writable (`codexWritableRoots`), **network on** | `make install` writes outside the repo; `./build.sh` fetches dependencies — pip and npx could not resolve `pypi.org`/`registry.npmjs.org` on 2026-10-13 |
-| `test` | Go caches only as writable | A test-only import no build cached must compile into them |
-| `watch` | **Network on** | Its work is `gh pr checks` and log tails — `ci-watch` died on "error connecting to api.github.com" on 2026-10-07 |
-| every other role | Default policy | — |
+| every role | `-s workspace-write` + `--add-dir` for muxcode's own state: `~/.config/muxcode/logs` and `~/.config/muxcode/memory` (`muxcodeStateRoots`) | The agent's own `muxcode` calls write them; before 2026-10-13 only build could, so other roles' lifecycle rows were dropped silently and `memory write --global` failed |
+| `build` | + install roots (`PREFIX`/`BINDIR`/`CONFIGDIR`, `~/.claude/commands`) and Go caches; **network on**; package caches in `/tmp/muxcode-cache-<uid>/` | `make install` writes outside the repo; `./build.sh` fetches dependencies — pip and npx could not resolve `pypi.org`/`registry.npmjs.org` on 2026-10-13 |
+| `test` | + Go caches only; **network on**; package caches in `/tmp/muxcode-cache-<uid>/` | A test-only import no build cached must compile into them; `./test.sh` fetches dependencies — pip could not resolve `pypi.org` on 2026-10-13, stopping a `50-spec-to-pr` run at its test node |
+| `watch` | + **network on** | Its work is `gh pr checks` and log tails — `ci-watch` died on "error connecting to api.github.com" on 2026-10-07 |
+| `research` | + `--search` (Codex's model-side live web search; no shell network) | Web research is its job; no Codex session on record had the tool |
+| `review`, `analyze` | state roots only, with `-a on-request` | Read-only roles ask before escalating; `workspace-write` was already their default policy |
 
-Network is granted by `codexNeedsNetwork` as `-c sandbox_workspace_write.network_access=true` — **one switch, no per-host allowlist**: a role reaches everything or nothing. Two limits remain: the **commit** and **deploy** roles need writes to `.git/` and remote pushes that no role is granted, so use Claude Code or OpenCode for them; and a Codex **test** agent still cannot bind a loopback socket, so it cannot run a socket-binding suite ([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). Details in [Agents](agents.md) and [Architecture](architecture.md#codex-cli-agent-flow).
+Network is granted by `codexNeedsNetwork` as `-c sandbox_workspace_write.network_access=true` — **one switch, no per-host allowlist**: a role reaches everything or nothing. The package caches are set by `codexPackageCacheEnv` via `-c shell_environment_policy.set.*` (`npm_config_cache`, `PIP_CACHE_DIR`, `UV_CACHE_DIR`, `POETRY_CACHE_DIR`, `YARN_CACHE_FOLDER`): the user chose `/tmp`, which the sandbox already allows, over granting the shared home caches. The pnpm store is deliberately **not** relocated (`ERR_PNPM_UNEXPECTED_STORE`), so a pnpm install that needs new packages can still fail on a Codex agent; the `/tmp` caches are shared across sessions, cleared by macOS at reboot, and not cleared by the disk-pressure sweep (MUX-160's family).
+
+**Still refused to every role, deliberately** (sandbox probe 2026-10-13, codex-cli 0.162.1): `.git` writes — Codex protects `.git` even inside the workspace, so commit cannot run on Codex; the tmux socket (an agent could type into any pane); `ps` ([MUX-161](requirements/backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md)); the ssh-agent and Docker sockets; and the `~/.aws` caches. So **commit, deploy, run and serve stay on Claude** (or OpenCode). Whether test's grant also permits a loopback listener is unverified and moot — this repo's suite is socket-free by rule ([MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)). Tests: `TestCodexBuildExecArgs_EveryRoleGetsMuxcodeState`, `_PackageCachesInTmp`, `_ResearchGetsWebSearch`, `_BuildAndTestGetNetwork`, `_WatchGetsNetworkOnly`, with `_OtherRolesUnwidened` as the negative control. Details in [Agents](agents.md) and [Architecture](architecture.md#codex-cli-agent-flow).
 
 Example — mixed session via config file:
 
@@ -249,8 +253,8 @@ MUXCODE_AGENT_CLI=claude              # default: Claude Code
 MUXCODE_EDIT_CLI=opencode             # edit uses OpenCode + DeepSeek V4 Pro
 MUXCODE_BUILD_CLI=opencode            # build uses OpenCode
 MUXCODE_TEST_CLI=opencode             # test uses OpenCode
-MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI (default sandbox: no network, no writes outside the repo)
-MUXCODE_COMMIT_CLI=claude             # commit writes .git/ and pushes — Codex grants neither, use Claude Code
+MUXCODE_ANALYZE_CLI=codex             # analyze uses Codex CLI (no network; writes only in the repo and muxcode's state dirs)
+MUXCODE_COMMIT_CLI=claude             # commit writes .git/ and pushes — Codex protects .git, use Claude Code
 ```
 
 ### OpenCode edit agent

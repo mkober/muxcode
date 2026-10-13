@@ -57,10 +57,15 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // tmux compatibility (inline mode preserves scrollback).
 // Read-only roles (review, analyze) use -a on-request so Codex asks before
 // escalating beyond its sandbox. This is an approval policy, NOT a sandbox or
-// an allowlist: those roles get no -s flag, so in-sandbox builds and tests
-// still run unprompted. What forbids them executing is their role
-// instructions; on-request only surfaces the attempts that reach outside, and
-// checkCodexApprovals answers those, since nobody is at the pane.
+// an allowlist: those roles get the same workspace-write policy as every other
+// role, so in-sandbox builds and tests still run unprompted. What forbids them
+// executing is their role instructions; on-request only surfaces the attempts
+// that reach outside, and checkCodexApprovals answers those, since nobody is
+// at the pane.
+//
+// Every role gets workspace-write because every role writes muxcode's own state
+// outside the repo (codexWritableRoots); a role whose work needs more gets it
+// per role — writable roots, network, package caches in /tmp, web search.
 // Does NOT use -C (--cd) — that flag changes the agent's working root,
 // which would prevent it from seeing the actual project files. Instead,
 // WriteAgentConfig writes role-specific AGENTS.md to .codex/AGENTS.md
@@ -77,8 +82,6 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 		args = append(args, "-a", "never")
 	}
 
-	// Roles whose work ends outside the workspace or off the machine need it
-	// granted explicitly; the default policy refuses both.
 	roots, network := codexWritableRoots(cfg.Role), codexNeedsNetwork(cfg.Role)
 	if len(roots) > 0 || network {
 		args = append(args, "-s", "workspace-write")
@@ -88,6 +91,12 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	}
 	if network {
 		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
+	}
+	for _, kv := range codexPackageCacheEnv(cfg.Role) {
+		args = append(args, "-c", fmt.Sprintf("shell_environment_policy.set.%s=%q", kv[0], kv[1]))
+	}
+	if codexNeedsWebSearch(cfg.Role) {
+		args = append(args, "--search")
 	}
 
 	// Hook trust: only a hooks.json that still hashes to what muxcode wrote
@@ -112,37 +121,97 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 // agent inherited the default: writes inside the workspace succeed, writes
 // outside are refused. A build agent therefore compiled cleanly and then died
 // in `make install` with "Operation not permitted" on ~/.local/bin — read as
-// "Codex cannot build" until the flags were checked (2026-09-08).
-//
-// The paths track the Makefile's own PREFIX/BINDIR/CONFIGDIR variables, so a
-// non-default install prefix stays writable instead of silently regressing to
-// the failure this fixes.
+// "Codex cannot build" until the flags were checked (2026-09-08); build gets
+// buildInstallRoots and the Go caches.
 //
 // test gets the Go caches alone, none of build's install roots: a compile it
 // cannot write to GOCACHE never lands, so on 2026-10-06 its `go vet` failed
 // "package archive/tar is not in std" on the first stdlib package no build had
-// cached (MUX-160 Decision 1, test only by the user's choice). Add a role here
-// when its work is shown to write outside the workspace — never widen the
-// policy itself.
+// cached (MUX-160 Decision 1, test only by the user's choice).
+//
+// Every role also gets muxcodeStateRoots, the state its own `muxcode` calls
+// write. Add a role-specific root when its work is shown to write outside the
+// workspace — never widen the policy itself.
 func codexWritableRoots(role string) []string {
-	if role == "test" {
-		return resolveWritableRoots(goToolchainRoots())
+	roots := muxcodeStateRoots()
+	switch role {
+	case "build":
+		roots = append(roots, buildInstallRoots()...)
+		roots = append(roots, goToolchainRoots()...)
+	case "test":
+		roots = append(roots, goToolchainRoots()...)
 	}
-	if role != "build" {
-		return nil
-	}
+	return resolveWritableRoots(roots)
+}
+
+// buildInstallRoots returns the install targets of `make install`, tracking
+// the Makefile's own PREFIX/BINDIR/CONFIGDIR so a non-default prefix stays
+// writable instead of silently regressing to "Operation not permitted".
+// `make install` also drops slash-command files in ~/.claude/commands
+// (Makefile:92).
+func buildInstallRoots() []string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return nil
 	}
 	prefix := stringEnvOrDefault("PREFIX", filepath.Join(home, ".local"))
-	roots := []string{
+	return []string{
 		stringEnvOrDefault("BINDIR", filepath.Join(prefix, "bin")),
 		stringEnvOrDefault("CONFIGDIR", filepath.Join(home, ".config", "muxcode")),
-		// `make install` also drops slash-command files here (Makefile:92).
 		filepath.Join(home, ".claude", "commands"),
 	}
-	return resolveWritableRoots(append(roots, goToolchainRoots()...))
+}
+
+// muxcodeStateRoots returns the muxcode state outside the repo that an agent's
+// own `muxcode` calls write, whatever its role: the lifecycle log
+// (LifecycleLogDir) and global memory (GlobalMemoryDir). Without them a Codex
+// agent's lifecycle rows are dropped silently and `memory write --global`
+// fails; per-role memory lives in the repo's .muxcode/memory and needs no grant.
+// A path that is not absolute (no resolvable home) is dropped rather than
+// granted relative to the repo.
+func muxcodeStateRoots() []string {
+	var roots []string
+	for _, dir := range []string{LifecycleLogDir(), GlobalMemoryDir()} {
+		if filepath.IsAbs(dir) {
+			roots = append(roots, dir)
+		}
+	}
+	return roots
+}
+
+// codexPackageCacheEnv returns the environment that points package-manager
+// caches into a per-user /tmp directory, as name/value pairs, for the roles
+// that install dependencies (build, test). Nil for every other role.
+//
+// The default caches (~/.npm, ~/Library/Caches/pip, ~/.cache/uv, …) sit outside
+// the workspace, so the sandbox refuses them: pip silently runs uncached and
+// npm/npx fail outright when they must download. Relocating the caches into
+// /tmp, which the sandbox already allows, avoids granting the shared home
+// caches (user decision, 2026-10-13). The directory is shared across sessions
+// for hit rate and cleared at reboot; the disk-pressure sweep does not clear
+// it (MUX-160's family). The pnpm store is deliberately left alone: a store
+// path that differs from the one node_modules was linked from makes
+// `pnpm install` refuse with ERR_PNPM_UNEXPECTED_STORE.
+func codexPackageCacheEnv(role string) [][2]string {
+	if role != "build" && role != "test" {
+		return nil
+	}
+	root := fmt.Sprintf("/tmp/muxcode-cache-%d", os.Getuid())
+	return [][2]string{
+		{"npm_config_cache", filepath.Join(root, "npm")},
+		{"PIP_CACHE_DIR", filepath.Join(root, "pip")},
+		{"UV_CACHE_DIR", filepath.Join(root, "uv")},
+		{"POETRY_CACHE_DIR", filepath.Join(root, "pypoetry")},
+		{"YARN_CACHE_FOLDER", filepath.Join(root, "yarn")},
+	}
+}
+
+// codexNeedsWebSearch reports whether a role gets Codex's live web search
+// (--search). Research alone: web research is its job, and no Codex session
+// on record had the tool (2026-10-13). The search runs as a model-side tool,
+// so it grants the role's shell no network.
+func codexNeedsWebSearch(role string) bool {
+	return role == "research"
 }
 
 // codexNeedsNetwork reports whether a role's work needs the network, granted
@@ -153,14 +222,20 @@ func codexWritableRoots(role string) []string {
 // 2026-10-07 a 110-pr-merge run failed at ci-watch with "error connecting to
 // api.github.com" on a PR whose CI was fine.
 //
-// Build: a build fetches its dependencies — on 2026-10-13 `./build.sh` failed
+// Build and test: both fetch dependencies — on 2026-10-13 `./build.sh` failed
 // in two projects (is-advising-gateway, is-lms-gateway) because pip could not
 // resolve pypi.org and npx could not resolve registry.npmjs.org, which read as
-// a network blip rather than the sandbox.
+// a network blip rather than the sandbox; the same day is-advising-gateway's
+// `./test.sh` failed identically and stopped a 50-spec-to-pr run at its test
+// node.
 //
 // Like the writable roots, a role is listed only once its failure is observed.
 func codexNeedsNetwork(role string) bool {
-	return role == "watch" || role == "build"
+	switch role {
+	case "watch", "build", "test":
+		return true
+	}
+	return false
 }
 
 // resolveWritableRoots maps each root to its physical path, dropping any that
