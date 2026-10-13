@@ -492,7 +492,7 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **plan**: `Read`, `Glob`, `Grep`, `Write`, `Edit`, read-only git (`git diff`, `git log`, `git status`, `git rev-parse`), `tree`, `python3`, `jq` (scoped to docs directories), `muxcode atlassian` reads, and `gh issue create/edit/delete/close/reopen/comment/view/list/status` — mirroring `planGitHubIssueVerbs` in `bus/hook.go`; no other `gh` command
 - **edit**: `Read`, `Glob`, `Grep`, `tree`, `python3`, `jq` (read-only — deliberately **no** `Write` or `Edit` tools, enforcing delegation via the bus)
 - **build**: `./build.sh`, `make`, `go build`, `pnpm build`, `cargo build`
-- **test**: `./test.sh`, `go test`, `jest`, `pytest`, `cargo test`
+- **test**: `./test.sh`, `./scripts/test-and-notify.sh`, `make test`, `pnpm test`/`pnpm run test`, `npm test`/`npm run test`, `yarn test`/`yarn run test`, `go test`, `go vet`, `jest`/`npx jest`, `npx vitest`, `pytest`/`python -m pytest`, `cargo test` — every command `test-runner.md`'s detection order can choose (a request-named command, else `test-and-notify.sh`, `./test.sh`, `make test`, `package.json`'s `test` script via the lockfile's package manager, `pytest`, `go test`, `cargo test`; nothing applicable ends `EXIT=1`)
 - **serve**: `curl`, `wget`, `lsof`, `kill`, `nohup`, `node`, `pnpm`, `npx`, `python`, `flask`, `go run`, `docker`, `make`, repo scripts (`run.sh`, `run-dev.sh`, `dev.sh`), temp file I/O
 - **review**: `git diff`, `git log`, `git status`, `git show` (read-only git), `Write`
 - **commit**: `git *`, `gh *` (all git and GitHub CLI subcommands), `Write`, `Edit`
