@@ -50,6 +50,7 @@
         "Bash(jest*)", "Bash(npx jest*)", "Bash(npx vitest*)",
         "Bash(pnpm test*)", "Bash(pnpm run test*)",
         "Bash(npm test*)", "Bash(npm run test*)",
+        "Bash(yarn test*)", "Bash(yarn run test*)", "Bash(make test*)",
         "Bash(pytest*)", "Bash(python -m pytest*)", "Bash(cargo test*)",
         "Bash(go tool cover*)", "Bash(go mod *)",
         "Bash(npx c8*)", "Bash(nyc *)", "Bash(coverage*)",

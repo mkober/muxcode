@@ -314,9 +314,13 @@ var DefaultBuildPatterns = []string{
 //
 // `make test` is listed because a test agent chooses its own command: on
 // 2026-10-05 a Codex test agent ran `make test` green, no verdict was recorded,
-// and the graph's test node held for a human approval it never needed.
+// and the graph's test node held for a human approval it never needed. The
+// npm and yarn forms are spelled out for the same reason — agents/test-runner.md
+// names them — and not globbed: `npm*test` would also classify
+// `npm install @testing-library/react` as a suite run.
 var DefaultTestPatterns = []string{
 	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "cargo*test", "vitest", "make test",
+	"npm test", "npm run test", "yarn test", "yarn run test",
 }
 
 // DefaultTestPrecheckPatterns name the test-stage gates whose success is not

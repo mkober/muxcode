@@ -32,7 +32,7 @@
 # MUXCODE_BUILD_PATTERNS="./build.sh|pnpm*build|go*build|make|cargo*build|cdk*synth|tsc"
 
 # Test command patterns for hook detection (pipe-separated)
-# MUXCODE_TEST_PATTERNS="./test.sh|jest|pnpm*test|pytest|go*test|cargo*test|vitest"
+# MUXCODE_TEST_PATTERNS="./test.sh|jest|pnpm*test|pytest|go*test|cargo*test|vitest|make test|npm test|npm run test|yarn test|yarn run test"
 
 # Test prechecks: a failure fails the test stage, a pass is not the suite's verdict
 # MUXCODE_TEST_PRECHECK_PATTERNS="go*vet"

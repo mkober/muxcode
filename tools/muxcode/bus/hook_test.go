@@ -377,6 +377,11 @@ func TestClassifyCommand(t *testing.T) {
 		{"pnpm exec eslint test.config.js", CmdUnknown},
 		{"pnpm exec eslint build.config.js", CmdUnknown},
 		{"pnpm install", CmdUnknown},
+		{"npm test", CmdTest}, // named by agents/test-runner.md's fallback order
+		{"npm run test -- --ci", CmdTest},
+		{"yarn test", CmdTest},
+		{"yarn run test", CmdTest},
+		{"npm install @testing-library/react", CmdUnknown}, // fails if npm is globbed like pnpm*test
 		{"go vet ./...", CmdTestPrecheck},
 		{"cdk diff", CmdDeploy},
 		{"cdk synth --all", CmdBuild}, // cdk*synth matches build first; shell script sets both flags
