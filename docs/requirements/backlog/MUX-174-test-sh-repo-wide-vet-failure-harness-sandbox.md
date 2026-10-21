@@ -194,8 +194,9 @@ into a legible one, and directly addresses the MUX-152 shape.
 
 ### Phase 4: Docs
 
-- [ ] `CLAUDE.md` build/test table: note that `./test.sh` covers both modules and how a truncated run
-      now presents
+- [x] `CLAUDE.md` build/test table: note that `./test.sh` covers both modules and how a truncated run
+      now presents — row rewritten (`CLAUDE.md:47`): both modules named, the `=== Summary ===` contract
+      and exit semantics described
 
 ### Phase 5: Integration test
 
@@ -215,7 +216,7 @@ be verified, and which is recorded in that spec.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 13m | 2026-10-21 13:44 |
+| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 15m | 2026-10-21 13:48 |
 
 ## Status
 
