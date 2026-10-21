@@ -63,21 +63,24 @@ func ReadLaunchSandbox(session, role string) string {
 // SandboxFingerprinter returns a function reporting each role's sandbox
 // fingerprint as computed by the muxcode binary on PATH — the binary the next
 // launch runs, which can be newer than the caller's own code: an install made
-// inside a Codex build sandbox cannot restart the daemons (MUX-161). Only a
-// successful answer is cached, until the binary or a role's provider changes,
-// so the subprocess runs once per install. A failure is retried once retry has
-// passed and returned only when a probe actually ran, so a caller logging it
-// logs once per attempt rather than once per check.
-func SandboxFingerprinter(retry time.Duration) func(session string, roles []string) (map[string]string, error) {
+// inside a Codex build sandbox cannot restart the daemons (MUX-161). A new
+// binary or a change to a role's provider asks again at once; otherwise an
+// answer, failed or successful, stands until refresh has passed. A successful
+// one expires too because the sandbox follows inputs the binary key misses — a
+// writable root's symlink target, the Go caches, the config file — and a stale
+// answer has the watchdog reloading agents that launched on the current
+// sandbox. A failure is returned only when a probe actually ran, so a caller
+// logging it logs once per attempt rather than once per check.
+func SandboxFingerprinter(refresh time.Duration) func(session string, roles []string) (map[string]string, error) {
 	var key, failedKey string
 	var cached map[string]string
-	var failedAt time.Time
+	var cachedAt, failedAt time.Time
 	return func(session string, roles []string) (map[string]string, error) {
 		bin, k, err := installedBinaryKey(roles)
-		if err == nil && k == key {
+		if err == nil && k == key && time.Since(cachedAt) < refresh {
 			return cached, nil
 		}
-		if k == failedKey && time.Since(failedAt) < retry {
+		if k == failedKey && time.Since(failedAt) < refresh {
 			return nil, nil
 		}
 		var fps map[string]string
@@ -88,7 +91,7 @@ func SandboxFingerprinter(retry time.Duration) func(session string, roles []stri
 			failedKey, failedAt = k, time.Now()
 			return nil, err
 		}
-		key, cached = k, fps
+		key, cached, cachedAt = k, fps, time.Now()
 		return cached, nil
 	}
 }

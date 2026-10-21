@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -186,6 +187,120 @@ func TestCheckAgentDefs_UnavailableProbeKeepsReloadBudget(t *testing.T) {
 	probe(answered, nil)
 	tickAgentDefs(d)
 	expectReloads(t, reloads)
+}
+
+// Before any probe answers, review's changed definition is reloaded toward an
+// unknown sandbox. The answer arriving names no new install, so the budget
+// survives it: no reload within the cooldown, none past the cap. A definition
+// changed again is a new install, reloaded at once.
+func TestCheckAgentDefs_LearnedSandboxKeepsReloadBudget(t *testing.T) {
+	safe := true
+	d, reloads := sandboxWatch(t, nil, &safe)
+	changeReviewDefinition(t, d)
+
+	tickAgentDefs(d)
+	expectReloads(t, reloads, "review")
+	d.sandboxPrints = func(string, []string) (map[string]string, error) {
+		return map[string]string{"review": "installed-now"}, nil
+	}
+	tickAgentDefs(d)
+	expectReloads(t, reloads)
+
+	d.reloadCooldownSecs = 0
+	for i := 1; i < autoReloadCap; i++ {
+		tickAgentDefs(d)
+		expectReloads(t, reloads, "review")
+	}
+	tickAgentDefs(d)
+	expectReloads(t, reloads)
+
+	def := filepath.Join(".claude", "agents", bus.AgentFileName("review")+".md")
+	if err := os.WriteFile(def, []byte("installed again"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tickAgentDefs(d)
+	expectReloads(t, reloads, "review")
+}
+
+// hungInstalledMuxcode puts a muxcode on PATH that records each run in calls,
+// then hangs until release exists (10 s at most, so no run outlives the test)
+// and reports build's sandbox as "installed-now".
+func hungInstalledMuxcode(t *testing.T) (calls, release string) {
+	t.Helper()
+	dir := t.TempDir()
+	calls, release = filepath.Join(dir, "calls"), filepath.Join(dir, "release")
+	script := "#!/bin/sh\necho >> '" + calls + "'\ni=0\n" +
+		"while [ ! -f '" + release + "' ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n" +
+		"printf 'build\\tinstalled-now\\n'\n"
+	if err := os.WriteFile(filepath.Join(dir, "muxcode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	return calls, release
+}
+
+func probeRuns(calls string) int {
+	data, _ := os.ReadFile(calls)
+	return strings.Count(string(data), "\n")
+}
+
+// The daemon's own probe spawns the installed binary under a 30 s timeout —
+// the keepalive age at which `muxcode watch --monitor` relaunches a daemon — so
+// the check must never wait on it. While the binary hangs, checks return at
+// once and start no second run; its answer reaches a later check, which
+// reloads build.
+func TestCheckAgentDefs_HungInstalledBinaryNeverBlocksTheCheck(t *testing.T) {
+	safe := true
+	d, reloads := sandboxWatch(t, nil, &safe)
+	calls, release := hungInstalledMuxcode(t)
+	d.sandboxPrints = New(d.session, 5, 8).sandboxPrints
+	releaseBinary := func() {
+		if err := os.WriteFile(release, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	checked := make(chan struct{})
+	go func() {
+		for i := 0; i < 3; i++ {
+			tickAgentDefs(d)
+		}
+		close(checked)
+	}()
+	select {
+	case <-checked:
+	case <-time.After(2 * time.Second):
+		releaseBinary()
+		t.Fatal("the agent-defs check waited on the installed binary")
+	}
+	expectReloads(t, reloads)
+	for deadline := time.Now().Add(2 * time.Second); probeRuns(calls) == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			releaseBinary()
+			t.Fatal("the installed binary was never probed")
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := probeRuns(calls); n != 1 {
+		releaseBinary()
+		t.Fatalf("installed binary probed %d times while one probe hung, want 1", n)
+	}
+
+	releaseBinary()
+	deadline := time.After(5 * time.Second)
+	for {
+		tickAgentDefs(d)
+		select {
+		case r := <-reloads:
+			if r != "build" {
+				t.Fatalf("unexpected reload of %s", r)
+			}
+			return
+		case <-deadline:
+			t.Fatal("the installed binary's answer never reached the check")
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func TestCheckAgentDefs_CurrentSandboxNotReloaded(t *testing.T) {

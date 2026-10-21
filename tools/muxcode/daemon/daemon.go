@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -161,7 +162,7 @@ type Daemon struct {
 	denyApproval      func(target string) error
 	reloadAgent       func(session, role string) error
 	reloadSafe        func(session, role string) (bool, string)
-	sandboxPrints     func(session string, roles []string) (map[string]string, error)
+	sandboxPrints     sandboxProbe
 	snapshotAgentDown func(session, role string) (string, error)
 	restartAgent      func(session, role string) error
 	paneResumeID      func(session, role string) (string, bool)
@@ -287,7 +288,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 			return bus.ReloadAgent(session, role, "", "", false)
 		},
 		reloadSafe:        bus.AutoReloadSafe,
-		sandboxPrints:     bus.SandboxFingerprinter(time.Duration(autoReloadCooldownSecs) * time.Second),
+		sandboxPrints:     backgroundProbe(bus.SandboxFingerprinter(time.Duration(autoReloadCooldownSecs) * time.Second)),
 		snapshotAgentDown: bus.SnapshotAgentDown,
 		restartAgent:      bus.RestartLocalAgent,
 		paneResumeID:      bus.PaneResumeID,
@@ -1438,7 +1439,8 @@ const agentDefsCheckSecs int64 = 10
 //   - a Codex agent's sandbox flags (bus/launch_sandbox.go) against what the
 //     installed binary would launch now; a missing stamp counts as stale, since
 //     the launch predates stamping, and a probe that gives no answer leaves the
-//     last one standing (installedSandbox)
+//     last one standing (installedSandbox); the probe runs off the poll loop
+//     (backgroundProbe), so its answer reaches a later check
 //
 // Every reload toward one installed state — definition hash and sandbox
 // fingerprint together — draws on one budget, cooled down and capped
@@ -1466,12 +1468,12 @@ func (d *Daemon) checkAgentDefs() {
 
 	for _, role := range roles {
 		onDisk, defChanged := d.definitionChanged(role)
-		want := d.installedSandbox(role, sandboxWant)
+		want, known := d.installedSandbox(role, sandboxWant)
 		sandboxStale := want != "" && bus.ReadLaunchSandbox(d.session, role) != want
 		if !defChanged && !sandboxStale {
 			continue
 		}
-		target := onDisk + "|" + want
+		target := reloadTarget{definition: onDisk, sandbox: want, sandboxKnown: known}
 		if !d.reloadDue(role, target, now) || !d.agentAlive(d.session, role) {
 			continue
 		}
@@ -1500,19 +1502,55 @@ func (d *Daemon) checkAgentDefs() {
 	}
 }
 
-// installedSandbox returns the sandbox fingerprint role would launch with now:
-// probed's answer for role — "" when the installed binary gives it no sandbox —
-// else the last answer any probe gave. A probe that failed, is backing off or
-// left role out says nothing about the install. Read as "no sandbox", it moved
-// role's reload target, and recovery moved it back, each switch resetting the
-// budget, so a reload that never lands repeated every cooldown past the cap.
-// Until a probe first answers for role, its sandbox is not judged.
-func (d *Daemon) installedSandbox(role string, probed map[string]string) string {
+// installedSandbox returns the sandbox fingerprint role would launch with now,
+// and whether any probe has answered for role yet: probed's answer for role —
+// "" when the installed binary gives it no sandbox — else the last answer any
+// probe gave. A probe that failed, is backing off or left role out says nothing
+// about the install. Read as "no sandbox", it moved role's reload target, and
+// recovery moved it back, each switch resetting the budget, so a reload that
+// never lands repeated every cooldown past the cap. Until a probe first answers
+// for role, its sandbox is not judged.
+func (d *Daemon) installedSandbox(role string, probed map[string]string) (string, bool) {
 	if fp, ok := probed[role]; ok {
 		d.sandboxKnown[role] = fp
-		return fp
+		return fp, true
 	}
-	return d.sandboxKnown[role]
+	fp, ok := d.sandboxKnown[role]
+	return fp, ok
+}
+
+// sandboxProbe reports each role's installed sandbox fingerprint, nil when it
+// has no answer (bus.SandboxFingerprinter).
+type sandboxProbe func(session string, roles []string) (map[string]string, error)
+
+// backgroundProbe keeps probe off the poll loop: each call returns the answer
+// of the last probe to finish since the previous call — nil when none has — and
+// starts the next unless one is still running, so probe is never run twice at
+// once. The probe spawns the installed binary under a 30 s timeout, the
+// keepalive age at which `muxcode watch --monitor` relaunches a daemon; run
+// inline, a slow one stalled inbox delivery and graph dispatch and risked a
+// spurious restart.
+func backgroundProbe(probe sandboxProbe) sandboxProbe {
+	var mu sync.Mutex
+	var running bool
+	var lastFPs map[string]string
+	var lastErr error
+	return func(session string, roles []string) (map[string]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		fps, err := lastFPs, lastErr
+		lastFPs, lastErr = nil, nil
+		if !running {
+			running = true
+			go func() {
+				f, e := probe(session, roles)
+				mu.Lock()
+				lastFPs, lastErr, running = f, e, false
+				mu.Unlock()
+			}()
+		}
+		return fps, err
+	}
 }
 
 // autoReloadRoles returns the roles checkAgentDefs may reload: own-window
@@ -1540,10 +1578,24 @@ const (
 	autoReloadCooldownSecs int64 = 300
 )
 
-// autoReload counts the reloads issued to move a role onto one installed state
-// (target: definition hash and sandbox fingerprint).
+// reloadTarget is the installed state a reload moves a role onto.
+type reloadTarget struct {
+	definition   string // on-disk definition hash
+	sandbox      string // installed Codex sandbox fingerprint, "" for none
+	sandboxKnown bool   // a probe has answered for the role
+}
+
+// continuedBy reports whether a budget spent toward t still counts toward next:
+// the same state, or next only learns the sandbox t was aimed at before any
+// probe answered. Learning it is not an install, and the probe answers a check
+// late, so every daemon start would otherwise grant a role a second budget.
+func (t reloadTarget) continuedBy(next reloadTarget) bool {
+	return t == next || (!t.sandboxKnown && t.definition == next.definition)
+}
+
+// autoReload counts the reloads issued to move a role onto one installed state.
 type autoReload struct {
-	target   string
+	target   reloadTarget
 	attempts int
 	last     int64
 	gaveUp   bool
@@ -1551,12 +1603,14 @@ type autoReload struct {
 
 // reloadDue reports whether earlier reloads of role toward target leave room
 // for another: under the cap and past the cooldown. A new target starts a fresh
-// budget. Reaching the cap is logged once.
-func (d *Daemon) reloadDue(role, target string, now int64) bool {
+// budget; one continuing the budget's target (reloadTarget.continuedBy) keeps
+// it and replaces that target. Reaching the cap is logged once.
+func (d *Daemon) reloadDue(role string, target reloadTarget, now int64) bool {
 	r := d.autoReloads[role]
-	if r == nil || r.target != target {
+	if r == nil || !r.target.continuedBy(target) {
 		return true
 	}
+	r.target = target
 	if r.attempts >= autoReloadCap {
 		if !r.gaveUp {
 			r.gaveUp = true
@@ -1570,12 +1624,13 @@ func (d *Daemon) reloadDue(role, target string, now int64) bool {
 
 // recordReload counts a reload issued toward target. Called on the daemon's own
 // goroutine, never from the reload's.
-func (d *Daemon) recordReload(role, target string, now int64) {
+func (d *Daemon) recordReload(role string, target reloadTarget, now int64) {
 	r := d.autoReloads[role]
-	if r == nil || r.target != target {
-		r = &autoReload{target: target}
+	if r == nil || !r.target.continuedBy(target) {
+		r = &autoReload{}
 		d.autoReloads[role] = r
 	}
+	r.target = target
 	r.attempts++
 	r.last = now
 }

@@ -66,17 +66,25 @@ func TestStampLaunchSandbox_RoundTrip(t *testing.T) {
 }
 
 // fakeInstalledMuxcode puts a muxcode on PATH that fails until the returned
-// flag file exists, then reports build's fingerprint as "abc".
-func fakeInstalledMuxcode(t *testing.T) (flag string) {
+// file exists, then reports its contents as build's fingerprint. Rewriting the
+// file changes the answer without changing the binary.
+func fakeInstalledMuxcode(t *testing.T) (fpFile string) {
 	t.Helper()
 	dir := t.TempDir()
-	flag = filepath.Join(dir, "ok")
-	script := "#!/bin/sh\n[ -f '" + flag + "' ] || exit 1\nprintf 'build\\tabc\\n'\n"
+	fpFile = filepath.Join(dir, "fp")
+	script := "#!/bin/sh\n[ -f '" + fpFile + "' ] || exit 1\nprintf 'build\\t%s\\n' \"$(cat '" + fpFile + "')\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "muxcode"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":/bin:/usr/bin")
-	return flag
+	return fpFile
+}
+
+func writeFingerprint(t *testing.T, fpFile, fp string) {
+	t.Helper()
+	if err := os.WriteFile(fpFile, []byte(fp), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // A transient probe failure must not disable the check until the next install:
@@ -94,14 +102,42 @@ func TestSandboxFingerprinter_RetriesFailedProbe(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			session := sandboxTestEnv(t)
-			flag := fakeInstalledMuxcode(t)
+			fpFile := fakeInstalledMuxcode(t)
 			probe := SandboxFingerprinter(c.retry)
 			if _, err := probe(session, []string{"build"}); err == nil {
 				t.Fatal("a failing probe reported no error")
 			}
-			if err := os.WriteFile(flag, nil, 0o644); err != nil {
-				t.Fatal(err)
+			writeFingerprint(t, fpFile, "abc")
+			got, err := probe(session, []string{"build"})
+			if err != nil || got["build"] != c.wantFP {
+				t.Errorf("second probe = %v, %v; want build=%q", got, err, c.wantFP)
 			}
+		})
+	}
+}
+
+// The sandbox follows inputs the binary key misses — a writable root's symlink
+// target, the Go caches, the config file — so a successful answer from an
+// unchanged binary is asked again once refresh has passed, and not before.
+func TestSandboxFingerprinter_RefreshesSuccessfulProbe(t *testing.T) {
+	cases := []struct {
+		name    string
+		refresh time.Duration
+		wantFP  string
+	}{
+		{"refresh due", 0, "def"},
+		{"within refresh", time.Hour, "abc"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			session := sandboxTestEnv(t)
+			fpFile := fakeInstalledMuxcode(t)
+			writeFingerprint(t, fpFile, "abc")
+			probe := SandboxFingerprinter(c.refresh)
+			if got, err := probe(session, []string{"build"}); err != nil || got["build"] != "abc" {
+				t.Fatalf("first probe = %v, %v; want build=abc", got, err)
+			}
+			writeFingerprint(t, fpFile, "def")
 			got, err := probe(session, []string{"build"})
 			if err != nil || got["build"] != c.wantFP {
 				t.Errorf("second probe = %v, %v; want build=%q", got, err, c.wantFP)
