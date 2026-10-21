@@ -143,8 +143,10 @@ design, the harness's own tests, or widening any sandbox beyond what the diagnos
 - [x] If the cause is sandbox scope, the grant is the **minimum** that fixes it, and no role gains
       write access it did not need — pinned by `TestCodexBuildExecArgs_TestGetsGoCachesOnly` (install
       roots absent) and `TestCodexBuildExecArgs_OtherRolesUnwidened` (`bus/provider_codex_test.go`)
-- [ ] A test or check pins the module list, so a module dropping out of the run is a failure rather
-      than a shorter green report — with a negative control proving the check can fail
+- [x] A test or check pins the module list, so a module dropping out of the run is a failure rather
+      than a shorter green report — with a negative control proving the check can fail —
+      `scripts/test-test-sh-coverage.sh` sections 1 and 5 (`EXPECTED_MODULES` pin; `summary_lists_all`
+      rejects a doctored summary and a dropped-out module that `test.sh` alone exits 0 on)
 
 ### Technical approach
 
@@ -200,11 +202,36 @@ into a legible one, and directly addresses the MUX-152 shape.
 
 ### Phase 5: Integration test
 
-- [ ] `scripts/test-test-sh-coverage.sh`: assert every module appears in the run summary, and that a
+- [x] `scripts/test-test-sh-coverage.sh`: assert every module appears in the run summary, and that a
       forced failure in the first module still reports the second as never-executed rather than
-      silently passing
-- [ ] Include the negative control: the assertion must fail if the summary stops listing modules
-- [ ] Run through the run agent and record the row here
+      silently passing — sections 2–4
+- [x] Include the negative control: the assertion must fail if the summary stops listing modules — section 5
+- [x] Run through the run agent and record the row here — row below, 23/23 at floor 23
+
+| Run | Task | Result |
+|-----|------|--------|
+| 2026-10-21 14:18, `bash scripts/test-test-sh-coverage.sh` via the run agent | `1792606709-spawn-121e48a1-35ea9b52` | exit 0 — **23 passed, 0 failed (floor 23)** |
+
+What the script covers (`scripts/test-test-sh-coverage.sh`, hermetic — runs the real `./test.sh` in place
+with a stub `go` first on PATH, so nothing compiles and the suite stays the test node's job):
+
+- Section 1 — the pinned module list (`EXPECTED_MODULES="muxcode muxcode-llm-harness"`) equals the
+  `tools/*/go.mod` set, so a module added or dropped fails until the pin is updated (acceptance
+  criterion 5's "pins the module list")
+- Section 2 — all passing: exit 0, every pinned module `passed` and listed, the totals line last,
+  `go vet` and `go test` invoked once per module
+- Sections 3–4 — a forced `go vet` / `go test` failure in the first module: exit 1,
+  `failed (go vet|go test)`, the second module `never executed` and not `passed`, only the first
+  module's steps invoked
+- Section 5 — negative control: the summary assertion rejects a doctored summary missing a module, and
+  a run where a module dropped out of discovery (no `go.mod`) — which `test.sh` alone still exits 0 on,
+  the shorter green report the pin exists to catch
+
+Module order is taken from the order `test.sh` actually used, not assumed: glob collation is
+locale-dependent (`muxcode-llm-harness` sorts before `muxcode` under C collation, since `-` < `/`).
+
+Earlier Phase 3 verification of `test.sh` itself (throwaway `/tmp` script, not kept): run-agent task
+`1792604464-spawn-121e48a1-eb56f14b`, 24/24 under macOS `/bin/bash` 3.2.57.
 
 ## Notes
 
@@ -216,8 +243,8 @@ be verified, and which is recorded in that spec.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 15m | 2026-10-21 13:48 |
+| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 19m | 2026-10-21 14:21 |
 
 ## Status
 
-In Progress
+Complete
