@@ -78,6 +78,38 @@ versus a build cache poisoned *on the test agent specifically*; both are per-age
 above does not separate them. Clearing that agent's cache and re-running is the cheap next
 discriminator, and Phase 1's third item is where the answer goes.
 
+### Discriminating outcome (recorded 2026-10-21)
+
+**Resolved by inference: sandbox scope.** No controlled experiment separates it from a poisoned cache: the
+`test` agent's cache was never cleared and re-run, and since the 2026-10-06 grant changed that agent's
+sandbox, the discriminator can no longer be run under the original conditions. The inference rests on the
+grant-and-pass result below — widening the `test` role's write scope to the Go caches was followed by a
+full-suite pass, which sandbox scope explains without needing a poisoned entry. A poisoned entry is made
+unnecessary, not disproved: the September agents' environments were not captured, and every agent writes
+the shared per-user `GOCACHE`, so runs between 10:14 and 10:57 could have populated or repaired an entry.
+The `role != "build"` snippet quoted above is the code as it stood on 2026-09-10; `codexWritableRoots` has
+since gained a `case "test":` (see the second row).
+
+| Question | Evidence | Outcome |
+|----------|----------|---------|
+| Does the failure follow the sandbox's write scope? | 2026-10-06: the Codex `test` role failed `go vet` with `package archive/tar is not in std` — a *different* stdlib package, same error, the first no build had cached ([MUX-160](MUX-160-tmp-go-cache-leak-unclearable-pressure.md) Decision 1; recorded in [MUX-202](../completed/MUX-202-self-upgrade-from-the-quick-menu.md) Phase 2). A refused write path would fail on any package not yet cached, which matches the recurrence | **Consistent** — same role, same error, new package |
+| Does granting the Go caches fix it? | `codexWritableRoots` now returns `goToolchainRoots()` for `test` (`case "test":`, `bus/provider_codex.go:147`, landed 2026-10-06 as a MUX-202 Phase 2 side fix). That run's test node then returned **success on the full repository suite** (MUX-202 Phase 2 verification, 2026-10-06 16:40, run `1791315389`) | **Yes** |
+| Is the grant live on the running agent? | 2026-10-21: `test` is still `codex gpt-5.6-luna`; its `launchsandbox-test.hash` stamp `417232ec…` equals `muxcode agent sandbox-fingerprint test` from the installed binary (the #170 drift watchdog); live argv carries `-s workspace-write --add-dir ~/Library/Caches/go-build --add-dir ~/go/pkg/mod` plus `network_access=true` | **Yes** |
+
+Toolchain note: `GOROOT` is now `/opt/homebrew/Cellar/go/1.27.2/libexec` (the original failure
+quoted 1.26.2); the cause is independent of the version, since the `run` agent passed on the same
+toolchain the `test` agent failed on.
+
+**Fix chosen.** The minimum change this spec's Technical approach proposed — the Go caches for
+`test`, none of build's install roots — is already in the tree (MUX-160 Decision 1, test only by the
+user's choice; whether `run` gets it stays open there). It is pinned by
+`TestCodexBuildExecArgs_TestGetsGoCachesOnly` (`bus/provider_codex_test.go:202`), which asserts the
+two cache roots present *and* the install roots (`BINDIR`, `CONFIGDIR`) absent. Phase 2 therefore
+reduces to: confirm `./test.sh` on the `test` role's own provider (this graph run's test node is that
+run — acceptance criterion 2), and check the pin's negative control. The role-vs-capability question
+("runs Go tooling") was decided by MUX-160 Decision 1 as role-keyed; no further widening is justified
+by this diagnosis.
+
 ### Why it matters more than one module
 
 `set -e` means the harness failure hides **every module after it**. That is the shape MUX-152 already
@@ -103,11 +135,13 @@ design, the harness's own tests, or widening any sandbox beyond what the diagnos
 
 - [x] The cause is **established by experiment**, not inferred — the non-codex-role vet run above is
       recorded here with its outcome before any fix lands
-- [ ] `./test.sh` runs every module to completion on the `test` role's own provider
+- [x] `./test.sh` runs every module to completion on the `test` role's own provider — codex `test`
+      agent, 2026-10-21 12:54, exit 0 (spec-to-pr run `1792601405` test node, 65s)
 - [ ] A failure in one module no longer silently hides the modules after it — the script reports
       which modules ran, which passed and which never executed
-- [ ] If the cause is sandbox scope, the grant is the **minimum** that fixes it, and no role gains
-      write access it did not need
+- [x] If the cause is sandbox scope, the grant is the **minimum** that fixes it, and no role gains
+      write access it did not need — pinned by `TestCodexBuildExecArgs_TestGetsGoCachesOnly` (install
+      roots absent) and `TestCodexBuildExecArgs_OtherRolesUnwidened` (`bus/provider_codex_test.go`)
 - [ ] A test or check pins the module list, so a module dropping out of the run is a failure rather
       than a shorter green report — with a negative control proving the check can fail
 
@@ -139,12 +173,16 @@ into a legible one, and directly addresses the MUX-152 shape.
 
 - [x] Run `go vet ./...` on `tools/muxcode-llm-harness` from a non-codex role and record the result
 - [x] Run the same from the codex `test` role and record the result
-- [ ] Record the discriminating outcome here, and only then choose the fix
+- [x] Record the discriminating outcome here, and only then choose the fix — see [Discriminating outcome](#discriminating-outcome-recorded-2026-10-21)
 
 ### Phase 2: Fix the cause
 
-- [ ] Apply the minimum change the diagnosis supports
-- [ ] Add the test that pins it, with a negative control
+- [x] Apply the minimum change the diagnosis supports — already in the tree: `case "test":` Go-cache
+      grant, `bus/provider_codex.go:147` (MUX-160 Decision 1, 2026-10-06); confirmed by the 2026-10-21
+      `./test.sh` pass above
+- [x] Add the test that pins it, with a negative control — `TestCodexBuildExecArgs_TestGetsGoCachesOnly`
+      (`provider_codex_test.go:202`, asserts `BINDIR`/`CONFIGDIR` absent) and
+      `TestCodexBuildExecArgs_OtherRolesUnwidened` (`:340`)
 
 ### Phase 3: Make `test.sh` report truncation
 
@@ -170,6 +208,12 @@ into a legible one, and directly addresses the MUX-152 shape.
 reason no full-suite row exists for this session — a fact that also affected how MUX-163's items could
 be verified, and which is recorded in that spec.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 6m | 2026-10-21 12:59 |
+
 ## Status
 
-Backlog
+In Progress
