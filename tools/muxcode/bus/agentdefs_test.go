@@ -1,7 +1,9 @@
 package bus
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +66,71 @@ func TestStampAgentDefHash_NoDefIsNoop(t *testing.T) {
 	StampAgentDefHash(session, role)
 	if got := ReadAgentDefHash(session, role); got != "" {
 		t.Fatalf("StampAgentDefHash for unknown role wrote %q, want no stamp", got)
+	}
+}
+
+const codexIdlePane = "• Build succeeded. EXIT=0\n\n› Ask Codex to do anything\n"
+
+// fakeReloadPane answers capture-pane with content and err at the tmux boundary.
+func fakeReloadPane(t *testing.T, content string, err error) {
+	t.Helper()
+	orig := tmuxOutputRunner
+	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "capture-pane" {
+			return content, err
+		}
+		return orig(args...)
+	}
+	t.Cleanup(func() { tmuxOutputRunner = orig })
+}
+
+// Codex's IsIdle is constantly false, so gating on it deferred every Codex
+// reload forever: an idle pane must read safe. Everything else must not — a
+// failed capture says nothing, and an approval prompt parks a live turn with no
+// working indicator.
+func TestAutoReloadSafe_CodexPaneStates(t *testing.T) {
+	cases := []struct {
+		name, pane, reason string
+		err                error
+	}{
+		{name: "idle", pane: codexIdlePane},
+		{name: "working", pane: "• Working (12s • esc to interrupt)\n", reason: "agent working"},
+		{name: "approval prompt", pane: codexApprovalPromptPane, reason: "prompt awaiting input"},
+		{name: "capture failed", err: errors.New("no such pane"), reason: "pane unreadable"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			session := sandboxTestEnv(t)
+			t.Setenv("MUXCODE_BUILD_CLI", "codex")
+			fakeReloadPane(t, c.pane, c.err)
+			ok, reason := AutoReloadSafe(session, "build")
+			if ok != (c.reason == "") || !strings.Contains(reason, c.reason) {
+				t.Errorf("AutoReloadSafe = %v %q, want safe=%v reason %q", ok, reason, c.reason == "", c.reason)
+			}
+		})
+	}
+}
+
+func TestAutoReloadSafe_PendingWorkBlocks(t *testing.T) {
+	cases := map[string]func(session string) error{
+		"pending request": func(s string) error {
+			return Send(s, NewMessage("edit", "build", "request", "build", "go", ""))
+		},
+		"in-flight task": func(s string) error {
+			return CreateTask(s, NewMessage("edit", "build", "request", "build", "go", ""), 600)
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			session := sandboxTestEnv(t)
+			t.Setenv("MUXCODE_BUILD_CLI", "codex")
+			fakeReloadPane(t, codexIdlePane, nil)
+			if err := setup(session); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			if ok, _ := AutoReloadSafe(session, "build"); ok {
+				t.Errorf("%s did not block the reload", name)
+			}
+		})
 	}
 }

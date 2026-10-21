@@ -31,10 +31,27 @@ func Agent(args []string) {
 		agentConfig(subArgs)
 	case "definition":
 		agentDefinition(subArgs)
+	case "sandbox-fingerprint":
+		agentSandboxFingerprint(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status|definition> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status|definition|sandbox-fingerprint> [flags]\n")
 		os.Exit(1)
+	}
+}
+
+// agentSandboxFingerprint prints "<role>\t<fingerprint>" per role: the sandbox
+// this binary would launch each role with, empty for a role without one. The
+// daemon runs it on the installed binary (bus.SandboxFingerprinter), whose
+// code can be newer than its own; bus.ParseSandboxFingerprints reads it.
+func agentSandboxFingerprint(roles []string) {
+	if len(roles) == 0 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent sandbox-fingerprint <role>...\n")
+		os.Exit(1)
+	}
+	bus.LoadShellConfig("")
+	for _, role := range roles {
+		fmt.Printf("%s\t%s\n", role, bus.LaunchSandboxFingerprint(role))
 	}
 }
 

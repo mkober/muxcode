@@ -1196,6 +1196,31 @@ $ muxcode agent launch build --reason restart --resume <session-id>
 $ muxcode agent launch build --reason restart --resume
 ```
 
+### `muxcode agent sandbox-fingerprint`
+
+Print the sandbox each role would launch with **under this binary**: one `<role>\t<fingerprint>` line per role, the fingerprint a SHA-256 over the role's Codex sandbox flags (`codexSandboxArgs` — policy, `--add-dir` roots, network, cache environment, `--search`) and empty for a role whose provider fixes no sandbox at launch (anything but Codex).
+
+```bash
+muxcode agent sandbox-fingerprint <role>...
+```
+
+- `<role>...` — one or more roles; at least one is required
+- Reads the shell config (`LoadShellConfig`), so per-role provider overrides apply; set `BUS_SESSION` for the session's runtime overrides, as the daemon does
+
+**Who runs it.** The daemon's agent-defs watchdog ([Daemon watchdogs](architecture.md#daemon-watchdogs)), on the `muxcode` on PATH rather than in-process (`bus.SandboxFingerprinter`): that is the binary the next launch would run, and it can be newer than the daemon's own code, because an install made inside a Codex build sandbox cannot restart the daemons ([MUX-161](requirements/backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md)). The answer is cached per binary (path, size, mtime) and role→provider set, so the subprocess runs once per install; a failed probe is logged `sandbox-fingerprint-failed` once per attempt and retried after 300s, never cached. Each launch stamps its own fingerprint to `launchsandbox-<role>.hash` in the bus dir (`StampLaunchSandbox`, beside the definition stamp `agentdef-<role>.hash`), and a mismatch — or no stamp at all, from a launch by a binary that predates stamping — reloads the agent once `AutoReloadSafe` holds (`codex-sandbox-reload`). A running agent otherwise keeps the sandbox it launched with: on 2026-10-16 is-admissions-gateway's build agent still had no network three days after PR #167 granted it.
+
+**By hand**, to see whether a running agent is behind an install, compare the two:
+
+```bash
+$ muxcode agent sandbox-fingerprint build test review
+build	3f9c…e21a
+test	a7d0…44b9
+review	9c12…07de
+
+$ cat /tmp/muxcode-bus-<session>/launchsandbox-build.hash
+3f9c…e21a      # matches — the running build agent has the installed sandbox
+```
+
 ### `muxcode agent status`
 
 Show the autonomous agent's current status — story, phase, heartbeat, and session statistics.

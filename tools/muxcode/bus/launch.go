@@ -1101,10 +1101,9 @@ func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 			fmt.Sprintf("%s: %d stale in-flight task(s) cleared on launch", role, n))
 	}
 
-	// Stamp the definition hash this agent is launching with so the daemon's
-	// agent-defs watchdog can detect a later on-disk change and auto-reload.
-	// Done before exec (below) replaces this process.
+	// Before exec: the agent-defs watchdog compares these stamps with the installed state.
 	StampAgentDefHash(session, role)
+	StampLaunchSandbox(session, role)
 
 	// Activate Python venv if found
 	if cfg.VenvDir != "" {
