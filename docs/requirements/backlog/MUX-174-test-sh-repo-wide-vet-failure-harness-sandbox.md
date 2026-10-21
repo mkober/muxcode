@@ -137,8 +137,9 @@ design, the harness's own tests, or widening any sandbox beyond what the diagnos
       recorded here with its outcome before any fix lands
 - [x] `./test.sh` runs every module to completion on the `test` role's own provider — codex `test`
       agent, 2026-10-21 12:54, exit 0 (spec-to-pr run `1792601405` test node, 65s)
-- [ ] A failure in one module no longer silently hides the modules after it — the script reports
-      which modules ran, which passed and which never executed
+- [x] A failure in one module no longer silently hides the modules after it — the script reports
+      which modules ran, which passed and which never executed (Phase 3; failure paths exercised by the
+      worker's stub-`go` check through the run agent, 24/24, pending the Phase 5 script that pins them)
 - [x] If the cause is sandbox scope, the grant is the **minimum** that fixes it, and no role gains
       write access it did not need — pinned by `TestCodexBuildExecArgs_TestGetsGoCachesOnly` (install
       roots absent) and `TestCodexBuildExecArgs_OtherRolesUnwidened` (`bus/provider_codex_test.go`)
@@ -186,8 +187,10 @@ into a legible one, and directly addresses the MUX-152 shape.
 
 ### Phase 3: Make `test.sh` report truncation
 
-- [ ] Collect per-module outcomes; report ran/passed/never-executed at the end
-- [ ] Keep a non-zero exit on any module failure
+- [x] Collect per-module outcomes; report ran/passed/never-executed at the end — `test.sh` `=== Summary ===`
+      block: one line per module plus `modules= ran= passed= failed= never-executed=` totals
+- [x] Keep a non-zero exit on any module failure — exit 1 on any failure or an empty `tools/`, 0 only when
+      every module passed; codex `test` agent ran it 2026-10-21 13:43: exit 0, `modules=2 ran=2 passed=2`
 
 ### Phase 4: Docs
 
@@ -212,7 +215,7 @@ be verified, and which is recorded in that spec.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 6m | 2026-10-21 12:59 |
+| MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox | 13m | 2026-10-21 13:44 |
 
 ## Status
 
