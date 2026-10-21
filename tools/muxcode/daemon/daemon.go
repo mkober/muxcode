@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -123,6 +124,9 @@ type Daemon struct {
 	definitionGaveUp     map[string]bool  // role → alerted once after hitting the reload cap
 
 	lastAgentDefsCheck int64
+	autoReloads        map[string]*autoReload // role → agent-defs reloads issued toward the installed state
+	reloadCooldownSecs int64                  // cooldown between those reloads
+	sandboxKnown       map[string]string      // role → last sandbox fingerprint the installed binary reported
 	lastPaneSupervise  int64
 	paneRecycleDone    bool  // recycle-on-install decided (once per daemon start)
 	startedAt          int64 // daemon start time — recycle only panes that predate it
@@ -157,6 +161,8 @@ type Daemon struct {
 	capturePane       func(target string, lines int) (string, error)
 	denyApproval      func(target string) error
 	reloadAgent       func(session, role string) error
+	reloadSafe        func(session, role string) (bool, string)
+	sandboxPrints     sandboxProbe
 	snapshotAgentDown func(session, role string) (string, error)
 	restartAgent      func(session, role string) error
 	paneResumeID      func(session, role string) (string, bool)
@@ -245,6 +251,9 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		lastDefinitionReload:  make(map[string]int64),
 		definitionGaveUp:      make(map[string]bool),
 		lastAgentDefsCheck:    now, // skip first interval — lets stamps settle on startup
+		autoReloads:           make(map[string]*autoReload),
+		reloadCooldownSecs:    autoReloadCooldownSecs,
+		sandboxKnown:          make(map[string]string),
 		lastPaneSupervise:     now, // skip first interval — the launcher owns launch-time pane creation; a sweep mid-launch sees half-built windows as pane-less and double-creates
 		startedAt:             now,
 		pollGapSince:          make(map[string]int64),
@@ -278,6 +287,8 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		reloadAgent: func(session, role string) error {
 			return bus.ReloadAgent(session, role, "", "", false)
 		},
+		reloadSafe:        bus.AutoReloadSafe,
+		sandboxPrints:     backgroundProbe(bus.SandboxFingerprinter(time.Duration(autoReloadCooldownSecs) * time.Second)),
 		snapshotAgentDown: bus.SnapshotAgentDown,
 		restartAgent:      bus.RestartLocalAgent,
 		paneResumeID:      bus.PaneResumeID,
@@ -1417,20 +1428,27 @@ func (d *Daemon) checkCodexApprovals() {
 // agentDefsCheckSecs is the polling interval for the agent-definition watchdog.
 const agentDefsCheckSecs int64 = 10
 
-// checkAgentDefs auto-reloads a running agent when its resolved definition file
-// changes on disk, so editing/reinstalling an agent definition takes effect
-// without a manual `muxcode reload`.
+// checkAgentDefs auto-reloads a running agent whose launch-time state no longer
+// matches what is installed, so reinstalling muxcode reaches agents without a
+// manual `muxcode reload`. Two kinds of state are compared, each stamped by
+// RunAgentLaunch to a per-session file that survives the daemon restart
+// `./build.sh` triggers:
 //
-// The definition the running agent launched with is stamped to a per-session
-// marker file by RunAgentLaunch (bus/agentdefs.go). This compares that stamp to
-// the current on-disk hash; a mismatch means the definition changed since the
-// agent launched. Using an on-disk stamp (not in-memory state) is what makes
-// this survive the daemon restart that `./build.sh` triggers via
-// `upgrade-daemons` right after reinstalling the defs.
+//   - the definition file (bus/agentdefs.go) against its current on-disk hash;
+//     a missing stamp is seeded as the baseline, not treated as a change
+//   - a Codex agent's sandbox flags (bus/launch_sandbox.go) against what the
+//     installed binary would launch now; a missing stamp counts as stale, since
+//     the launch predates stamping, and a probe that gives no answer leaves the
+//     last one standing (installedSandbox); the probe runs off the poll loop
+//     (backgroundProbe), so its answer reaches a later check
 //
-// Reloads are deferred while an agent is busy, so a running build/test is never
-// interrupted — the reload fires on the next cycle once the agent is idle. The
-// orchestrator (edit) and autonomous (auto) agents are never auto-reloaded.
+// Every reload toward one installed state — definition hash and sandbox
+// fingerprint together — draws on one budget, cooled down and capped
+// (reloadDue), whichever change triggered it: a reload that cannot land the new
+// stamps never loops. A reload also waits until bus.AutoReloadSafe passes, so a
+// running build or test is never interrupted. The orchestrator (edit) and
+// autonomous (auto) agents are never auto-reloaded — they drive everything
+// else. A dead agent picks up the new state when checkAgentHealth restarts it.
 // Opt out with MUXCODE_AGENTDEFS_WATCH_DISABLE=1.
 func (d *Daemon) checkAgentDefs() {
 	if os.Getenv("MUXCODE_AGENTDEFS_WATCH_DISABLE") == "1" {
@@ -1442,61 +1460,195 @@ func (d *Daemon) checkAgentDefs() {
 	}
 	d.lastAgentDefsCheck = now
 
-	for _, role := range bus.ReloadableRoles() {
-		// Never auto-reload the orchestrator or autonomous agent out from under
-		// active work — they drive everything else.
-		if role == "edit" || role == "auto" {
+	roles := d.autoReloadRoles()
+	sandboxWant, err := d.sandboxPrints(d.session, roles)
+	if err != nil {
+		bus.LogLifecycle(d.session, "warn", "daemon", "sandbox-fingerprint-failed", err.Error())
+	}
+
+	for _, role := range roles {
+		onDisk, defChanged := d.definitionChanged(role)
+		want, known := d.installedSandbox(role, sandboxWant)
+		sandboxStale := want != "" && bus.ReadLaunchSandbox(d.session, role) != want
+		if !defChanged && !sandboxStale {
 			continue
 		}
-		// Own pane only; skip panes mid-reload or running the local harness.
-		if bus.WindowForRole(role) != role {
+		target := reloadTarget{definition: onDisk, sandbox: want, sandboxKnown: known}
+		if !d.reloadDue(role, target, now) || !d.agentAlive(d.session, role) {
+			continue
+		}
+		if ok, _ := d.reloadSafe(d.session, role); !ok {
+			continue
+		}
+		d.recordReload(role, target, now)
+
+		event, reason := "agent-defs-reload", "definition changed on disk"
+		if sandboxStale {
+			if defChanged {
+				reason += "; Codex sandbox differs from the installed muxcode"
+			} else {
+				event, reason = "codex-sandbox-reload", "Codex sandbox differs from the installed muxcode"
+			}
+		}
+		fmt.Printf("  %s  Agent-defs watchdog: %s %s — auto-reloading\n", time.Now().Format("15:04:05"), role, reason)
+		bus.LogLifecycle(d.session, "info", "daemon", event, fmt.Sprintf("%s %s — auto-reload", role, reason))
+
+		// Blocks for seconds; the reload marker it sets keeps later cycles off this role.
+		go func(r string) {
+			if err := d.reloadAgent(d.session, r); err != nil {
+				fmt.Fprintf(os.Stderr, "  [watchdog] agent-defs auto-reload of %s failed: %v\n", r, err)
+			}
+		}(role)
+	}
+}
+
+// installedSandbox returns the sandbox fingerprint role would launch with now,
+// and whether any probe has answered for role yet: probed's answer for role —
+// "" when the installed binary gives it no sandbox — else the last answer any
+// probe gave. A probe that failed, is backing off or left role out says nothing
+// about the install. Read as "no sandbox", it moved role's reload target, and
+// recovery moved it back, each switch resetting the budget, so a reload that
+// never lands repeated every cooldown past the cap. Until a probe first answers
+// for role, its sandbox is not judged.
+func (d *Daemon) installedSandbox(role string, probed map[string]string) (string, bool) {
+	if fp, ok := probed[role]; ok {
+		d.sandboxKnown[role] = fp
+		return fp, true
+	}
+	fp, ok := d.sandboxKnown[role]
+	return fp, ok
+}
+
+// sandboxProbe reports each role's installed sandbox fingerprint, nil when it
+// has no answer (bus.SandboxFingerprinter).
+type sandboxProbe func(session string, roles []string) (map[string]string, error)
+
+// backgroundProbe keeps probe off the poll loop: each call returns the answer
+// of the last probe to finish since the previous call — nil when none has — and
+// starts the next unless one is still running, so probe is never run twice at
+// once. The probe spawns the installed binary under a 30 s timeout, the
+// keepalive age at which `muxcode watch --monitor` relaunches a daemon; run
+// inline, a slow one stalled inbox delivery and graph dispatch and risked a
+// spurious restart.
+func backgroundProbe(probe sandboxProbe) sandboxProbe {
+	var mu sync.Mutex
+	var running bool
+	var lastFPs map[string]string
+	var lastErr error
+	return func(session string, roles []string) (map[string]string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		fps, err := lastFPs, lastErr
+		lastFPs, lastErr = nil, nil
+		if !running {
+			running = true
+			go func() {
+				f, e := probe(session, roles)
+				mu.Lock()
+				lastFPs, lastErr, running = f, e, false
+				mu.Unlock()
+			}()
+		}
+		return fps, err
+	}
+}
+
+// autoReloadRoles returns the roles checkAgentDefs may reload: own-window
+// agents other than edit and auto, not mid-reload and not on the local harness.
+func (d *Daemon) autoReloadRoles() []string {
+	var roles []string
+	for _, role := range bus.ReloadableRoles() {
+		if role == "edit" || role == "auto" || bus.WindowForRole(role) != role {
 			continue
 		}
 		if bus.IsReloading(d.session, role) || bus.IsHarnessActive(d.session, role) {
 			continue
 		}
-
-		onDisk := bus.AgentDefHash(role)
-		if onDisk == "" {
-			continue
-		}
-		stamp := bus.ReadAgentDefHash(d.session, role)
-		if stamp == "" {
-			// No stamp yet (agent launched before this feature shipped, or the
-			// stamp was lost). Seed a baseline without reloading — only future
-			// changes trigger an auto-reload.
-			bus.StampAgentDefHash(d.session, role)
-			continue
-		}
-		if onDisk == stamp {
-			continue
-		}
-
-		// Definition changed since the agent launched. A dead agent will pick up
-		// the new definition when checkAgentHealth restarts it.
-		if !bus.IsAgentAlive(d.session, role) {
-			continue
-		}
-		// Defer while busy so we never interrupt in-flight work. Leave the stamp
-		// unchanged so we retry once the agent is idle.
-		if !bus.IsAgentIdle(d.session, role) {
-			continue
-		}
-
-		ts := time.Now().Format("15:04:05")
-		fmt.Printf("  %s  Agent-defs watchdog: %s definition changed — auto-reloading\n", ts, role)
-		bus.LogLifecycle(d.session, "info", "daemon", "agent-defs-reload",
-			fmt.Sprintf("%s definition changed on disk — auto-reload", role))
-
-		// Reload in a goroutine — GracefulStop + relaunch blocks several seconds.
-		// ReloadAgent sets the reload marker first, so subsequent poll cycles skip
-		// this role; the relaunch path re-stamps the new hash via RunAgentLaunch.
-		go func(r string) {
-			if err := bus.ReloadAgent(d.session, r, "", "", false); err != nil {
-				fmt.Fprintf(os.Stderr, "  [watchdog] agent-defs auto-reload of %s failed: %v\n", r, err)
-			}
-		}(role)
+		roles = append(roles, role)
 	}
+	return roles
+}
+
+// autoReloadCap and autoReloadCooldownSecs bound the watchdog's reloads toward
+// one installed state: a reload that does not land the new stamps — a failed
+// stop, or a launch whose environment fingerprints differently — is retried
+// after the cooldown and given up on at the cap, so it can never loop.
+const (
+	autoReloadCap                = 3
+	autoReloadCooldownSecs int64 = 300
+)
+
+// reloadTarget is the installed state a reload moves a role onto.
+type reloadTarget struct {
+	definition   string // on-disk definition hash
+	sandbox      string // installed Codex sandbox fingerprint, "" for none
+	sandboxKnown bool   // a probe has answered for the role
+}
+
+// continuedBy reports whether a budget spent toward t still counts toward next:
+// the same state, or next only learns the sandbox t was aimed at before any
+// probe answered. Learning it is not an install, and the probe answers a check
+// late, so every daemon start would otherwise grant a role a second budget.
+func (t reloadTarget) continuedBy(next reloadTarget) bool {
+	return t == next || (!t.sandboxKnown && t.definition == next.definition)
+}
+
+// autoReload counts the reloads issued to move a role onto one installed state.
+type autoReload struct {
+	target   reloadTarget
+	attempts int
+	last     int64
+	gaveUp   bool
+}
+
+// reloadDue reports whether earlier reloads of role toward target leave room
+// for another: under the cap and past the cooldown. A new target starts a fresh
+// budget; one continuing the budget's target (reloadTarget.continuedBy) keeps
+// it and replaces that target. Reaching the cap is logged once.
+func (d *Daemon) reloadDue(role string, target reloadTarget, now int64) bool {
+	r := d.autoReloads[role]
+	if r == nil || !r.target.continuedBy(target) {
+		return true
+	}
+	r.target = target
+	if r.attempts >= autoReloadCap {
+		if !r.gaveUp {
+			r.gaveUp = true
+			bus.LogLifecycle(d.session, "warn", "daemon", "agent-defs-reload-gave-up",
+				fmt.Sprintf("%s still differs from the installed definition or Codex sandbox after %d reloads — run `muxcode reload %s`", role, r.attempts, role))
+		}
+		return false
+	}
+	return now-r.last >= d.reloadCooldownSecs
+}
+
+// recordReload counts a reload issued toward target. Called on the daemon's own
+// goroutine, never from the reload's.
+func (d *Daemon) recordReload(role string, target reloadTarget, now int64) {
+	r := d.autoReloads[role]
+	if r == nil || !r.target.continuedBy(target) {
+		r = &autoReload{}
+		d.autoReloads[role] = r
+	}
+	r.target = target
+	r.attempts++
+	r.last = now
+}
+
+// definitionChanged returns role's on-disk definition hash and whether it
+// differs from the one its agent launched with. With no stamp yet it seeds one
+// and reports no change.
+func (d *Daemon) definitionChanged(role string) (string, bool) {
+	onDisk := bus.AgentDefHash(role)
+	if onDisk == "" {
+		return "", false
+	}
+	stamp := bus.ReadAgentDefHash(d.session, role)
+	if stamp == "" {
+		bus.StampAgentDefHash(d.session, role)
+		return onDisk, false
+	}
+	return onDisk, onDisk != stamp
 }
 
 // checkCompaction runs compaction checks every 120 seconds and sends recommendations

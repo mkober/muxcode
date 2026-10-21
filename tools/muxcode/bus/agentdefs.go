@@ -81,3 +81,46 @@ func ReadAgentDefHash(session, role string) string {
 	}
 	return string(data)
 }
+
+// AutoReloadSafe reports whether the daemon may restart role's agent without
+// cutting off work, with the reason when it may not: no reload under way, no
+// request waiting, no live task, and an idle pane. Idle is the provider's own
+// reading on Claude, whose ❯ prompt is reliable; elsewhere paneSafeToReload
+// reads the pane, because Codex's IsIdle is constantly false and gating on it
+// deferred every Codex reload forever.
+func AutoReloadSafe(session, role string) (bool, string) {
+	if IsReloading(session, role) {
+		return false, "reload in progress"
+	}
+	if HasActionableMessages(session, role) {
+		return false, "pending actionable inbox"
+	}
+	if hasLiveInFlightTask(session, role) {
+		return false, "in-flight task"
+	}
+	if IsClaudeTUI(ResolveProvider(role)) {
+		if !IsAgentIdle(session, role) {
+			return false, "agent not idle"
+		}
+		return true, ""
+	}
+	return paneSafeToReload(session, role)
+}
+
+// paneSafeToReload judges a pane with no reliable idle prompt. Unknown is
+// unsafe: a capture that fails says nothing, and a direct user task has no bus
+// request or task to protect it. A Codex prompt parks a turn mid-flight with no
+// working indicator, so a pane waiting at one is unsafe too.
+func paneSafeToReload(session, role string) (bool, string) {
+	out, err := TmuxCapturePaneLines(PaneTarget(session, role), 20)
+	if err != nil {
+		return false, "pane unreadable: " + err.Error()
+	}
+	if paneShowsAgentWorking(paneLiveTail(out), false) {
+		return false, "agent working"
+	}
+	if codexApprovalPromptLive(out) || codexTrustPromptLive(out) || codexUpdatePromptLive(out) {
+		return false, "prompt awaiting input"
+	}
+	return true, ""
+}

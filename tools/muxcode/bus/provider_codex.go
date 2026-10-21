@@ -71,33 +71,7 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // WriteAgentConfig writes role-specific AGENTS.md to .codex/AGENTS.md
 // at the repo root before each launch.
 func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
-	args := []string{
-		"--no-alt-screen",
-	}
-
-	// Read-only roles ask before escalating; everything else runs unprompted
-	if isReadOnlyCodexRole(cfg.Role) {
-		args = append(args, "-a", "on-request")
-	} else {
-		args = append(args, "-a", "never")
-	}
-
-	roots, network := codexWritableRoots(cfg.Role), codexNeedsNetwork(cfg.Role)
-	if len(roots) > 0 || network {
-		args = append(args, "-s", "workspace-write")
-		for _, dir := range roots {
-			args = append(args, "--add-dir", dir)
-		}
-	}
-	if network {
-		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
-	}
-	for _, kv := range codexPackageCacheEnv(cfg.Role) {
-		args = append(args, "-c", fmt.Sprintf("shell_environment_policy.set.%s=%q", kv[0], kv[1]))
-	}
-	if codexNeedsWebSearch(cfg.Role) {
-		args = append(args, "--search")
-	}
+	args := append([]string{"--no-alt-screen"}, codexSandboxArgs(cfg.Role)...)
 
 	// Hook trust: only a hooks.json that still hashes to what muxcode wrote
 	// runs without Codex's own review (codex_hooks.go).
@@ -112,6 +86,38 @@ func (p *CodexProvider) BuildExecArgs(cfg *LaunchConfig) (string, []string) {
 	}
 
 	return "codex", args
+}
+
+// codexSandboxArgs returns the approval and sandbox flags a Codex role launches
+// with — everything that decides what the agent's commands may touch. Codex
+// fixes them at launch, so LaunchSandboxFingerprint hashes exactly this slice
+// and the daemon's agent-defs watchdog reloads an agent whose launch predates a
+// change to it.
+func codexSandboxArgs(role string) []string {
+	var args []string
+	if isReadOnlyCodexRole(role) {
+		args = append(args, "-a", "on-request")
+	} else {
+		args = append(args, "-a", "never")
+	}
+
+	roots, network := codexWritableRoots(role), codexNeedsNetwork(role)
+	if len(roots) > 0 || network {
+		args = append(args, "-s", "workspace-write")
+		for _, dir := range roots {
+			args = append(args, "--add-dir", dir)
+		}
+	}
+	if network {
+		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
+	}
+	for _, kv := range codexPackageCacheEnv(role) {
+		args = append(args, "-c", fmt.Sprintf("shell_environment_policy.set.%s=%q", kv[0], kv[1]))
+	}
+	if codexNeedsWebSearch(role) {
+		args = append(args, "--search")
+	}
+	return args
 }
 
 // codexWritableRoots returns the directories a role must write outside the
