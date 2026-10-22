@@ -11,8 +11,8 @@ import (
 //
 // httptest.NewServer binds a real loopback socket, and the Codex sandbox
 // refuses that: a test agent on codex panics in newLocalListener before any
-// assertion runs, and `set -e` in test.sh then hides every module after the
-// failure (MUX-152), so 2900 tests silently never execute. Serving the handler
+// assertion runs, and `set -e` in test.sh then hid every module after the
+// failure (MUX-152), so 2900 tests silently never executed. Serving the handler
 // through an http.RoundTripper needs no socket, so the suite runs under any
 // sandbox — and is faster and fully hermetic besides.
 //
