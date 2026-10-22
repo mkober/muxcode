@@ -11,6 +11,7 @@
 # assertion checks the pinned list, so a module dropping out of the run is a
 # failure rather than a shorter green report. Section 5 is the negative
 # control: the summary assertion must reject a summary missing a module.
+# Section 6 runs a tree with no module: exit 1, still ending with the summary.
 #
 # Hermetic: no daemon, no tmux, no muxcode binary; writes only to a temp dir.
 # Coverage floor: the exact pass count, tied to the two pinned modules.
@@ -19,7 +20,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_MODULES="muxcode muxcode-llm-harness"
 EXPECTED_COUNT=2
-EXPECTED_PASS=23
+EXPECTED_PASS=25
 
 pass=0; fail=0
 ok()  { echo "  PASS  $*"; pass=$((pass + 1)); }
@@ -127,6 +128,15 @@ echo "module $FIRST" > "$drop/tools/$FIRST/go.mod"
 run_test_sh "$drop/test.sh" ""
 check "dropped-out module: test.sh alone still exits 0 (the shorter green report)" "$([ "$RC" -eq 0 ]; echo $?)"
 check "dropped-out module: summary assertion rejects the run" "$(summary_lists_all "$OUT"; [ $? -ne 0 ]; echo $?)"
+
+# --- 6. No module at all still ends with the summary and fails ---------------
+empty="$WORK/empty"
+mkdir -p "$empty/tools/not-a-module"
+cp "$REPO/test.sh" "$empty/test.sh"
+run_test_sh "$empty/test.sh" ""
+check "no module: exit 1, never a green empty run (got $RC)" "$([ "$RC" -eq 1 ]; echo $?)"
+zero_summary=$(printf '%s\n%s' "=== Summary ===" "modules=0 ran=0 passed=0 failed=0 never-executed=0")
+check "no module: output ends with the summary header then the zero totals line" "$([ "$(printf '%s\n' "$OUT" | tail -2)" = "$zero_summary" ]; echo $?)"
 
 # --- Coverage floor --------------------------------------------------------
 echo ""

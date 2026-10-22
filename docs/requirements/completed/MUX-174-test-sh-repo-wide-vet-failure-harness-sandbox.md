@@ -226,6 +226,9 @@ with a stub `go` first on PATH, so nothing compiles and the suite stays the test
 - Section 5 — negative control: the summary assertion rejects a doctored summary missing a module, and
   a run where a module dropped out of discovery (no `go.mod`) — which `test.sh` alone still exits 0 on,
   the shorter green report the pin exists to catch
+- Section 6 — a tree with no module (`tools/` holds only a directory without `go.mod`): exit 1, and
+  the output still ends with `=== Summary ===` followed by
+  `modules=0 ran=0 passed=0 failed=0 never-executed=0` (PR review comment 4340557756; floor now 25)
 
 Module order is taken from the order `test.sh` actually used, not assumed: glob collation is
 locale-dependent (`muxcode-llm-harness` sorts before `muxcode` under C collation, since `-` < `/`).

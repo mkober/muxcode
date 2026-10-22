@@ -21,8 +21,20 @@ for moddir in "$REPO_DIR"/tools/*/; do
   modules+=("$(basename "$moddir")")
 done
 
+summary=()
+ran=0 passed=0 failed=0 never=0
+
+# print_summary writes the closing contract above. The length guard is
+# load-bearing: an empty "${summary[@]}" is unbound under set -u on bash < 4.4.
+print_summary() {
+  echo "=== Summary ==="
+  [ "${#summary[@]}" -eq 0 ] || printf '%s\n' "${summary[@]}"
+  echo "modules=${#modules[@]} ran=$ran passed=$passed failed=$failed never-executed=$never"
+}
+
 if [ "${#modules[@]}" -eq 0 ]; then
   echo "test.sh: no Go module under $REPO_DIR/tools" >&2
+  print_summary
   exit 1
 fi
 
@@ -33,8 +45,6 @@ go_step() {
   (cd "$REPO_DIR/tools/$name" && go "$@")
 }
 
-summary=()
-ran=0 passed=0 failed=0 never=0
 for name in "${modules[@]}"; do
   if [ "$failed" -gt 0 ]; then
     summary+=("$name: never executed")
@@ -54,7 +64,5 @@ for name in "${modules[@]}"; do
   fi
 done
 
-echo "=== Summary ==="
-printf '%s\n' "${summary[@]}"
-echo "modules=${#modules[@]} ran=$ran passed=$passed failed=$failed never-executed=$never"
+print_summary
 [ "$failed" -eq 0 ] || exit 1
