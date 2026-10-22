@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -39,6 +40,11 @@ const (
 )
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// CursorTo returns the escape moving the cursor to row and col, both 1-based.
+func CursorTo(row, col int) string {
+	return fmt.Sprintf("\033[%d;%dH", row, col)
+}
 
 // ClearFrame inserts an erase-to-end-of-line sequence before every newline
 // so that overwriting a shorter frame doesn't leave artifacts from the
