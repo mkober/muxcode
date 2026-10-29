@@ -384,5 +384,5 @@ background artefact on disk. The defect is reproducible enough that Phase 1's re
 
 ## Status
 
-Complete — all phases 2026-10-29 (Phase 1 on 2026-10-22); every acceptance criterion ticked. Awaiting
-commit, PR and the move to `completed/`, on the user's request
+Complete — all phases 2026-10-29 (Phase 1 on 2026-10-22); every acceptance criterion ticked. Committed
+as `8713aaf` and moved to `completed/` 2026-10-29 by run `1793294260-50-spec-to-pr`

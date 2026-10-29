@@ -194,7 +194,7 @@ the habit is the trigger and the record should say so._
 > was read as evidence for the only inbound message that was visible. The `gh issue create` row is at
 > **12:20:23**, five minutes after the dump; adjacency was doing the work.
 >
-> This is the standard [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) sets for
+> This is the standard [MUX-176](../completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md) sets for
 > itself — timeline established, mechanism explicitly labelled a hypothesis — applied here only after
 > edit and commit pushed back.
 

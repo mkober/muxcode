@@ -135,7 +135,7 @@ The script survived because nothing was working in the pane, not because the wat
 re-drive a busy one. That is the exact failure this project checks for elsewhere — a green result
 that would still be green if the feature were removed.
 
-**Same root behaviour as [MUX-176](../backlog/MUX-176-run-chain-fires-success-on-backgrounded-call.md).**
+**Same root behaviour as [MUX-176](MUX-176-run-chain-fires-success-on-backgrounded-call.md).**
 The backgrounding that hollowed out this criterion is the same backgrounding that made the run chain
 fire "Run succeeded" 7 m before the script failed. One behaviour, two consequences: a premature
 success edge, and a live check that could not fail. Closing MUX-176's Phase 2 (an incomplete call is

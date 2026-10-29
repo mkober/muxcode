@@ -155,7 +155,7 @@ the reason this is filed against the chain and not against a process. Recorded b
 explanation was wrong and the record should show why the second is better: the four messages are in
 the bus history with chain-written bodies, and the missing `Conditions` are in the source.
 
-**Related:** [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) — the other chain
+**Related:** [MUX-176](../completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md) — the other chain
 defect in the same session, where the run chain fired success on an unfinished call. Both are chain
 edges firing on evidence that does not support them.
 
