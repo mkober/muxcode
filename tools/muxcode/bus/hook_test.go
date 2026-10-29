@@ -1044,6 +1044,169 @@ func TestProcessBashHook_ClaudeFailureEventFiresFailureChain(t *testing.T) {
 	}
 }
 
+// claudeBashEvent parses a Claude Bash hook payload for command. flag is the
+// raw run_in_background JSON value, "" to leave the key out; fields are the
+// event's own top-level keys.
+func claudeBashEvent(t *testing.T, command, flag, fields string) *ToolEvent {
+	t.Helper()
+	input := fmt.Sprintf(`{"command":%q`, command)
+	if flag != "" {
+		input += `,"run_in_background":` + flag
+	}
+	ev, err := ParseToolEvent([]byte(`{"session_id":"s1","cwd":"/repo","tool_name":"Bash","tool_use_id":"toolu_1","tool_input":` + input + `},` + fields + `}`))
+	if err != nil {
+		t.Fatalf("ParseToolEvent: %v", err)
+	}
+	return ev
+}
+
+func chainWithheldRows(t *testing.T, session string) []LifecycleEntry {
+	t.Helper()
+	rows, err := FilterLifecycleLog(session, LifecycleFilterOpts{Event: "chain-withheld"})
+	if err != nil {
+		t.Fatalf("FilterLifecycleLog: %v", err)
+	}
+	return rows
+}
+
+// MUX-176: Claude completes a backgrounded Bash call at dispatch and fires
+// PostToolUse with no exit status, which the "0" default read as success — the
+// run chain told watch a script had passed while it was still running, and it
+// then exited 1. Every payload here reaches the watch edge without the
+// backgroundLaunch guard (checked first), so deleting the guard fails each
+// case. An unfinished call writes no row, names no chain, and logs one
+// chain-withheld row naming the task and the role-scrubbed command; a call
+// feeding no chain logs nothing. The first payload is the one measured on
+// 2026-10-22, the second a foreground call Claude moved to the background on
+// timeout (a task id, no flag), the rest shapes that must fail closed.
+//
+// Negative controls: TestProcessBashHook_ClaudeFailureEventFiresFailureChain
+// (an ordinary foreground success still fires watch) and
+// TestProcessBashHook_FinishedCallStillFiresChain.
+func TestProcessBashHook_UnfinishedCallWithholdsChain(t *testing.T) {
+	useTempBusDir(t)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	const (
+		script  = "bash scripts/test-demo.sh"
+		secret  = "ghp_FAKE0123456789abcdefghij"
+		started = `"hook_event_name":"PostToolUse","tool_response":{"stdout":"","stderr":"","interrupted":false,"isImage":false}`
+	)
+	cases := []struct {
+		name, command, flag, fields, wantTask, wantCmd string
+	}{
+		{"measured background dispatch", script, "true",
+			`"hook_event_name":"PostToolUse","tool_response":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false,"backgroundTaskId":"bueqav7cd"},"duration_ms":374`,
+			"bueqav7cd", script},
+		{"timed-out call moved to background", script, "",
+			`"hook_event_name":"PostToolUse","tool_response":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"backgroundTaskId":"b7k2m9x1q","timedOutAfterMs":120000}`,
+			"b7k2m9x1q", script},
+		{"flag without a task id", script, "true", started, "unknown", script},
+		{"flag of unexpected type", script, `"true"`, started, "unknown", script},
+		{"explicit null flag", script, "null", started, "unknown", script},
+		{"task id of unexpected type", script, "", `"hook_event_name":"PostToolUse","tool_response":{"stdout":"","backgroundTaskId":42}`, "42", script},
+		{"no tool_response and no exit code", script, "", `"hook_event_name":"PostToolUse"`, "unknown", script},
+		{"non-object tool_response", script, "", `"hook_event_name":"PostToolUse","tool_response":["started"]`, "unknown", script},
+		{"credential in the command", "bash scripts/smoke.sh GITHUB_TOKEN=" + secret, "true",
+			`"hook_event_name":"PostToolUse","tool_response":{"stdout":"","backgroundTaskId":"bsecret01"}`,
+			"bsecret01", "bash scripts/smoke.sh GITHUB_TOKEN= [SECRET_REDACTED]"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := fmt.Sprintf("test-bash-unfinished-%d", i)
+			t.Setenv("BUS_SESSION", session)
+			ev := claudeBashEvent(t, tc.command, tc.flag, tc.fields)
+
+			code := ev.GetExitCode()
+			edge := ResolveChain(ChainEvent("run", ClassifyCommand(tc.command), HookOutcome(code)), HookOutcome(code), BuildChainContext(ev))
+			if edge == nil || edge.SendTo != "watch" {
+				t.Fatalf("fixture must reach the watch success edge without the guard, got %+v", edge)
+			}
+
+			if res := ProcessBashHook(session, "run", ev); res.Chain != "" || res.Logged {
+				t.Errorf("ProcessBashHook = %+v, want no chain and no row", res)
+			}
+			if _, err := os.Stat(filepath.Join(BusDir(session), "run-history.jsonl")); !os.IsNotExist(err) {
+				t.Errorf("unfinished call wrote a run-history row (stat: %v)", err)
+			}
+			rows := chainWithheldRows(t, session)
+			if len(rows) != 1 {
+				t.Fatalf("chain-withheld rows = %+v, want exactly one", rows)
+			}
+			detail := rows[0].Detail
+			if rows[0].Source != "hook" || !strings.HasPrefix(detail, "run chain not fired for run") ||
+				!strings.Contains(detail, "(background task "+tc.wantTask+")") || !strings.HasSuffix(detail, ": "+tc.wantCmd) {
+				t.Errorf("chain-withheld row = %s %q, want hook naming the run chain, task %s and %q", rows[0].Source, detail, tc.wantTask, tc.wantCmd)
+			}
+		})
+	}
+
+	t.Run("call feeding no chain", func(t *testing.T) {
+		session := "test-bash-unfinished-edit"
+		t.Setenv("BUS_SESSION", session)
+		if res := ProcessBashHook(session, "edit", claudeBashEvent(t, script, "true", started)); res.Chain != "" || res.Logged {
+			t.Errorf("ProcessBashHook = %+v, want no chain and no row", res)
+		}
+		if rows := chainWithheldRows(t, session); len(rows) != 0 {
+			t.Errorf("a call feeding no chain logged chain-withheld: %+v", rows)
+		}
+	})
+}
+
+// Negative control for TestProcessBashHook_UnfinishedCallWithholdsChain: a
+// finished call keeps its row and its edge and logs no chain-withheld row. The
+// ordinary foreground success is pinned by
+// TestProcessBashHook_ClaudeFailureEventFiresFailureChain; these are the
+// finished shapes beside the guard's signals — an explicit false flag; a
+// failure event, finished whatever its flag says, since withholding it would
+// hide a failure; a top-level exit_code with no tool_response; and a Codex
+// event, whose string response must not read as unreadable completion.
+func TestProcessBashHook_FinishedCallStillFiresChain(t *testing.T) {
+	useTempBusDir(t)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	fastTranscript(t)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	const script = "bash scripts/test-demo.sh"
+	codex := codexEventWith(t, "post-tool-use-bash-ok.json", "", script)
+	codex.TranscriptPath = codexTranscriptPath(t)
+	cases := []struct {
+		name                 string
+		ev                   *ToolEvent
+		wantCode, wantSendTo string
+	}{
+		{"explicit false flag", claudeBashEvent(t, script, "false",
+			`"hook_event_name":"PostToolUse","tool_response":{"stdout":"PASS","stderr":"","interrupted":false,"isImage":false}`), "0", "watch"},
+		{"failure event carrying the flag", claudeBashEvent(t, script, "true",
+			`"hook_event_name":"PostToolUseFailure","error":"Exit code 127\nbash: scripts/test-demo.sh: No such file or directory","is_interrupt":false`), "127", "edit"},
+		{"exit_code with no tool_response", claudeBashEvent(t, script, "", `"hook_event_name":"PostToolUse","exit_code":0`), "0", "watch"},
+		{"codex event", codex, "0", "watch"},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := fmt.Sprintf("test-bash-finished-%d", i)
+			t.Setenv("BUS_SESSION", session)
+			res := ProcessBashHook(session, "run", tc.ev)
+			if !res.Logged || res.Chain != "run" {
+				t.Fatalf("ProcessBashHook = %+v, want a logged row and the run chain", res)
+			}
+			entry := lastHookHistoryEntry(t, filepath.Join(BusDir(session), "run-history.jsonl"))
+			if entry.ExitCode != tc.wantCode {
+				t.Errorf("row exit code = %q, want %q", entry.ExitCode, tc.wantCode)
+			}
+			if edge := ResolveChain(res.Chain, HookOutcome(entry.ExitCode), BuildChainContext(tc.ev)); edge == nil || edge.SendTo != tc.wantSendTo {
+				t.Errorf("chain edge = %+v, want one to %s", edge, tc.wantSendTo)
+			}
+			if rows := chainWithheldRows(t, session); len(rows) != 0 {
+				t.Errorf("finished call logged chain-withheld: %+v", rows)
+			}
+		})
+	}
+}
+
 // MUX-179: a PII-sensitive role's history row holds the redacted output under
 // the notice banner, never the secret — the shape of plan's `ps eww` leak of a
 // real API key. Fails if ProcessBashHook's IsPIISensitiveRole gate is removed.
