@@ -1109,6 +1109,8 @@ func TestProcessBashHook_UnfinishedCallWithholdsChain(t *testing.T) {
 		{"task id of unexpected type", script, "", `"hook_event_name":"PostToolUse","tool_response":{"stdout":"","backgroundTaskId":42}`, "42", script},
 		{"no tool_response and no exit code", script, "", `"hook_event_name":"PostToolUse"`, "unknown", script},
 		{"non-object tool_response", script, "", `"hook_event_name":"PostToolUse","tool_response":["started"]`, "unknown", script},
+		{"null tool_response beside a success exit code", script, "true", `"hook_event_name":"PostToolUse","tool_response":null,"exit_code":0`, "unknown", script},
+		{"null tool_response and no exit code", script, "", `"hook_event_name":"PostToolUse","tool_response":null`, "unknown", script},
 		{"credential in the command", "bash scripts/smoke.sh GITHUB_TOKEN=" + secret, "true",
 			`"hook_event_name":"PostToolUse","tool_response":{"stdout":"","backgroundTaskId":"bsecret01"}`,
 			"bsecret01", "bash scripts/smoke.sh GITHUB_TOKEN= [SECRET_REDACTED]"},
