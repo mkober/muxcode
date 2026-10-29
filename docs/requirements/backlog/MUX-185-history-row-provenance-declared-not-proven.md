@@ -89,7 +89,7 @@ a verdict is read on every node and a gate on a few.
 - [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) — the parent; its Phase 3 "add actor provenance" step is the pointer to this spec and stays open there.
 - [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) — the same residual on gate markers, accepted with the guard as closer.
 - [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — "a role boundary an agent can ignore is not a boundary"; the guard road this spec would extend.
-- [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) / [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) — the same evidence class; rows written for the wrong reason rather than by the wrong hand.
+- [MUX-176](../completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md) / [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) — the same evidence class; rows written for the wrong reason rather than by the wrong hand.
 - [MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) — `BusActorVerified` is a `ps` walk; the Codex build sandbox cannot run it, so any ancestry stamp reads `unknown` there.
 
 ## Requirements

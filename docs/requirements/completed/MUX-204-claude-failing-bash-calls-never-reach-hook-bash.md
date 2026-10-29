@@ -216,7 +216,7 @@ non-zero int, so the sentinel cannot creep back.
 |------|--------------|
 | [MUX-203](../completed/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | Where this was found (Phase 1 findings, "surfaced, out of scope") |
 | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | The history scrub a failure row's output must pass through |
-| [MUX-176](../backlog/MUX-176-run-chain-fires-success-on-backgrounded-call.md) | Same instrument, different fault — a success the run chain should not have fired |
+| [MUX-176](MUX-176-run-chain-fires-success-on-backgrounded-call.md) | Same instrument, different fault — a success the run chain should not have fired |
 | [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) | The history row as evidence — this spec is about rows that never exist |
 
 ## Time Tracking

@@ -29,10 +29,12 @@ import (
 //     reaches the model.
 
 // codexShaped reports a payload in Codex's dialect: tool_response is a bare
-// string where Claude sends an object.
+// string where Claude sends an object. A JSON null is not a string, though it
+// unmarshals into one without error: read as Codex, a Claude background launch
+// carrying tool_response null would skip backgroundLaunch's guard.
 func (ev *ToolEvent) codexShaped() bool {
 	var s string
-	return len(ev.ToolResponse) > 0 && json.Unmarshal(ev.ToolResponse, &s) == nil
+	return bytes.HasPrefix(bytes.TrimSpace(ev.ToolResponse), []byte(`"`)) && json.Unmarshal(ev.ToolResponse, &s) == nil
 }
 
 // normalizeCodex folds the dialect into the shared shape: a command the scrub

@@ -53,38 +53,44 @@ type ToolEvent struct {
 // and PatchPaths are filled for a Codex apply_patch call, and FilePath then
 // mirrors the first patched path so file guards and the analyze hook read one
 // field for both dialects.
+//
+// RunInBackground is Claude's run_in_background flag, kept raw so a value of
+// an unexpected type still reads as set (backgroundLaunch).
 type ToolInput struct {
-	Command      string   `json:"command,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	FilePath     string   `json:"file_path,omitempty"`
-	NotebookPath string   `json:"notebook_path,omitempty"`
-	NewString    string   `json:"new_string,omitempty"`
-	Content      string   `json:"content,omitempty"`
-	Patch        string   `json:"-"`
-	PatchPaths   []string `json:"-"`
+	Command         string          `json:"command,omitempty"`
+	Description     string          `json:"description,omitempty"`
+	FilePath        string          `json:"file_path,omitempty"`
+	NotebookPath    string          `json:"notebook_path,omitempty"`
+	NewString       string          `json:"new_string,omitempty"`
+	Content         string          `json:"content,omitempty"`
+	RunInBackground json.RawMessage `json:"-"`
+	Patch           string          `json:"-"`
+	PatchPaths      []string        `json:"-"`
 }
 
 // UnmarshalJSON accepts a shell command given as an argv array (a Codex
 // unified-exec shape) as well as the plain string both CLIs normally send.
 func (ti *ToolInput) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Command      json.RawMessage `json:"command"`
-		Description  string          `json:"description"`
-		FilePath     string          `json:"file_path"`
-		NotebookPath string          `json:"notebook_path"`
-		NewString    string          `json:"new_string"`
-		Content      string          `json:"content"`
+		Command         json.RawMessage `json:"command"`
+		Description     string          `json:"description"`
+		FilePath        string          `json:"file_path"`
+		NotebookPath    string          `json:"notebook_path"`
+		NewString       string          `json:"new_string"`
+		Content         string          `json:"content"`
+		RunInBackground json.RawMessage `json:"run_in_background"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	*ti = ToolInput{
-		Command:      commandFromRaw(raw.Command),
-		Description:  raw.Description,
-		FilePath:     raw.FilePath,
-		NotebookPath: raw.NotebookPath,
-		NewString:    raw.NewString,
-		Content:      raw.Content,
+		Command:         commandFromRaw(raw.Command),
+		Description:     raw.Description,
+		FilePath:        raw.FilePath,
+		NotebookPath:    raw.NotebookPath,
+		NewString:       raw.NewString,
+		Content:         raw.Content,
+		RunInBackground: raw.RunInBackground,
 	}
 	return nil
 }
@@ -146,6 +152,9 @@ func (ev *ToolEvent) GetExitCode() string {
 // PostToolUse for a tool call that fails — for Bash, a non-zero exit.
 const claudeFailureEvent = "PostToolUseFailure"
 
+// postToolUseEvent is the hook event both CLIs fire after a tool call returns.
+const postToolUseEvent = "PostToolUse"
+
 // failureExitLineRe matches the status line Claude puts first in a
 // PostToolUseFailure error. Anchored to the start of the text: with no status
 // line (the shell never started), a later "Exit code N" is command output.
@@ -201,6 +210,47 @@ func (ev *ToolEvent) resolveExitCode() string {
 		return code
 	}
 	return "0"
+}
+
+// backgroundLaunch reports whether a Bash event's result describes a call that
+// had not finished when its hook fired, with the background task id its
+// response names, if any.
+//
+// Claude completes a run_in_background call at dispatch, and moves a
+// foreground call that outlives its timeout to the background; either way it
+// fires PostToolUse then, with a tool_response holding backgroundTaskId and no
+// exit status, and fires no hook when the task ends. resolveExitCode's "0"
+// default read that as success, so the run chain told watch a script had
+// passed minutes before it exited 1 (MUX-176, measured 2026-10-22). A timed-out
+// call carries the id without the flag, so either signal counts.
+//
+// Completion that cannot be read fails closed: a run_in_background of any
+// value but false, a backgroundTaskId of any value, and a PostToolUse with
+// neither an object tool_response nor an exit_code all count as unfinished. A
+// PostToolUseFailure is a finished call, and a Codex event resolves its status
+// from the transcript.
+func (ev *ToolEvent) backgroundLaunch() (taskID string, unfinished bool) {
+	if ev.HookEventName == claudeFailureEvent || ev.codexShaped() {
+		return "", false
+	}
+	switch strings.TrimSpace(string(ev.ToolInput.RunInBackground)) {
+	case "", "false":
+	default:
+		unfinished = true
+	}
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal(ev.ToolResponse, &resp); err != nil || resp == nil {
+		statusRead := interfaceToString(ev.RawExitCode) != ""
+		return "", unfinished || (ev.HookEventName == postToolUseEvent && !statusRead)
+	}
+	raw, ok := resp["backgroundTaskId"]
+	if !ok {
+		return "", unfinished
+	}
+	if json.Unmarshal(raw, &taskID) != nil {
+		taskID = string(raw)
+	}
+	return taskID, true
 }
 
 // GetOutput extracts the command output from a tool event's response.
@@ -837,6 +887,11 @@ func precheckPassed(cmdType CommandType, outcome string) bool {
 // IsPIISensitiveRole gate (loop.go). It protects the history row and the
 // errors extracted from it, not the conversation: PostToolUse fires after the
 // agent has already been shown the raw output (MUX-179).
+//
+// A call that had not finished when its hook fired (backgroundLaunch) is not
+// evidence of an outcome: it still transitions the workflow, since the work is
+// under way, but writes no row and names no chain, and an edge it would have
+// fed is logged as chain-withheld (MUX-176).
 func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	command := ev.ToolInput.Command
 	if command == "" {
@@ -872,6 +927,11 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		TransitionWorkflow(session, StateTesting, "hook:bash:test")
 	case CmdDeployApply:
 		TransitionWorkflow(session, StateDeploying, "hook:bash:deploy")
+	}
+
+	if taskID, unfinished := ev.backgroundLaunch(); unfinished {
+		logChainWithheld(session, role, command, taskID, result.Chain)
+		return HookBashResult{CommandType: cmdType}
 	}
 
 	if precheckPassed(cmdType, outcome) {
@@ -953,6 +1013,24 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	}
 
 	return result
+}
+
+// logChainWithheld records that chain did not fire for an unfinished call, so
+// a chain that stayed silent is visible rather than indistinguishable from one
+// that never applied. A call feeding no chain logs nothing. The command is
+// scrubbed for role and clipped: the lifecycle log is persistent, and no other
+// scrub road reaches it.
+func logChainWithheld(session, role, command, taskID, chain string) {
+	if chain == "" {
+		return
+	}
+	if taskID == "" {
+		taskID = "unknown"
+	}
+	cmd, _ := ScrubForRole(role, command)
+	LogLifecycle(session, "info", "hook", "chain-withheld",
+		fmt.Sprintf("%s chain not fired for %s — the call had not finished when its hook fired (background task %s): %s",
+			chain, role, taskID, truncateAtRune(cmd, 160)))
 }
 
 // GuardDecision represents the result of an edit guard check.
