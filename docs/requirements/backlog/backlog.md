@@ -169,6 +169,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-207`](./MUX-207-xcode-project-compatibility.md) | Xcode and Swift Projects: Agents Lack the Patterns, Sandbox Access and Tools to Build, Test and Observe Them | High | — |
 | [`MUX-201`](./MUX-201-non-hook-prompt-and-generated-body-drift.md) | Non-Hook Prompt Text and Generated Agent Bodies Drift From the Definition | Medium | [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
 | [`MUX-190`](./MUX-190-codex-agent-drops-a-consumed-request-after-a-guard-denial.md) | A Codex Agent Drops a Consumed Request After a Guard Denial | Medium | — |
 | [`MUX-189`](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) | Batch Delivery Correlates Only the Last Request's Reply | Medium | — |
