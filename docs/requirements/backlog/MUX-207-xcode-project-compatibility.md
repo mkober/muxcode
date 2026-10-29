@@ -133,9 +133,10 @@ A separate defect; this spec only points at it.
       row and fires its chain; a bare `scripts/test.sh` / `scripts/build-*.sh` is classified as well
       as the `bash` form; negative control — a non-build Swift call such as `swift --version` stays
       unclassified
-- [ ] Detection finds a Swift or Xcode project whose `Package.swift`, `*.xcodeproj` or XcodeGen
+- [x] Detection finds a Swift or Xcode project whose `Package.swift`, `*.xcodeproj` or XcodeGen
       `project.yml` sits below the root, at a bounded depth that skips `.build/`, `DerivedData/`
-      and `node_modules/`
+      and `node_modules/` — _Phase 2, 2026-10-29: depth 3, the skip set plus `Pods`, `Carthage` and
+      hidden dirs, pinned by the five `TestDetectProject_Swift*` tests_
 - [ ] Session start creates missing `.muxcode/config`, `.claude/settings.json` and `CLAUDE.md` from
       detection: it never overwrites; it leaves the files untracked; it writes a lifecycle row
       naming what was created; it sends edit a notice listing the new files to review and commit;
@@ -290,10 +291,22 @@ probe is read-only only with respect to the repository.
 
 ### Phase 2: Detection
 
-- [ ] `DetectProject` finds `Package.swift`, `*.xcodeproj` and XcodeGen `project.yml` below the
-      root, to a bounded depth, skipping `.build/`, `DerivedData/` and `node_modules/`
-- [ ] Richer Swift and Xcode context: `xcodebuild`, schemes, destinations, simulators, XcodeGen
-- [ ] Tests: nested markers found, excluded directories skipped, root-only projects unchanged
+- [x] `DetectProject` finds `Package.swift`, `*.xcodeproj` and XcodeGen `project.yml` below the
+      root, to a bounded depth, skipping `.build/`, `DerivedData/` and `node_modules/` —
+      _`bus/detect.go` 2026-10-29: `indicator` gains `Depth` and `Accept`; `nestedMatches` walks
+      `swiftDetectDepth = 3` levels, records nested markers as root-relative paths, skips `.build`,
+      `DerivedData`, `node_modules`, `Pods`, `Carthage` and hidden directories, and records an
+      `.xcodeproj` bundle without entering it; `project.yml` counts only with a top-level
+      `targets:` or `include:` key (`isXcodeGenSpec`, first 256 KiB)_
+- [x] Richer Swift and Xcode context: `xcodebuild`, schemes, destinations, simulators, XcodeGen —
+      _`swiftConventionText` built from what was found: nested package dirs, XcodeGen specs with
+      `xcodegen generate`, `xcodebuild` build/test/`-list`/`-showdestinations`, `xcrun simctl`;
+      lists capped at `maxListedMarkers = 6`; the root-only package text is byte-identical_
+- [x] Tests: nested markers found, excluded directories skipped, root-only projects unchanged —
+      _`detect_test.go`: `SwiftNestedMarkers` (tibo layout, exact indicators),
+      `SwiftSkipsExcludedDirs`, `SwiftDepthBound` (3 found, 4 not), `ProjectYmlMustBeXcodeGen`,
+      `SwiftRootOnlyUnchanged` (bundle not entered), `ConventionText_Swift`. Suite pass is the
+      test agent's report (`./test.sh` EXIT=0, `ts 1793304975`); no hook row for the run exists_
 
 ### Phase 3: Classification
 
@@ -369,4 +382,4 @@ that.
 
 ## Status
 
-In Progress — Phase 1 (experiment) complete 2026-10-29; Phase 2 next
+In Progress — Phases 1–2 complete 2026-10-29; Phase 3 (classification) next
