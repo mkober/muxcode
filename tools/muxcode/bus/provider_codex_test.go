@@ -3,6 +3,7 @@ package bus
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,6 +110,93 @@ func TestCodexBuildExecArgs(t *testing.T) {
 				t.Error("missing --no-alt-screen flag")
 			}
 		})
+	}
+}
+
+// Codex's Seatbelt policy denies `system-info vfs.disk-space` and no grant
+// extends it, so AVAssetWriter failed on tibo's Codex test agent while every
+// test passed on the host (MUX-207 box 3, 2026-11-02). With no
+// MUXCODE_*_CODEX_SANDBOX set, every role launches with no sandbox and none of
+// the workspace-write grants; its approval policy and web search are unchanged.
+func TestCodexBuildExecArgs_DefaultIsFullAccess(t *testing.T) {
+	p := &CodexProvider{}
+	codexTestHome(t)
+	codexTestDarwin(t)
+	t.Setenv("MUXCODE_CODEX_SANDBOX", "")
+	for _, role := range []string{"build", "test", "review", "analyze", "watch", "research", "run", "commit"} {
+		t.Setenv(roleCodexSandboxEnvVar(role), "")
+		t.Setenv(RoleModelEnvVar(role), "")
+		_, args := p.BuildExecArgs(&LaunchConfig{Role: role, CLI: "codex"})
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "-s danger-full-access") {
+			t.Errorf("%s must launch with no sandbox: %s", role, joined)
+		}
+		for _, banned := range []string{"workspace-write", "--add-dir", "network_access", "shell_environment_policy"} {
+			if strings.Contains(joined, banned) {
+				t.Errorf("%s must not carry the sandbox grant %q: %s", role, banned, joined)
+			}
+		}
+		approval := "-a never"
+		if isReadOnlyCodexRole(role) {
+			approval = "-a on-request"
+		}
+		if !strings.Contains(joined, approval) {
+			t.Errorf("%s approval policy changed, want %q: %s", role, approval, joined)
+		}
+		if search := strings.Contains(joined, "--search"); search != (role == "research") {
+			t.Errorf("%s web search = %v, want %v: %s", role, search, role == "research", joined)
+		}
+	}
+}
+
+// Negative control for the default: no sandbox is a resolved choice, not a
+// hard-coded flag. MUXCODE_CODEX_SANDBOX=workspace-write restores the sandbox,
+// the per-role variable beats the global one in both directions, and a
+// misspelt value keeps the sandbox rather than dropping it.
+func TestCodexSandboxMode_OptOutAndPrecedence(t *testing.T) {
+	cases := []struct{ name, global, perRole, want string }{
+		{"default", "", "", codexSandboxFullAccess},
+		{"global opt-out", "workspace-write", "", codexSandboxWorkspaceWrite},
+		{"per-role no sandbox beats global opt-out", "workspace-write", "danger-full-access", codexSandboxFullAccess},
+		{"per-role opt-out beats global no sandbox", "danger-full-access", "workspace-write", codexSandboxWorkspaceWrite},
+		{"misspelt value keeps the sandbox", "workspace_write", "", codexSandboxWorkspaceWrite},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("MUXCODE_CODEX_SANDBOX", c.global)
+			t.Setenv("MUXCODE_TEST_CODEX_SANDBOX", c.perRole)
+			if got := codexSandboxMode("test"); got != c.want {
+				t.Errorf("codexSandboxMode(test) = %q, want %q", got, c.want)
+			}
+		})
+	}
+
+	p := &CodexProvider{}
+	codexTestHome(t)
+	args := strings.Join(p.argsFor(t, "test"), " ")
+	if !strings.Contains(args, "-s workspace-write") || strings.Contains(args, "danger-full-access") {
+		t.Errorf("the opt-out must launch test sandboxed: %s", args)
+	}
+}
+
+// The opt-out must name its policy even when nothing is granted under it: with
+// every state root unresolvable and no network, an omitted -s handed the choice
+// to the user's Codex config, which may name no sandbox at all (review,
+// 2026-11-02). HOME sits under a regular file, so no state root can be created.
+func TestCodexBuildExecArgs_OptOutNamesPolicyWithNoGrants(t *testing.T) {
+	p := &CodexProvider{}
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", filepath.Join(file, "home"))
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
+	args := strings.Join(p.argsFor(t, "review"), " ")
+	if !strings.Contains(args, "-s workspace-write") {
+		t.Errorf("review on the opt-out must name workspace-write with no grants: %s", args)
+	}
+	if strings.Contains(args, "--add-dir") {
+		t.Errorf("fixture failed to make the state roots unresolvable: %s", args)
 	}
 }
 
@@ -231,6 +319,7 @@ func TestCodexBuildExecArgs_TestGetsGoCachesOnly(t *testing.T) {
 func TestCodexBuildExecArgs_WatchGetsNetworkOnly(t *testing.T) {
 	p := &CodexProvider{}
 	home := codexTestHome(t)
+	codexTestDarwin(t)
 	args := p.argsFor(t, "watch")
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"-s workspace-write", "-c sandbox_workspace_write.network_access=true"} {
@@ -340,6 +429,7 @@ func TestCodexBuildExecArgs_ResearchGetsWebSearch(t *testing.T) {
 func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 	p := &CodexProvider{}
 	home := codexTestHome(t)
+	codexTestDarwin(t)
 	for _, role := range []string{"review", "analyze", "run", "commit"} {
 		args := p.argsFor(t, role)
 		assertOnlyStateRoots(t, role, args, home)
@@ -352,10 +442,170 @@ func TestCodexBuildExecArgs_OtherRolesUnwidened(t *testing.T) {
 	}
 }
 
-// argsFor builds launch args for a role with model env cleared, so the
+// SwiftPM's nested sandbox-exec is refused inside Codex's Seatbelt sandbox and
+// only a flag turns it off, so build and test reach the swift/xcodebuild shims
+// through BASH_ENV; xcodebuild also writes manifest diagnostics into SwiftPM's
+// user cache (MUX-207 probe, 2026-10-29).
+func TestCodexBuildExecArgs_SwiftShimAndCacheOnDarwin(t *testing.T) {
+	p := &CodexProvider{}
+	home := codexTestHome(t)
+	install := codexTestDarwin(t)
+	for _, role := range []string{"build", "test"} {
+		args := strings.Join(p.argsFor(t, role), " ")
+		shim := `-c shell_environment_policy.set.BASH_ENV="` + filepath.Join(install, "codex-shim", "bash_env") + `"`
+		if !strings.Contains(args, shim) {
+			t.Errorf("%s missing %q: %s", role, shim, args)
+		}
+		cache := "--add-dir " + mustResolve(t, filepath.Join(home, "Library", "Caches", "org.swift.swiftpm"))
+		if !strings.Contains(args, cache) {
+			t.Errorf("%s missing %q: %s", role, cache, args)
+		}
+	}
+}
+
+// Negative control: the shim and the SwiftPM cache are macOS-only — Linux
+// SwiftPM nests no sandbox-exec, and ~/Library would be created as junk.
+func TestCodexBuildExecArgs_NoSwiftGrantsOffDarwin(t *testing.T) {
+	p := &CodexProvider{}
+	codexTestHome(t)
+	codexTestDarwin(t)
+	codexHostOS = "linux"
+	for _, role := range []string{"build", "test"} {
+		args := strings.Join(p.argsFor(t, role), " ")
+		for _, banned := range []string{"BASH_ENV", "org.swift.swiftpm"} {
+			if strings.Contains(args, banned) {
+				t.Errorf("%s off macOS must not get %q: %s", role, banned, args)
+			}
+		}
+	}
+}
+
+// With no resolvable install directory there is no shim to point at; a
+// relative BASH_ENV would be resolved against each command's cwd.
+func TestCodexBuildExecArgs_NoShimWithoutInstallDir(t *testing.T) {
+	p := &CodexProvider{}
+	codexTestHome(t)
+	codexTestDarwin(t)
+	t.Setenv("MUXCODE_INSTALL_DIR", "")
+	if dir := resolveInstallDir(); dir != "" {
+		t.Skipf("test binary resolves an install dir (%s)", dir)
+	}
+	if args := strings.Join(p.argsFor(t, "build"), " "); strings.Contains(args, "BASH_ENV") {
+		t.Errorf("build must not get BASH_ENV without an install dir: %s", args)
+	}
+}
+
+// The shims add SwiftPM's and xcodebuild's sandbox-off flags inside Codex's
+// Seatbelt sandbox, ahead of any operand (`swift run EXE ARGS` hands later
+// words to EXE), and pass every call through unchanged outside it. The swift
+// flag is added even when one is present: an executable's own
+// --disable-sandbox once suppressed it, leaving SwiftPM sandboxed (review,
+// 2026-11-02); SwiftPM accepts the repeat.
+func TestCodexShim_Flags(t *testing.T) {
+	const manifest, plugin = "-IDEPackageSupportDisableManifestSandbox=YES", "-IDEPackageSupportDisablePluginExecutionSandbox=YES"
+	cases := []struct {
+		sandbox bool
+		cmd     []string
+		want    string
+	}{
+		{true, []string{"swift", "build", "-c", "release"}, "build --disable-sandbox -c release"},
+		{true, []string{"swift", "run", "probe", "arg"}, "run --disable-sandbox probe arg"},
+		{true, []string{"swift", "package", "resolve"}, "package --disable-sandbox resolve"},
+		{true, []string{"swift", "run", "probe", "--disable-sandbox"}, "run --disable-sandbox probe --disable-sandbox"},
+		{true, []string{"swift", "run", "probe", "--disable-sandbox-check"}, "run --disable-sandbox probe --disable-sandbox-check"},
+		{true, []string{"swift", "test", "--disable-sandbox"}, "test --disable-sandbox --disable-sandbox"},
+		{true, []string{"swift", "--version"}, "--version"},
+		{true, []string{"xcodebuild", "-scheme", "A", "build"}, manifest + " " + plugin + " -scheme A build"},
+		{true, []string{"xcodebuild", "-IDEPackageSupportDisableManifestSandbox=NO", "test"}, plugin + " -IDEPackageSupportDisableManifestSandbox=NO test"},
+		{false, []string{"swift", "build"}, "build"},
+		{false, []string{"xcodebuild", "build"}, "build"},
+	}
+	shimDir, fake := codexShimFixture(t)
+	for _, c := range cases {
+		cmd := exec.Command(filepath.Join(shimDir, c.cmd[0]), c.cmd[1:]...)
+		cmd.Env = []string{"PATH=" + shimDir + ":" + fake + ":/usr/bin:/bin"}
+		if c.sandbox {
+			cmd.Env = append(cmd.Env, "CODEX_SANDBOX=seatbelt")
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v (sandbox=%v): %v: %s", c.cmd, c.sandbox, err, out)
+		}
+		if got := strings.TrimSpace(string(out)); got != "fake "+c.cmd[0]+": "+c.want {
+			t.Errorf("%v (sandbox=%v) = %q, want %q", c.cmd, c.sandbox, got, "fake "+c.cmd[0]+": "+c.want)
+		}
+	}
+}
+
+// bash_env puts the shim directory first on a PATH that lacks it — the login
+// profile Codex's `bash -lc` runs may have reset PATH — and leaves a PATH that
+// already starts with it alone, since every nested bash reads it again.
+func TestCodexShim_BashEnvPrependsShimDir(t *testing.T) {
+	if _, err := os.Stat("/bin/bash"); err != nil {
+		t.Skip("no /bin/bash")
+	}
+	shimDir, fake := codexShimFixture(t)
+	run := func(path string, bashEnv bool) string {
+		cmd := exec.Command("/bin/bash", "-c", `command -v swift; printf '%s\n' "$PATH"`)
+		cmd.Env = []string{"PATH=" + path}
+		if bashEnv {
+			cmd.Env = append(cmd.Env, "BASH_ENV="+filepath.Join(shimDir, "bash_env"))
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("bash: %v: %s", err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	base := fake + ":/usr/bin:/bin"
+	if got, want := run(base, true), filepath.Join(shimDir, "swift")+"\n"+shimDir+":"+base; got != want {
+		t.Errorf("with BASH_ENV:\n got %q\nwant %q", got, want)
+	}
+	if got, want := run(base, false), filepath.Join(fake, "swift")+"\n"+base; got != want {
+		t.Errorf("without BASH_ENV (control):\n got %q\nwant %q", got, want)
+	}
+	if got, want := run(shimDir+":"+base, true), filepath.Join(shimDir, "swift")+"\n"+shimDir+":"+base; got != want {
+		t.Errorf("already first:\n got %q\nwant %q", got, want)
+	}
+}
+
+// codexShimFixture returns the repo's shim directory and a directory of fake
+// swift/xcodebuild binaries that echo their arguments.
+func codexShimFixture(t *testing.T) (string, string) {
+	t.Helper()
+	shimDir, err := filepath.Abs("../../../config/codex-shim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := t.TempDir()
+	for _, name := range []string{"swift", "xcodebuild"} {
+		script := "#!/bin/sh\necho \"fake " + name + ": $*\"\n"
+		if err := os.WriteFile(filepath.Join(fake, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return shimDir, fake
+}
+
+// codexTestDarwin enables the macOS-only grants whatever the host and pins
+// the install directory BASH_ENV resolves under, returning it.
+func codexTestDarwin(t *testing.T) string {
+	t.Helper()
+	prev := codexHostOS
+	codexHostOS = "darwin"
+	t.Cleanup(func() { codexHostOS = prev })
+	install := t.TempDir()
+	t.Setenv("MUXCODE_INSTALL_DIR", install)
+	return install
+}
+
+// argsFor builds launch args for a role on the workspace-write opt-out — the
+// road every per-role grant lives on — with model env cleared, so the
 // assertions see only sandbox flags.
 func (p *CodexProvider) argsFor(t *testing.T, role string) []string {
 	t.Helper()
+	t.Setenv("MUXCODE_CODEX_SANDBOX", codexSandboxWorkspaceWrite)
+	t.Setenv(roleCodexSandboxEnvVar(role), "")
 	t.Setenv(RoleModelEnvVar(role), "")
 	_, args := p.BuildExecArgs(&LaunchConfig{Role: role, CLI: "codex"})
 	return args

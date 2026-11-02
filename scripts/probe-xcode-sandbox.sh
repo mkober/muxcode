@@ -14,6 +14,16 @@
 #
 #   bash scripts/probe-xcode-sandbox.sh [--role build|test]... [--only <cmd>]...
 #                                       [--denials] [--keep] [--out <file>]
+#                                       [--login]
+#
+# Since Phase 4 the launch policy carries the swift/xcodebuild shims (BASH_ENV
+# → <install>/codex-shim/bash_env) and the SwiftPM cache root, so `base`
+# measures the fixed policy once that binary is installed. --login runs every
+# cell as `/bin/bash -lc`, the shape Codex itself uses, whose login profile may
+# reset PATH; without it cells run `bash -c`, as Phase 1 measured.
+#
+# Codex agents launch with no sandbox by default since 2026-11-02, so the
+# probe pins the MUXCODE_*_CODEX_SANDBOX=workspace-write opt-out it measures.
 #
 # Commands — build: swift-build swift-run xcodegen xcodebuild simctl
 #            test:  swift-test simctl
@@ -52,6 +62,7 @@ ROLES=()
 ONLY=()
 DENIALS=0
 KEEP=0
+SHELL_FLAG=-c
 OUT=""
 while [ $# -gt 0 ]; do
   case $1 in
@@ -59,11 +70,13 @@ while [ $# -gt 0 ]; do
     --only) ONLY+=("$2"); shift 2 ;;
     --denials) DENIALS=1; shift ;;
     --keep) KEEP=1; shift ;;
+    --login) SHELL_FLAG=-lc; shift ;;
     --out) OUT=$2; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 [ ${#ROLES[@]} -gt 0 ] || ROLES=(build test)
+export MUXCODE_BUILD_CODEX_SANDBOX=workspace-write MUXCODE_TEST_CODEX_SANDBOX=workspace-write
 
 for tool in codex swift xcodebuild xcodegen muxcode; do
   command -v "$tool" >/dev/null 2>&1 || { echo "SKIP: $tool is required"; exit 2; }
@@ -93,7 +106,7 @@ mask() {
 physical_dir() { (cd "$1" 2>/dev/null && pwd -P) || true; }
 
 # role_roots mirrors codexWritableRoots: state roots, build's install roots,
-# the Go caches; resolved and deduped in order.
+# the Go caches, the SwiftPM user cache; resolved and deduped in order.
 role_roots() {
   local role=$1 prefix d r
   local -a raw=("${MUXCODE_LIFECYCLE_LOG_DIR:-$HOME/.config/muxcode/logs}" "$HOME/.config/muxcode/memory")
@@ -103,6 +116,7 @@ role_roots() {
   fi
   if [ "$role" = build ] || [ "$role" = test ]; then
     while IFS= read -r d; do [ -n "$d" ] && raw+=("$d"); done < <(go env GOCACHE GOMODCACHE 2>/dev/null || true)
+    raw+=("$HOME/Library/Caches/org.swift.swiftpm")
   fi
   local seen=" "
   for d in "${raw[@]}"; do
@@ -123,6 +137,16 @@ launch_args() {
   for kv in npm_config_cache=npm PIP_CACHE_DIR=pip UV_CACHE_DIR=uv POETRY_CACHE_DIR=pypoetry YARN_CACHE_FOLDER=yarn; do
     printf '%s\n' -c "shell_environment_policy.set.${kv%%=*}=\"$cache/${kv#*=}\""
   done
+  local install
+  install=$(install_dir)
+  [ -z "$install" ] || printf '%s\n' -c "shell_environment_policy.set.BASH_ENV=\"$install/codex-shim/bash_env\""
+}
+
+# install_dir mirrors resolveInstallDir: MUXCODE_INSTALL_DIR, else
+# ~/.config/muxcode when muxcode is installed in a .local/bin, else nothing.
+install_dir() {
+  if [ -n "${MUXCODE_INSTALL_DIR:-}" ]; then echo "$MUXCODE_INSTALL_DIR"; return; fi
+  case $(dirname "$(command -v muxcode)") in */.local/bin) echo "$HOME/.config/muxcode" ;; esac
 }
 
 fingerprint() {
@@ -294,13 +318,13 @@ run_cell() {
          SWIFTPM_TESTS_MODULECACHE="$dir/cache/swiftpm-tests") ;;
   esac
   if [ "$variant" = host ]; then
-    (cd "$dir/proj" && with_timeout bash -c "$line") > "$dir/log" 2>&1 || rc=$?
+    (cd "$dir/proj" && with_timeout /bin/bash "$SHELL_FLAG" "$line") > "$dir/log" 2>&1 || rc=$?
   else
     while IFS= read -r a; do cfg+=("$a"); done < <(sandbox_config "$role" "${extra[@]+"${extra[@]}"}")
     local kv
     for kv in "${env[@]+"${env[@]}"}"; do cfg+=(-c "shell_environment_policy.set.${kv%%=*}=\"${kv#*=}\""); done
     [ "$DENIALS" -eq 1 ] && cfg=(--log-denials "${cfg[@]}")
-    (cd "$dir/proj" && with_timeout codex sandbox "${cfg[@]}" -- bash -c "$line") > "$dir/log" 2>&1 || rc=$?
+    (cd "$dir/proj" && with_timeout codex sandbox "${cfg[@]}" -- /bin/bash "$SHELL_FLAG" "$line") > "$dir/log" 2>&1 || rc=$?
   fi
   local verdict=OK
   if [ "$rc" -eq 142 ]; then verdict=TIMEOUT

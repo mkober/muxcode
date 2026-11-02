@@ -175,6 +175,8 @@ or per role.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `MUXCODE_CODEX_SANDBOX` | (unset → `danger-full-access`) | Codex sandbox for every Codex role. Unset, every Codex agent launches with **no sandbox** (user decision 2026-11-02, [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)); `workspace-write` opts back into the per-role grant table in [Codex CLI sandbox](#codex-cli-sandbox). Any set value other than `danger-full-access` is read as `workspace-write`, so a typo keeps the sandbox |
+| `MUXCODE_<ROLE>_CODEX_SANDBOX` | (unset) | Per-role override of `MUXCODE_CODEX_SANDBOX`, winning in both directions — `MUXCODE_TEST_CODEX_SANDBOX=workspace-write` sandboxes test alone; `MUXCODE_BUILD_CODEX_SANDBOX=danger-full-access` frees build under a sandboxed session (`codexSandboxMode`) |
 | `MUXCODE_CODEX_HOOKS` | (unset → on) | Session-wide switch (`1`/`true`/`on`/`yes` or `0`/`false`/`off`/`no`; unset means on). When on, `PrepareCodexHooks` writes `<repo>/.codex/hooks.json` before every codex launch and the agent's chains, guards and delivery run through hooks |
 | `MUXCODE_{ROLE}_CODEX_HOOKS` | (unset) | Per-role override, wins over the session value (e.g. `MUXCODE_BUILD_CODEX_HOOKS=1`, `MUXCODE_REVIEW_CODEX_HOOKS=0`) |
 | `CODEX_HOME` | `~/.codex` | Read, never set: the `config.toml` there is checked for `[features] hooks = false`, which makes the role ineligible |
@@ -231,7 +233,16 @@ Provider comparison:
 | LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | OpenAI (GPT-4.1, o3, o4-mini, etc.) | Ollama (any pulled model) |
 | Startup handling | Trust + bypass prompts | TUI frame detection | Prompt ready detection | N/A |
 
-**Codex CLI sandbox**: Codex runs commands under a selectable sandbox (`-s workspace-write` by default here) where writes inside the workspace succeed, writes outside are refused, and outbound network is **off by default** (DNS resolution fails with `[Errno 8]`). muxcode widens it per role, and only once a role's failure has been observed (`bus/provider_codex.go`):
+**Codex CLI sandbox**: Codex runs commands under a selectable sandbox. **By default muxcode launches every Codex role with no sandbox** (`-s danger-full-access`) — the user's decision of 2026-11-02 ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)): Codex's Seatbelt policy is compiled into the binary and denies `system-info vfs.disk-space`, so `AVAssetWriter.startWriting()` failed in every directory and tibo's suite crashed on the Codex test agent while all 270 tests passed on the host; no writable root, network switch, env or config can extend it. The approval policy is unchanged (`-a never`; `-a on-request` for review and analyze, where nothing now escalates) and research keeps `--search`.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `MUXCODE_CODEX_SANDBOX` | `danger-full-access` | `workspace-write` opts every Codex role back into the sandbox described below. Any set value other than `danger-full-access` is read as `workspace-write` — a typo keeps the sandbox, never drops it |
+| `MUXCODE_<ROLE>_CODEX_SANDBOX` | (unset) | Per-role override, e.g. `MUXCODE_TEST_CODEX_SANDBOX=workspace-write`; wins over the session variable in both directions (`codexSandboxMode`, `bus/provider_codex.go`) |
+
+Changing either changes `codexSandboxArgs`, so the sandbox fingerprint changes and the agent-defs watchdog reloads the running Codex agents onto the new policy after the next install or restart (`TestLaunchSandboxFingerprint_FollowsSandboxArgs`). `scripts/probe-xcode-sandbox.sh` pins `MUXCODE_{BUILD,TEST}_CODEX_SANDBOX=workspace-write` because it measures the opt-in.
+
+**Under the `workspace-write` opt-in** — everything below describes it, `codexWorkspaceWriteArgs`, byte-identical to the pre-decision launch — writes inside the workspace succeed, writes outside are refused, and outbound network is **off by default** (DNS resolution fails with `[Errno 8]`). muxcode widens it per role, and only once a role's failure has been observed (`bus/provider_codex.go`):
 
 | Role | Grant | Why |
 |------|-------|-----|

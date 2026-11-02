@@ -1,0 +1,21 @@
+#!/bin/sh
+# muxcode Codex shim (MUX-207). SwiftPM compiles manifests and plugins inside
+# its own sandbox-exec, which macOS refuses within Codex's Seatbelt sandbox
+# ("sandbox_apply: Operation not permitted"); no environment variable turns it
+# off, so --disable-sandbox is added right after the subcommands that compile —
+# before any operand, since `swift run EXE ARGS` hands later words to EXE.
+# It is added unconditionally: SwiftPM accepts the flag repeated, and no scan
+# can tell its own options from EXE's (`swift run probe --disable-sandbox`).
+# Outside a Codex sandbox the call passes through unchanged.
+. "${0%/*}/lib.sh"
+
+if shim_in_codex_sandbox; then
+  case ${1:-} in
+    build | test | run | package)
+      shim_sub=$1
+      shift
+      set -- "$shim_sub" --disable-sandbox "$@"
+      ;;
+  esac
+fi
+shim_exec swift "$@"

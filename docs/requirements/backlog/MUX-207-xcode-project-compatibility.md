@@ -116,6 +116,12 @@ A separate defect; this spec only points at it.
    Codex sandbox. The fix makes Codex build and test work for Swift and Xcode projects. Routing
    build and test to Claude is a fallback, used only for what the experiment proves cannot work,
    and only with the user's approval.
+4. **Codex sandbox (2026-11-02): "Run Codex's test agent with no sandbox, make this a default for
+   all codex agents in muxcode."** Made after the Phase 4 live run in tibo: the suite crashed on a
+   Seatbelt `system-info vfs.disk-space` deny that no grant reaches (see
+   [Phase 4 findings](#phase-4-findings-2026-11-02)). Every Codex role now launches
+   `-s danger-full-access`; `MUXCODE_CODEX_SANDBOX=workspace-write` (or the per-role variable) opts
+   back into the sandbox, under which the Phase 4 shims and roots still apply.
 
 ## Requirements
 
@@ -127,8 +133,12 @@ A separate defect; this spec only points at it.
       here before any fix — _2026-10-29, see
       [Phase 1 findings](#phase-1-findings-2026-10-29); the only code in the tree is the probe
       script_
-- [ ] Codex build and test agents can build and test a SwiftPM package nested below the repo root:
+- [x] Codex build and test agents can build and test a SwiftPM package nested below the repo root:
       tibo's `scripts/test.sh` and `scripts/build-docs.sh` pass on the Codex test and build agents
+      _(2026-11-02, on the no-sandbox default of user decision 4: tibo hook rows exit 0 —
+      `scripts/test.sh` `ts 1793636350`, 270 tests / 55 suites; `scripts/build-docs.sh`
+      `ts 1793636337`. Under the `workspace-write` opt-in the Phase 4 shims make `build-docs.sh`
+      pass, while `test.sh` fails on a Seatbelt deny no grant reaches — see Phase 4 findings.)_
 - [x] Swift and Xcode build and test commands are classified: each writes an authoritative history
       row and fires its chain; a bare `scripts/test.sh` / `scripts/build-*.sh` is classified as well
       as the `bash` form; negative control — a non-build Swift call such as `swift --version` stays
@@ -172,8 +182,9 @@ is a fully configured project left byte-identical.
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/provider_codex.go` | `codexWritableRoots` (`:141`), `codexPackageCacheEnv` (`:201`) — the sandbox grants and cache relocation |
+| `tools/muxcode/bus/provider_codex.go` | `codexWritableRoots` (`:141`), `codexPackageCacheEnv` (`:201`) — the sandbox grants and cache relocation; Phase 4 adds `codexShimEnv`, `swiftPMCacheRoots`, `codexHostOS` |
 | `tools/muxcode/bus/provider_codex_test.go` | the per-role sandbox pins, including `OtherRolesUnwidened` |
+| `config/codex-shim/` | Phase 4 — `swift` and `xcodebuild` shims plus `bash_env`, installed to `$(CONFIGDIR)/codex-shim/` by `make install` and reached through `BASH_ENV` on the Codex build and test agents |
 | `tools/muxcode/bus/hook.go` | `DefaultBuildPatterns` (`:359`), `DefaultTestPatterns` (`:371`), `matchPatterns` |
 | `tools/muxcode/bus/detect.go` | `DetectProject` (`:107`), the Swift context text (`~310`) |
 | `tools/muxcode/bus/profile.go` | `runWatchActions` (`:556`), `DefaultConfig().ToolProfiles` (`:580+`), edit's `DenyTools` |
@@ -283,7 +294,9 @@ probe is read-only only with respect to the repository.
    project edit and no host-wide `defaults write`; Codex's Seatbelt still confines the process, and
    SwiftPM's nested sandbox is redundant inside it. Pinned by tests: the `PATH` entry present for
    build and test, absent for every other role. Not chosen: telling projects to pass
-   `--disable-sandbox` themselves, a per-project script edit.
+   `--disable-sandbox` themselves, a per-project script edit. _(Superseded in part: the `PATH`
+   road fails under Codex's `bash -lc` — see [Phase 4 findings](#phase-4-findings-2026-11-02); the
+   shim reaches `PATH` through `BASH_ENV` instead.)_
 2. **Writable root `~/Library/Caches/org.swift.swiftpm` for build** (and test, if `xcodebuild test`
    runs there), narrowed in Phase 4 to the smallest set that keeps `xcodebuild` passing. No
    `~/Library/Developer` grant.
@@ -341,9 +354,130 @@ probe is read-only only with respect to the repository.
 
 ### Phase 4: Codex sandbox fix
 
-- [ ] Apply the fix Phase 1 chose, in `codexWritableRoots` and/or `codexPackageCacheEnv`
-- [ ] Pin it: the new roots or env present for build and test, absent for every other role
-- [ ] tibo's `scripts/test.sh` and `scripts/build-docs.sh` pass on the Codex test and build agents
+- [x] Apply the fix Phase 1 chose, in `codexWritableRoots` and/or `codexPackageCacheEnv`
+      _(2026-11-02 — `swiftPMCacheRoots` in `codexWritableRoots`, `codexShimEnv` beside
+      `codexPackageCacheEnv`, and the `config/codex-shim/` shims; Seatbelt-verified 11/11 (see
+      findings). Review `1793632359` found one must-fix — the `swift` shim's argument scan let an
+      executable's own `--disable-sandbox` suppress SwiftPM's — fixed by inserting the flag
+      unconditionally (`TestCodexShim_Flags` cases `run probe --disable-sandbox`,
+      `--disable-sandbox-check`); re-review `1793632578` clean, `./build.sh` exit 0 (`ts 1793632523`).
+      The post-fix `./test.sh` pass is the test agent's self-report with no hook row; the last
+      row-backed suite pass is pre-fix, `ts 1793632253`.)_
+- [x] Pin it: the new roots or env present for build and test, absent for every other role
+      _(`TestCodexBuildExecArgs_SwiftShimAndCacheOnDarwin`; negative controls `NoSwiftGrantsOffDarwin`,
+      `NoShimWithoutInstallDir`, `OtherRolesUnwidened`, `WatchGetsNetworkOnly`; `./test.sh` exit 0,
+      hook row `ts 1793632253`, 2026-11-02)_
+- [x] tibo's `scripts/test.sh` and `scripts/build-docs.sh` pass on the Codex test and build agents
+      _(2026-11-02. Under workspace-write: `build-docs.sh` PASS, `test.sh` FAIL — AVAssetWriter
+      refused by Seatbelt's `system-info` deny, see the findings; user decision 4 drops the sandbox
+      by default. Re-run on tibo's reloaded no-sandbox agents — stamps `launchsandbox-{build,test}.hash`
+      `68d8b216…` 10:43, equal to the installed `agent sandbox-fingerprint` and to each other, so no
+      per-role grants — `scripts/test.sh` hook row exit 0 `ts 1793636350` (270 tests in 55 suites,
+      1 skipped), `scripts/build-docs.sh` hook row exit 0 `ts 1793636337`.)_
+
+### Phase 4 findings (2026-11-02)
+
+**Deviation from Fix-chosen item 1, measured.** Phase 1 planned the shim directory on `PATH` via
+`shell_environment_policy.set.PATH`. That cannot work: Codex runs every command as `/bin/bash -lc`
+(the rollouts show `"command":["/bin/bash","-lc",…]`), a login profile may set `PATH` outright —
+`~/.bash_profile` on the test host exports an absolute `PATH`, so a launch-time entry vanished
+entirely — and bash reads `BASH_ENV` *after* the login profile, even for `-lc`. So the shim
+directory reaches `PATH` through `BASH_ENV` → `<install dir>/codex-shim/bash_env`, which puts its
+own directory first (once). Caveats: bash-only — zsh ignores `BASH_ENV`, and a zsh login shell gets
+no shim; a `BASH_ENV` the user set is replaced for build's and test's commands; `xcrun swift`,
+`xcrun xcodebuild` and absolute paths bypass the shim.
+
+**What shipped (uncommitted at writing).**
+
+| Piece | Behaviour |
+|-------|-----------|
+| `config/codex-shim/{swift,xcodebuild,lib.sh,bash_env}` | POSIX sh shims. `swift` inserts `--disable-sandbox` right after `build\|test\|run\|package` (before any operand — `swift run EXE ARGS` hands later words to EXE), unconditionally: SwiftPM accepts the flag repeated, and no scan can tell its own options from EXE's (the first cut skipped it when present, so `swift run probe --disable-sandbox` left SwiftPM sandboxed — review must-fix, fixed); `xcodebuild` prepends the two `-IDEPackageSupportDisable*Sandbox=YES` defaults unless either is set. Both act only when `CODEX_SANDBOX=seatbelt`, else pure pass-through to the first real binary on `PATH` outside the shim dir. `make install` copies them to `$(CONFIGDIR)/codex-shim/` |
+| `codexShimEnv` (`bus/provider_codex.go`) | build and test on macOS get `-c shell_environment_policy.set.BASH_ENV="<install dir>/codex-shim/bash_env"`; nil for other roles, other OSes, or no resolvable install dir. The fingerprint hashes the path, not the content, so an install reaches running agents without a reload |
+| `swiftPMCacheRoots` | build and test on macOS get `--add-dir ~/Library/Caches/org.swift.swiftpm` — the only root a failure named. No `~/Library/Developer` grant (item 2, narrowed) |
+| `codexHostOS` | `runtime.GOOS` as a variable seam so the darwin-only grants test on any host |
+| Tests | `SwiftShimAndCacheOnDarwin`; negative controls `NoSwiftGrantsOffDarwin`, `NoShimWithoutInstallDir`, plus `OtherRolesUnwidened` / `WatchGetsNetworkOnly` rerun with the macOS grants on; `TestCodexShim_Flags` runs the real shims against fake binaries in and out of the sandbox; `TestCodexShim_BashEnvPrependsShimDir` (prepend, no-`BASH_ENV` control, prepend-once) |
+| `scripts/probe-xcode-sandbox.sh` | Launch-policy mirror gains the SwiftPM root and `BASH_ENV` so the fingerprint check still matches the new binary; new `--login` runs cells as `/bin/bash -lc` as Codex does, so `base` now measures the fixed policy |
+
+**Verification under real Seatbelt, before install.** `/tmp/mux207-verify-shim.sh` through the run
+agent (reply `1793632100-run-40f1c490`, exit 0; watch tail "ALL 11 cells as-expected"), each cell
+under `codex sandbox` workspace-write with network — the build/test launch shape — on the probe's
+tibo-shaped fixture:
+
+| Cell | Result |
+|------|--------|
+| `-lc`, shim + SwiftPM root: `swift build`, `swift test` (1 XCTest passed), `swift run probe`, `xcodebuild … generic iOS Simulator build` | OK (`BUILD SUCCEEDED`); `command -v` resolved the shim each time |
+| Control — `-lc`, no shim | `/usr/bin/swift`; `Invalid manifest … sandbox_apply: Operation not permitted`; xcodebuild rc=74 |
+| Control — shim, no root | xcodebuild `cannot open file ~/Library/Caches/org.swift.swiftpm/manifests/ManifestLoading/probekit.dia … (Operation not permitted)` — the root is required |
+| Hand-flag reference (Phase 1 shape, `-c`) | OK |
+
+An earlier verifier run omitted network and failed every cell (xcodebuild rc=74, swift manifest) —
+the verifier's error, not the shim's: build and test launch with network on.
+
+**Box 3 measured (2026-11-02) — the sandbox fails tibo's suite for a reason no grant can reach.**
+tibo's Codex build and test agents reloaded at 10:09:52 onto the Phase 4 sandbox (shim + SwiftPM
+root) and ran the project's own scripts:
+
+| Run | Agent | Result |
+|-----|-------|--------|
+| `scripts/build-docs.sh` | tibo build (Codex, workspace-write) | PASS — hook rows exit 0 (`ts 1793633074`, `1793633079`); warnings only, SwiftPM cache paths "not writable" |
+| `scripts/test.sh` | tibo test (Codex, workspace-write) | FAIL — hook row exit 1 (`ts 1793633089`): Tibo Link 11/11 passed, then `TiboCoreTests` crashed at `PhotoSyncTests.swift:39` (`adaptor.pixelBufferPool!` nil) |
+| `scripts/test.sh` control | muxcode run agent (Claude, no sandbox) | PASS — 11 tests in 2 suites + 270 in 55 suites, 0 failures (`/tmp/tibo-test.log`; backgrounded, so no hook row) |
+
+Cause probe (run reply `1793633752-run-5219a0b2`): a compiled AVAssetWriter H.264 writer
+reproducing tibo's `TestMedia.movie()`. `startWriting()` returns true on the host and false under
+the test-role Seatbelt policy in both `$TMPDIR` and the workspace, the destination directory
+writable in every cell — `AVFoundationErrorDomain -11800`, underlying `NSOSStatusErrorDomain -12903`.
+The Seatbelt log names it: `deny(1) system-info vfs.disk-space` ×13 — AVAssetWriter's free-space
+check is refused, so directory permissions are irrelevant. Codex 0.162.1's Seatbelt policy is
+compiled into the binary with no `system-info` allow; no writable root, network switch, env or
+config can extend it. Affected tibo tests: every `TestMedia.movie()` user
+(`PhotoSyncTests.swift:177`, `FolderLibraryTests.swift:63`).
+
+**User decision 4 (2026-11-02).** "Run Codex's test agent with no sandbox, make this a default for
+all codex agents in muxcode."
+
+**Code change (uncommitted at writing).**
+
+| Piece | Behaviour |
+|-------|-----------|
+| `codexSandboxMode(role)` (`bus/provider_codex.go`) | `MUXCODE_<ROLE>_CODEX_SANDBOX` wins, then `MUXCODE_CODEX_SANDBOX`, then the default `danger-full-access`. Any set value other than `danger-full-access` selects `workspace-write` — a typo keeps the sandbox, never drops it |
+| `codexSandboxArgs` | By default `-s danger-full-access` and **none** of the workspace-write grants (no `--add-dir`, no `network_access`, no package-cache env, no `BASH_ENV` shim). The opt-out goes through `codexWorkspaceWriteArgs`, byte-identical to the previous arguments. Approval policy unchanged (`-a never`; `-a on-request` for review and analyze, where nothing now escalates); research keeps `--search` |
+| Fingerprint | `codexSandboxArgs` changed, so the agent-defs watchdog reloads every running Codex agent onto no sandbox after install |
+| Tests | `TestCodexBuildExecArgs_DefaultIsFullAccess`; `TestCodexSandboxMode_OptOutAndPrecedence` (opt-out, precedence both ways, typo keeps the sandbox — the negative control); the existing grant tests run on the opt-out via `argsFor`; `TestLaunchSandboxFingerprint_FollowsSandboxArgs` also checks that dropping the sandbox changes the fingerprint |
+| `scripts/probe-xcode-sandbox.sh` | Pins `MUXCODE_{BUILD,TEST}_CODEX_SANDBOX=workspace-write` — it measures the opt-out |
+| Root `CLAUDE.md` | Codex CLI sandbox bullet rewritten by edit; [`docs/configuration.md`](../../configuration.md), [`docs/architecture.md`](../../architecture.md), [`docs/agents.md`](../../agents.md) by plan |
+
+**What this does to the Fix-chosen items.** Items 1–2 (the shims, the SwiftPM cache root) now apply
+only under the `workspace-write` opt-out: the default launch has no Seatbelt, so SwiftPM's nested
+`sandbox-exec` is not refused and the shims — gated on `CODEX_SANDBOX=seatbelt` — pass through.
+Item 3 (`simctl`/`devicectl` to Claude roles): the CoreSimulatorService failure was a Seatbelt
+denial, so it is expected not to arise under the default — **unmeasured**; the rerouting stays
+proposed for the opt-out only, still needing the user's approval there.
+
+**Box 3 re-run on the no-sandbox default (2026-11-02 11:18).** tibo's build and test agents were
+reloaded by the watchdog onto the installed binary at 10:43 (`launchsandbox-{build,test}.hash` both
+`68d8b216…`, matching `muxcode agent sandbox-fingerprint` — one hash for both roles, so no per-role
+grants: the `danger-full-access` launch). `scripts/test.sh` then passed — hook row exit 0
+`ts 1793636350`, 270 tests in 55 suites, 1 skipped — and `scripts/build-docs.sh` passed, hook row
+exit 0 `ts 1793636337`. Box 3 and AC2 ticked on those rows; Phase 4 complete.
+
+**Two consequences of decision 4, found by the chain the same day.**
+
+- *Review `1793636687` must-fix — the opt-in could lose its `-s`.* `codexSandboxArgs` at HEAD emitted
+  `-s workspace-write` only when a role had a resolvable root or a network grant; with every state
+  root unresolvable and no network (review, analyze, research, run, commit) it emitted no `-s`, and
+  the sandbox fell to whatever `~/.codex/config.toml` says. The hole predates MUX-207 but the
+  explicit opt-in made it a broken promise, so `codexWorkspaceWriteArgs` now opens with
+  `-s workspace-write` unconditionally, pinned by
+  `TestCodexBuildExecArgs_OptOutNamesPolicyWithNoGrants` (HOME under a regular file so no state root
+  can be created, with a fixture self-check that the roots really were unresolvable).
+- *`TestOpenCodeModelsExist` failed on the first unsandboxed run.* The Codex test agent could now
+  reach `opencode models`, which on a machine with no opencode credentials lists only the free
+  `opencode/*` models, so every `opencode-go` id read as missing (`./test.sh` exit 1,
+  `ts 1793636450`). `provider_models_test.go` now judges only providers the catalog offers at least
+  one model from (`missingOpenCodeModels`), skipping when it can judge none; `TestMissingOpenCodeModels`
+  is the negative control — a phantom id from an offered provider is still caught. `./test.sh` is
+  row-backed green again (`ts 1793636631`, `1793636696`).
 
 ### Phase 5: Tool profiles
 

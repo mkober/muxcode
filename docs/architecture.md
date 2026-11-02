@@ -1066,8 +1066,23 @@ back — the **scrape road** itself is unchanged.
 **Sandbox policy.** Codex runs commands under a *selectable* sandbox: `-s/--sandbox` takes
 `read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
 beside the workspace, and network access is controlled separately and restricted by default.
-`BuildExecArgs` (`bus/provider_codex.go`) passes `-s workspace-write` plus one `--add-dir` per root
-for **every** role. `codexWritableRoots` starts every role with `muxcodeStateRoots` — the lifecycle
+**Every Codex role launches with no sandbox (`-s danger-full-access`) by default** — the user's
+decision of 2026-11-02 ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)):
+Codex's Seatbelt policy is compiled into the Codex binary, and it denies `system-info
+vfs.disk-space`, so `AVAssetWriter.startWriting()` failed in every directory and tibo's suite
+crashed on the Codex test agent while all 270 tests passed on the host — a denial no writable root,
+network switch, env or config can lift. `codexSandboxMode` reads `MUXCODE_<ROLE>_CODEX_SANDBOX`,
+then `MUXCODE_CODEX_SANDBOX`; `workspace-write` opts a role or the session back into the sandbox,
+and any set value other than `danger-full-access` is read as that opt-in, so a typo never drops a
+sandbox the user asked for (`TestCodexBuildExecArgs_DefaultIsFullAccess`,
+`TestCodexSandboxMode_OptOutAndPrecedence`). The default emits none of the grants below — no
+`--add-dir`, no `network_access`, no cache environment, no `BASH_ENV` shim — the approval policy is
+unchanged (`-a never`; `-a on-request` for review and analyze, where nothing now escalates), and
+research keeps `--search`. Because `codexSandboxArgs` changed, the sandbox fingerprint changed, and
+the agent-defs watchdog reloads every running Codex agent onto no sandbox after the install.
+**Everything that follows describes the `workspace-write` opt-in** (`codexWorkspaceWriteArgs`,
+byte-identical to the pre-decision arguments). Under it `BuildExecArgs` (`bus/provider_codex.go`)
+passes `-s workspace-write` plus one `--add-dir` per root for **every** role. `codexWritableRoots` starts every role with `muxcodeStateRoots` — the lifecycle
 log dir (`LifecycleLogDir`, `~/.config/muxcode/logs`) and global memory dir (`GlobalMemoryDir`,
 `~/.config/muxcode/memory`) that an agent's own `muxcode` calls write. Before 2026-10-13 only build
 could write them, so every other Codex role's lifecycle rows were dropped silently and

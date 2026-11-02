@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -57,15 +58,13 @@ func (p *CodexProvider) ConfigureLaunch(cfg *LaunchConfig, role string) {
 // tmux compatibility (inline mode preserves scrollback).
 // Read-only roles (review, analyze) use -a on-request so Codex asks before
 // escalating beyond its sandbox. This is an approval policy, NOT a sandbox or
-// an allowlist: those roles get the same workspace-write policy as every other
-// role, so in-sandbox builds and tests still run unprompted. What forbids them
-// executing is their role instructions; on-request only surfaces the attempts
-// that reach outside, and checkCodexApprovals answers those, since nobody is
-// at the pane.
+// an allowlist: what forbids those roles executing is their role instructions.
+// Under the workspace-write opt-out, on-request surfaces the attempts that
+// reach outside and checkCodexApprovals answers them, since nobody is at the
+// pane; with no sandbox (the default, codexSandboxMode) nothing escalates.
 //
-// Every role gets workspace-write because every role writes muxcode's own state
-// outside the repo (codexWritableRoots); a role whose work needs more gets it
-// per role — writable roots, network, package caches in /tmp, web search.
+// Every role launches with no sandbox unless it opts back into workspace-write,
+// which then carries per-role grants (codexWorkspaceWriteArgs).
 // Does NOT use -C (--cd) — that flag changes the agent's working root,
 // which would prevent it from seeing the actual project files. Instead,
 // WriteAgentConfig writes role-specific AGENTS.md to .codex/AGENTS.md
@@ -101,18 +100,10 @@ func codexSandboxArgs(role string) []string {
 		args = append(args, "-a", "never")
 	}
 
-	roots, network := codexWritableRoots(role), codexNeedsNetwork(role)
-	if len(roots) > 0 || network {
-		args = append(args, "-s", "workspace-write")
-		for _, dir := range roots {
-			args = append(args, "--add-dir", dir)
-		}
-	}
-	if network {
-		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
-	}
-	for _, kv := range codexPackageCacheEnv(role) {
-		args = append(args, "-c", fmt.Sprintf("shell_environment_policy.set.%s=%q", kv[0], kv[1]))
+	if codexSandboxMode(role) == codexSandboxFullAccess {
+		args = append(args, "-s", codexSandboxFullAccess)
+	} else {
+		args = append(args, codexWorkspaceWriteArgs(role)...)
 	}
 	if codexNeedsWebSearch(role) {
 		args = append(args, "--search")
@@ -120,8 +111,64 @@ func codexSandboxArgs(role string) []string {
 	return args
 }
 
+// Codex sandbox policies (`codex -s`).
+const (
+	codexSandboxFullAccess     = "danger-full-access"
+	codexSandboxWorkspaceWrite = "workspace-write"
+)
+
+// roleCodexSandboxEnvVar names the per-role sandbox variable, e.g.
+// MUXCODE_TEST_CODEX_SANDBOX. Hosted aliases share their host's name.
+func roleCodexSandboxEnvVar(role string) string {
+	r := strings.ToUpper(strings.ReplaceAll(NormalizeBusRole(role), "-", "_"))
+	return "MUXCODE_" + r + "_CODEX_SANDBOX"
+}
+
+// codexSandboxMode returns the sandbox policy a Codex role launches under: the
+// per-role variable wins, then MUXCODE_CODEX_SANDBOX, then danger-full-access —
+// no sandbox, the default for every role by the user's decision of 2026-11-02.
+// Any other value set selects workspace-write, so a misspelt opt-out keeps the
+// sandbox rather than dropping it.
+//
+// Codex's Seatbelt policy is compiled into Codex and no writable root, network
+// switch or environment extends it: it denies `system-info vfs.disk-space`, so
+// AVAssetWriter.startWriting() fails (-11800/-12903) in any directory, and
+// tibo's TiboCoreTests crashed on the Codex test agent while all 270 tests
+// passed on the host (MUX-207 box 3, 2026-11-02).
+func codexSandboxMode(role string) string {
+	for _, key := range []string{roleCodexSandboxEnvVar(role), "MUXCODE_CODEX_SANDBOX"} {
+		if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
+			if strings.TrimSpace(v) == codexSandboxFullAccess {
+				return codexSandboxFullAccess
+			}
+			return codexSandboxWorkspaceWrite
+		}
+	}
+	return codexSandboxFullAccess
+}
+
+// codexWorkspaceWriteArgs returns the workspace-write policy with the grants a
+// role's work needs under it — writable roots, network, package caches in /tmp,
+// the swift/xcodebuild shims — for a role that opted back into the sandbox.
+// The policy flag is unconditional: with no roots resolved and no network, an
+// omitted -s would hand the choice to the user's Codex config, which may name no
+// sandbox at all.
+func codexWorkspaceWriteArgs(role string) []string {
+	args := []string{"-s", codexSandboxWorkspaceWrite}
+	for _, dir := range codexWritableRoots(role) {
+		args = append(args, "--add-dir", dir)
+	}
+	if codexNeedsNetwork(role) {
+		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
+	}
+	for _, kv := range append(codexPackageCacheEnv(role), codexShimEnv(role)...) {
+		args = append(args, "-c", fmt.Sprintf("shell_environment_policy.set.%s=%q", kv[0], kv[1]))
+	}
+	return args
+}
+
 // codexWritableRoots returns the directories a role must write outside the
-// repo, to be granted with --add-dir under the workspace-write policy.
+// repo, to be granted with --add-dir under the workspace-write opt-out.
 //
 // Codex takes a selectable sandbox policy and muxcode passed none, so every
 // agent inherited the default: writes inside the workspace succeed, writes
@@ -135,19 +182,76 @@ func codexSandboxArgs(role string) []string {
 // "package archive/tar is not in std" on the first stdlib package no build had
 // cached (MUX-160 Decision 1, test only by the user's choice).
 //
+// Both also get swiftPMCacheRoots on macOS (MUX-207).
+//
 // Every role also gets muxcodeStateRoots, the state its own `muxcode` calls
 // write. Add a role-specific root when its work is shown to write outside the
-// workspace — never widen the policy itself.
+// workspace — never widen the workspace-write policy itself.
 func codexWritableRoots(role string) []string {
 	roots := muxcodeStateRoots()
 	switch role {
 	case "build":
 		roots = append(roots, buildInstallRoots()...)
 		roots = append(roots, goToolchainRoots()...)
+		roots = append(roots, swiftPMCacheRoots()...)
 	case "test":
 		roots = append(roots, goToolchainRoots()...)
+		roots = append(roots, swiftPMCacheRoots()...)
 	}
 	return resolveWritableRoots(roots)
+}
+
+// codexHostOS is runtime.GOOS, a variable so tests can exercise the macOS-only
+// grants on any host.
+var codexHostOS = runtime.GOOS
+
+// swiftPMCacheRoots returns SwiftPM's user cache on macOS, nil elsewhere.
+// xcodebuild writes its manifest diagnostics there
+// (~/Library/Caches/org.swift.swiftpm/manifests/ManifestLoading/<pkg>.dia) and
+// no environment variable moves them: the MUX-207 probe of 2026-10-29 failed a
+// generic-simulator build with "Operation not permitted" on that path until it
+// was writable. It is the only root a failure named; ~/Library/Developer is not
+// granted, since tibo-style builds pass an in-repo -derivedDataPath. `swift
+// build` itself only warns on the unwritable cache.
+func swiftPMCacheRoots() []string {
+	if codexHostOS != "darwin" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	return []string{filepath.Join(home, "Library", "Caches", "org.swift.swiftpm")}
+}
+
+// codexShimEnv returns BASH_ENV pointing at the installed codex-shim/bash_env
+// (config/codex-shim, copied by `make install`) for build and test on macOS,
+// nil for every other role, host, or an unresolvable install directory.
+//
+// SwiftPM and xcodebuild nest their own sandbox-exec, which macOS refuses inside
+// Codex's Seatbelt sandbox — every `swift build|test|run` failed "Invalid
+// manifest … sandbox_apply: Operation not permitted" in the MUX-207 probe and
+// on tibo's build and test agents (2026-10-22). Only a command-line flag turns
+// it off, so muxcode's `swift` and `xcodebuild` shims add the flags and the
+// project's scripts run unmodified.
+//
+// The shims reach PATH through BASH_ENV, not a PATH value: Codex runs every
+// command as `/bin/bash -lc`, a login profile may set PATH outright (one did on
+// the MUX-207 test host, dropping a launch-time PATH entry, 2026-11-02), and
+// bash reads BASH_ENV after the profile. So the road is bash-only — a zsh
+// login shell ignores BASH_ENV — and a BASH_ENV the user set is replaced for
+// these two roles' commands. The fingerprint hashes the file's path, not its
+// content: the shims are read at each call, so an install reaches running
+// agents without a reload.
+func codexShimEnv(role string) [][2]string {
+	if (role != "build" && role != "test") || codexHostOS != "darwin" {
+		return nil
+	}
+	dir := resolveInstallDir()
+	if dir == "" {
+		return nil
+	}
+	return [][2]string{{"BASH_ENV", filepath.Join(dir, "codex-shim", "bash_env")}}
 }
 
 // buildInstallRoots returns the install targets of `make install`, tracking

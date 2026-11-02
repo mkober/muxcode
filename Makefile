@@ -93,6 +93,10 @@ install: build
 	@# installed copy. With -n every rename silently stopped at the source.
 	@cp config/models.conf $(CONFIGDIR)/models.conf
 	@cp config/tmux.conf $(CONFIGDIR)/tmux.conf
+	@# Codex build/test agents' swift and xcodebuild shims, reached through BASH_ENV (MUX-207).
+	@install -d $(CONFIGDIR)/codex-shim
+	@install -m 755 config/codex-shim/swift config/codex-shim/xcodebuild $(CONFIGDIR)/codex-shim/
+	@install -m 644 config/codex-shim/lib.sh config/codex-shim/bash_env $(CONFIGDIR)/codex-shim/
 	@install -d $(HOME)/.claude/commands
 	@cp -n config/commands/*.md $(HOME)/.claude/commands/ 2>/dev/null || true
 	@cp -n muxcode.conf.example $(CONFIGDIR)/config 2>/dev/null || true
