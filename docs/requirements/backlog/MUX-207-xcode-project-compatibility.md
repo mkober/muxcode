@@ -154,9 +154,12 @@ A separate defect; this spec only points at it.
       detection: it never overwrites; it leaves the files untracked; it writes a lifecycle row
       naming what was created; it sends edit a notice listing the new files to review and commit;
       negative control — a project with all three present is untouched
-- [ ] Tool profiles grant the Apple and Swift toolchain where each role needs it, and edit's
+- [x] Tool profiles grant the Apple and Swift toolchain where each role needs it, and edit's
       `DenyTools` cover Swift and Xcode builds and tests — pinned by the profile test
-- [ ] watch has a documented way to follow macOS, iOS and tvOS app logs
+      _(Phase 5, 2026-11-02: `apple*Tools` per role, edit `DenyTools` + `editGuardRules`;
+      `TestResolveTools_AppleToolchain`, `TestEditProfile_DenyTools`, `TestCheckEditGuard_*`)_
+- [x] watch has a documented way to follow macOS, iOS and tvOS app logs
+      _(Phase 5: `agents/log-watcher.md` unified-log recipe; `docs/agents.md` copy due in Phase 7)_
 
 ### Technical approach
 
@@ -481,13 +484,34 @@ exit 0 `ts 1793636337`. Box 3 and AC2 ticked on those rows; Phase 4 complete.
 
 ### Phase 5: Tool profiles
 
-- [ ] Apple and Swift tool groups per role: build/test (`swift`, `xcodebuild`, `xcodegen`),
+- [x] Apple and Swift tool groups per role: build/test (`swift`, `xcodebuild`, `xcodegen`),
       watch (`log stream`/`log show`, `xcrun simctl spawn … log stream`), serve (`open`,
       `xcrun simctl launch`, `swift run`), deploy (`codesign`, `xcrun devicectl`, `notarytool`,
       `security`, `plutil`, `iconutil`)
-- [ ] edit's `DenyTools` cover `swift build`, `swift test` and `xcodebuild`
-- [ ] The watch app-log recipe documented for macOS, iOS simulator and tvOS
-- [ ] Pinned by the profile test
+      _(2026-11-02 — `appleBuildTools`, `appleTestTools`, `appleLogTools`, `appleServeTools`,
+      `appleDeployTools` in `bus/profile.go`, appended to each role's `Tools` (not `SharedTools`) so
+      `CdPrefix` yields the nested-package `cd packages/Kit && swift build` form. Deviation, accepted
+      in review: `security` is narrowed to `find-identity`/`find-certificate`/`import` — a blanket
+      grant would include `find-generic-password -w` and `dump-keychain`, which print keychain
+      secrets; `xcrun stapler` and `xcrun simctl list` added beyond the list above.)_
+- [x] edit's `DenyTools` cover `swift build`, `swift test` and `xcodebuild`
+      _(`swift build*`, `swift test*`, `xcodebuild*`, `xcrun xcodebuild*`. `DenyTools` bite only on
+      OpenCode, so `editGuardRules` in `bus/hook.go` gains the same prefixes with a reason routing
+      builds to build and tests to test — the enforcement on Claude edit. Follow-up, not done:
+      `planGuardRules` still lack the Swift/Xcode prefixes.)_
+- [x] The watch app-log recipe documented for macOS, iOS simulator and tvOS
+      _(`agents/log-watcher.md` "macOS, iOS and tvOS apps (unified log)": `log show --last` /
+      `log stream --timeout`, `xcrun simctl spawn booted|<udid> log …`, every call bounded and piped
+      to `muxcode pii-scrub`; simulator control named as serve's work, device install as deploy's.
+      The `docs/agents.md` copy is Phase 7.)_
+- [x] Pinned by the profile test
+      _(`TestResolveTools_AppleToolchain` — per-role wants, cross-role negative controls, no blanket
+      `security`/`simctl`/`xcrun`/`swift` grant, no keychain-secret verb for any role;
+      `TestEditProfile_DenyTools` Swift entries and no blanket `swift` deny;
+      `TestCheckEditGuard_Blocked` Swift/Xcode cases incl. cd-prefixed and `xcrun` forms;
+      `TestCheckEditGuard_Allowed` negative controls `swift --version`, `which xcodebuild`.
+      `./test.sh` exit 0 hook rows `ts 1793637381`, `1793637390`; reviews `6d007736`, `7f9dd1b0`
+      clean after the guard-test should-fix of `3531309c` was addressed.)_
 
 ### Phase 6: Session-start initialization
 

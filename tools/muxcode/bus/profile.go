@@ -589,6 +589,39 @@ func appleTestRunShapes() []string {
 	return shapes
 }
 
+// Apple and Swift tool groups (MUX-207), one per role that needs the
+// toolchain. They are appended to a role's Tools rather than registered as
+// SharedTools because only Tools get CdPrefix variants, and a nested SwiftPM
+// package is run as `cd packages/Kit && swift build`. Simulator control sits
+// with serve, signing and device install with deploy, log reading with watch.
+// `security` is narrowed to identity lookup and import: its password verbs
+// (`find-generic-password -w`, `dump-keychain`) print keychain secrets.
+var (
+	appleBuildTools = []string{
+		"Bash(swift build*)", "Bash(swift package*)",
+		"Bash(xcodebuild*)", "Bash(xcrun xcodebuild*)", "Bash(xcodegen*)",
+	}
+	appleTestTools = []string{
+		"Bash(swift test*)",
+		"Bash(xcodebuild*)", "Bash(xcrun xcodebuild*)", "Bash(xcodegen*)",
+	}
+	appleLogTools = []string{
+		"Bash(log stream*)", "Bash(log show*)", "Bash(xcrun simctl list*)",
+		"Bash(xcrun simctl spawn * log stream*)", "Bash(xcrun simctl spawn * log show*)",
+	}
+	appleServeTools = []string{
+		"Bash(open *)", "Bash(swift run*)",
+		"Bash(xcrun simctl list*)", "Bash(xcrun simctl boot*)", "Bash(xcrun simctl install*)",
+		"Bash(xcrun simctl launch*)", "Bash(xcrun simctl terminate*)",
+	}
+	appleDeployTools = []string{
+		"Bash(codesign*)", "Bash(xcrun devicectl*)",
+		"Bash(xcrun notarytool*)", "Bash(xcrun stapler*)",
+		"Bash(security find-identity*)", "Bash(security find-certificate*)", "Bash(security import*)",
+		"Bash(plutil*)", "Bash(iconutil*)",
+	}
+)
+
 // DefaultConfig returns compiled-in defaults matching current bash/Go behavior.
 //
 // A chain message may state only what its trigger establishes: a command's
@@ -670,7 +703,7 @@ func DefaultConfig() *MuxcodeConfig {
 				Include:     []string{"bus", "readonly", "common"},
 				CdPrefix:    true,
 				BashTimeout: 600,
-				Tools: []string{
+				Tools: append([]string{
 					"Bash(./build.sh*)", "Bash(make*)",
 					"Bash(pnpm run build*)", "Bash(pnpm build*)", "Bash(npm run build*)",
 					"Bash(npx *)", "Bash(go build*)", "Bash(cargo build*)",
@@ -681,13 +714,13 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(go mod tidy*)", "Bash(go mod download*)", "Bash(go generate*)", "Bash(golangci-lint*)",
 					"Bash(cargo fmt --check*)", "Bash(tsc *)",
 					"Bash(pnpm audit*)",
-				},
+				}, appleBuildTools...),
 			},
 			"test": {
 				Include:     []string{"bus", "readonly", "common"},
 				CdPrefix:    true,
 				BashTimeout: 600,
-				Tools: []string{
+				Tools: append([]string{
 					"Bash(./test.sh*)", "Bash(./scripts/muxcode-test-wrapper.sh*)",
 					"Bash(./scripts/test-and-notify.sh*)",
 					"Bash(go test*)", "Bash(go vet*)",
@@ -699,7 +732,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(go tool cover*)", "Bash(go mod *)",
 					"Bash(npx c8*)", "Bash(nyc *)", "Bash(coverage*)",
 					"Bash(python -m coverage*)", "Bash(tox *)",
-				},
+				}, appleTestTools...),
 			},
 			"review": {
 				Include:  []string{"bus", "readonly", "common"},
@@ -741,6 +774,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"go build*", "cargo build*",
 					"pnpm test*", "pnpm run test*", "jest*", "pytest*",
 					"go test*", "cargo test*",
+					"swift build*", "swift test*", "xcodebuild*", "xcrun xcodebuild*",
 					"cdk synth*", "cdk diff*", "cdk deploy*",
 					"aws logs*", "tail -f*", "kubectl logs*", "docker logs*", "stern*",
 					"aws lambda*", "aws stepfunctions*", "aws s3*", "aws s3api*",
@@ -762,7 +796,7 @@ func DefaultConfig() *MuxcodeConfig {
 			"deploy": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
-				Tools: []string{
+				Tools: append([]string{
 					"Bash(cdk *)", "Bash(npx cdk *)",
 					"Bash(envName=* cdk *)", "Bash(envName=* npx cdk *)",
 					"Bash(export envName=* && cdk *)", "Bash(export envName=* && npx cdk *)",
@@ -775,7 +809,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(pnpm install*)", "Bash(npm install*)", "Bash(pip install*)",
 					"Bash(cfn-lint*)", "Bash(tflint*)", "Bash(checkov*)",
 					"Bash(curl*)", "Bash(wget*)",
-				},
+				}, appleDeployTools...),
 			},
 			"run": {
 				Include:  []string{"bus", "readonly", "common"},
@@ -846,7 +880,7 @@ func DefaultConfig() *MuxcodeConfig {
 			"watch": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
-				Tools: []string{
+				Tools: append([]string{
 					"Bash(tail *)", "Bash(journalctl *)",
 					"Bash(aws logs*)", "Bash(aws cloudwatch*)",
 					"Bash(gcloud logging*)", "Bash(az monitor*)",
@@ -863,7 +897,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(curl *)",
 					"Read(/tmp/muxcode-bus-*/serve-state.json)",
 					"Read(/private/tmp/muxcode-bus-*/serve-state.json)",
-				},
+				}, appleLogTools...),
 			},
 			"pr-read": {
 				Include:  []string{"bus", "readonly", "common"},
@@ -898,7 +932,7 @@ func DefaultConfig() *MuxcodeConfig {
 			"serve": {
 				Include:  []string{"bus", "readonly", "common"},
 				CdPrefix: true,
-				Tools: []string{
+				Tools: append([]string{
 					"Bash(./run.sh*)", "Bash(./run-dev.sh*)", "Bash(./dev.sh*)",
 					"Bash(bash run.sh*)", "Bash(bash run-dev.sh*)", "Bash(bash dev.sh*)",
 					"Bash(curl*)", "Bash(wget*)",
@@ -917,7 +951,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(mkdir *)", "Bash(rm *)", "Bash(touch *)",
 					"Bash(source *)", "Bash(export *)",
 					"Read(/tmp/muxcode-bus-*)", "Read(/private/tmp/muxcode-bus-*)",
-				},
+				}, appleServeTools...),
 			},
 			"auto": {
 				Include:  []string{"bus", "readonly", "common"},

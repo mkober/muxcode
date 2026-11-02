@@ -695,6 +695,11 @@ func TestCheckEditGuard_Blocked(t *testing.T) {
 		{"jest --watch", "Test commands"},
 		{"go test ./...", "Test commands"},
 		{"pytest -v", "Test commands"},
+		{"swift build", "Swift and Xcode"},
+		{"cd packages/TiboKit && swift test", "Swift and Xcode"},
+		{"xcodebuild -scheme Tibo -destination 'generic/platform=iOS Simulator' build", "Swift and Xcode"},
+		{"xcodebuild test -scheme Tibo", "Swift and Xcode"},
+		{"xcrun xcodebuild build", "Swift and Xcode"},
 		{"cdk diff", "Deploy commands"},
 		{"npx cdk synth", "Deploy commands"},
 		{"terraform plan", "Deploy commands"},
@@ -727,6 +732,8 @@ func TestCheckEditGuard_Allowed(t *testing.T) {
 		"muxcode send build build test",
 		"cat /tmp/foo",
 		"which node",
+		"swift --version",
+		"which xcodebuild",
 	}
 	for _, cmd := range allowed {
 		if d := CheckEditGuard(cmd); d != nil {

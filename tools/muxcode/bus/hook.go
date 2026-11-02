@@ -1217,6 +1217,10 @@ var editGuardRules = []guardRule{
 		reason: `BLOCKED: Test commands are prohibited in the edit window. Delegate to the test agent. Run: muxcode send test test "Run tests and report results" --wait`,
 	},
 	{
+		prefixes: []string{"swift build", "swift test", "xcodebuild", "xcrun xcodebuild"},
+		reason:   `BLOCKED: Swift and Xcode builds and tests are prohibited in the edit window. Delegate builds to the build agent and tests to the test agent. Run: muxcode send build build "Run the Swift/Xcode build and report results" --wait (or muxcode send test test "Run the Swift/Xcode tests and report results" --wait)`,
+	},
+	{
 		prefixes: []string{"cdk ", "npx cdk ", "terraform ", "pulumi ", "sam "},
 		reason:   `BLOCKED: Deploy commands are prohibited in the edit window. Delegate to the deploy agent. Run: muxcode send deploy deploy "<describe the deploy operation>" --wait`,
 	},

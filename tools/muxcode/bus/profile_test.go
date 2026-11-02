@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -139,6 +141,73 @@ func TestResolveTools_Watch(t *testing.T) {
 	assertContains(t, tools, "Bash(cd * && tail *)")
 	assertContains(t, tools, "Bash(cd * && aws logs*)")
 	assertContains(t, tools, "Bash(cd * && kubectl logs*)")
+}
+
+// TestResolveTools_AppleToolchain pins MUX-207's per-role Apple and Swift
+// groups: each reaches the role that owns that work, with the cd-prefixed form
+// a nested SwiftPM package needs, and no further. edit gets none; no role is
+// granted the keychain secret verbs or blanket simctl/security.
+func TestResolveTools_AppleToolchain(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	tests := []struct {
+		role string
+		want []string
+		deny []string
+	}{
+		{"build",
+			[]string{"Bash(swift build*)", "Bash(cd * && swift build*)", "Bash(swift package*)",
+				"Bash(xcodebuild*)", "Bash(cd * && xcodebuild*)", "Bash(xcrun xcodebuild*)", "Bash(xcodegen*)"},
+			[]string{"Bash(swift test*)", "Bash(swift run*)", "Bash(codesign*)", "Bash(xcrun simctl launch*)"}},
+		{"test",
+			[]string{"Bash(swift test*)", "Bash(cd * && swift test*)", "Bash(xcodebuild*)",
+				"Bash(xcrun xcodebuild*)", "Bash(xcodegen*)"},
+			[]string{"Bash(swift build*)", "Bash(swift run*)", "Bash(codesign*)"}},
+		{"watch",
+			[]string{"Bash(log stream*)", "Bash(log show*)", "Bash(xcrun simctl list*)",
+				"Bash(xcrun simctl spawn * log stream*)", "Bash(xcrun simctl spawn * log show*)"},
+			[]string{"Bash(open *)", "Bash(xcrun simctl launch*)", "Bash(xcrun simctl boot*)",
+				"Bash(swift build*)", "Bash(xcodebuild*)", "Bash(codesign*)"}},
+		{"serve",
+			[]string{"Bash(open *)", "Bash(swift run*)", "Bash(cd * && swift run*)",
+				"Bash(xcrun simctl boot*)", "Bash(xcrun simctl install*)", "Bash(xcrun simctl launch*)"},
+			[]string{"Bash(swift build*)", "Bash(xcodebuild*)", "Bash(codesign*)", "Bash(xcrun devicectl*)"}},
+		{"deploy",
+			[]string{"Bash(codesign*)", "Bash(xcrun devicectl*)", "Bash(xcrun notarytool*)",
+				"Bash(security find-identity*)", "Bash(security find-certificate*)", "Bash(security import*)",
+				"Bash(plutil*)", "Bash(iconutil*)", "Bash(cd * && codesign*)"},
+			[]string{"Bash(swift test*)", "Bash(xcrun simctl launch*)", "Bash(open *)"}},
+		{"edit",
+			nil,
+			[]string{"Bash(swift build*)", "Bash(swift test*)", "Bash(swift run*)", "Bash(xcodebuild*)",
+				"Bash(xcodegen*)", "Bash(codesign*)", "Bash(log stream*)", "Bash(open *)"}},
+	}
+	for _, tt := range tests {
+		tools := ResolveTools(tt.role)
+		for _, w := range tt.want {
+			if !slices.Contains(tools, w) {
+				t.Errorf("%s: missing %s", tt.role, w)
+			}
+		}
+		for _, d := range tt.deny {
+			if slices.Contains(tools, d) {
+				t.Errorf("%s: must not have %s", tt.role, d)
+			}
+		}
+	}
+
+	for role := range DefaultConfig().ToolProfiles {
+		for _, tool := range ResolveTools(role) {
+			switch tool {
+			case "Bash(security *)", "Bash(security*)", "Bash(xcrun simctl*)", "Bash(xcrun simctl *)", "Bash(xcrun *)", "Bash(swift *)":
+				t.Errorf("%s: blanket Apple grant %s", role, tool)
+			}
+			if strings.Contains(tool, "find-generic-password") || strings.Contains(tool, "dump-keychain") {
+				t.Errorf("%s: keychain secret verb granted: %s", role, tool)
+			}
+		}
+	}
 }
 
 func TestResolveTools_PrRead(t *testing.T) {
@@ -1001,6 +1070,16 @@ func TestEditProfile_DenyTools(t *testing.T) {
 	}
 	if !denySet["pytest*"] {
 		t.Error("missing deny pattern: pytest*")
+	}
+
+	// Swift and Xcode builds and tests (MUX-207)
+	for _, pattern := range []string{"swift build*", "swift test*", "xcodebuild*", "xcrun xcodebuild*"} {
+		if !denySet[pattern] {
+			t.Errorf("missing deny pattern: %s", pattern)
+		}
+	}
+	if denySet["swift*"] || denySet["swift *"] {
+		t.Error("blanket swift deny would also refuse `swift --version`")
 	}
 
 	// Deploy commands

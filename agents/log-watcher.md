@@ -46,6 +46,22 @@ When you first start or receive a "Session started" message:
 - `docker-compose logs -f` for multi-service logs
 - Filter by service name and timestamp
 
+### macOS, iOS and tvOS apps (unified log)
+
+Apple apps log to the unified log, read with `log`. Filter by the app's process or its `os.Logger` subsystem, and **bound every call** — `log show --last` or `log stream --timeout` — because an open stream blocks your pane and the bus cannot deliver to you while it runs.
+
+| Target | Command |
+|--------|---------|
+| macOS app, recent | `log show --last 5m --style compact --predicate 'process == "MyApp"' 2>&1 \| muxcode pii-scrub` |
+| macOS app, follow | `log stream --timeout 2m --style compact --predicate 'subsystem == "com.example.myapp"' 2>&1 \| muxcode pii-scrub` |
+| iOS simulator | `xcrun simctl spawn booted log stream --timeout 2m --style compact --predicate 'process == "MyApp"' 2>&1 \| muxcode pii-scrub` |
+| tvOS simulator | as iOS, naming the Apple TV simulator's UDID instead of `booted` when more than one simulator is booted: `xcrun simctl spawn <udid> log show --last 5m --style compact --predicate 'process == "MyApp"'` |
+
+- Errors only: add `AND messageType == error` to the predicate
+- Find the UDID with `xcrun simctl list devices booted`
+- Booting, installing and launching the app on a simulator is the **serve** agent's work; signing and installing on a physical device is **deploy**'s. You only read logs
+- A physical iPhone or Apple TV is not covered by these commands — report that its logs need Console.app rather than reaching for another tool
+
 ### Browser monitoring (Playwright)
 
 When you receive a `browser-check` action, run a headless browser check against the dev server URL to detect console errors, warnings, and uncaught exceptions.
