@@ -140,6 +140,7 @@ Key differences from the Claude Code edit agent:
 | Aspect | Claude Code (default) | OpenCode |
 |--------|----------------------|----------|
 | Delegation enforcement | PreToolUse hook (`muxcode hook guard`) | `DenyTools` in tool profile → OpenCode `deny` permission rules |
+| Swift and Xcode builds/tests | `editGuardRules` (`bus/hook.go`) block `swift build`, `swift test`, `xcodebuild` and `xcrun xcodebuild` — direct or `cd`-prefixed — with a reason routing builds to build and tests to test; `swift --version` and `which xcodebuild` pass ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)) | `DenyTools` `swift build*`, `swift test*`, `xcodebuild*`, `xcrun xcodebuild*` |
 | Build→test→review chain | PostToolUse bash hook (automatic) | Prompt-driven manual orchestration via `muxcode send` |
 | Write/Edit tools | Implicit (Claude built-in) | Explicit in tool profile |
 | Workflow state transitions | PostToolUse hooks | Daemon-side `checkNonHookEdits()` via `git diff --stat` polling |
@@ -283,6 +284,17 @@ Core code: `bus/mode.go` (cycle state, pane swap), `bus/console.go` (agent statu
 ### Observers (watch)
 
 The watch agent monitors logs from various sources — local files, CloudWatch, Kubernetes, Docker — and reports findings back to the edit agent. It is **read-only** by default: no Write/Edit tools, no git commands. It uses `muxcode log watch "summary"` to record observations to the watch history.
+
+**macOS, iOS and tvOS apps** ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md); the same recipe is in `agents/log-watcher.md`). Apple apps log to the unified log, read with `log`. Filter by the app's process or its `os.Logger` subsystem, and **bound every call** — `log show --last` or `log stream --timeout` — because an open stream blocks the pane and the bus cannot deliver to watch while it runs. Every call is piped through `muxcode pii-scrub`.
+
+| Target | Command |
+|--------|---------|
+| macOS app, recent | `log show --last 5m --style compact --predicate 'process == "MyApp"' 2>&1 \| muxcode pii-scrub` |
+| macOS app, follow | `log stream --timeout 2m --style compact --predicate 'subsystem == "com.example.myapp"' 2>&1 \| muxcode pii-scrub` |
+| iOS simulator | `xcrun simctl spawn booted log stream --timeout 2m --style compact --predicate 'process == "MyApp"' 2>&1 \| muxcode pii-scrub` |
+| tvOS simulator | as iOS, naming the Apple TV simulator's UDID (`xcrun simctl list devices booted`) instead of `booted` when more than one simulator is booted |
+
+Errors only: add `AND messageType == error` to the predicate. Booting, installing and launching the app on a simulator is **serve**'s work and signing or installing on a device is **deploy**'s — watch only reads (`appleLogTools` grants it `log stream`/`log show`, `xcrun simctl list` and `xcrun simctl spawn … log …`, nothing more). A physical iPhone or Apple TV is not covered — its logs need Console.app.
 
 ### Tool Specialists (deploy, run, commit)
 
@@ -544,6 +556,18 @@ Shared groups:
 - `bus` — `Bash(muxcode *)` and bus CLI commands
 - `readonly` — `Read`, `Glob`, `Grep`
 - `common` — `ls`, `cat`, `diff`, `sed`, `awk`, etc.
+
+**Apple and Swift groups** ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)): one list per role that needs the toolchain, appended to that role's `Tools` rather than registered as a shared group, because only `Tools` get `CdPrefix` variants and a nested SwiftPM package is run as `cd packages/Kit && swift build`.
+
+| Role | Group | Grants |
+|------|-------|--------|
+| build | `appleBuildTools` | `swift build`, `swift package`, `xcodebuild`, `xcrun xcodebuild`, `xcodegen` |
+| test | `appleTestTools` | `swift test`, `xcodebuild`, `xcrun xcodebuild`, `xcodegen` |
+| watch | `appleLogTools` | `log stream`, `log show`, `xcrun simctl list`, `xcrun simctl spawn … log stream` / `log show` |
+| serve | `appleServeTools` | `open`, `swift run`, `xcrun simctl list` / `boot` / `install` / `launch` / `terminate` |
+| deploy | `appleDeployTools` | `codesign`, `xcrun devicectl`, `xcrun notarytool`, `xcrun stapler`, `plutil`, `iconutil`, and `security` narrowed to `find-identity` / `find-certificate` / `import` |
+
+No role gets a blanket `security`, `simctl`, `xcrun` or `swift` grant: `security`'s password verbs (`find-generic-password -w`, `dump-keychain`) print keychain secrets, so only identity lookup and import are allowed. Simulator control sits with serve, signing and device install with deploy, log reading with watch. Pinned by `TestResolveTools_AppleToolchain` (per-role wants, cross-role negative controls, no keychain-secret verb for any role); edit's matching denies are above under [Orchestrator (edit)](#orchestrator-edit).
 
 CLI: `muxcode tools <role>` — resolves includes, applies CdPrefix, outputs one pattern per line. Patterns use Claude Code `--allowedTools` glob syntax (e.g. `Bash(git diff*)`).
 

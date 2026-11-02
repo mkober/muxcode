@@ -611,12 +611,27 @@ be removed before the next commit, not committed.
 
 ### Phase 7: Docs
 
-- [ ] `CLAUDE.md`: Codex sandbox bullet (Swift and Xcode grants), hook patterns, session-start init
-- [ ] [`docs/hooks.md`](../../hooks.md): the Swift and Xcode build and test patterns and the bare
+- [x] `CLAUDE.md`: Codex sandbox bullet (Swift and Xcode grants), hook patterns, session-start init
+      _(edit, 2026-11-02: chains bullet "Swift and Xcode", Codex sandbox bullet — no-sandbox default,
+      SwiftPM root and `codex-shim` under the opt-in — and a new "Session-start init" bullet)_
+- [x] [`docs/hooks.md`](../../hooks.md): the Swift and Xcode build and test patterns and the bare
       `scripts/*.sh` rule
-- [ ] [`docs/configuration.md`](../../configuration.md): session-start init and what it writes
-- [ ] [`docs/agents.md`](../../agents.md): the Apple and Swift tool groups per role, the watch
+      _(plan, 2026-11-02: "Swift and Xcode" paragraph in `### hook bash` — new default patterns,
+      `xcodebuildAction` by action word, the `xcodegen generate` build precheck, the basename rule
+      for bare project scripts, the negative control, the run-chain allowlist note;
+      `MUXCODE_BUILD_PRECHECK_PATTERNS` in Customization)_
+- [x] [`docs/configuration.md`](../../configuration.md): session-start init and what it writes
+      _(plan, 2026-11-02: new "Session-Start Initialization" section — the three files, their
+      content and withhold conditions, never-overwrite, untracked, lifecycle row and edit notice,
+      the post-picker config reload; `MUXCODE_BUILD_PATTERNS`/`MUXCODE_TEST_PATTERNS` defaults
+      updated and a `MUXCODE_BUILD_PRECHECK_PATTERNS` row added; config layering and the Codex
+      sandbox default were documented earlier in Phases 4 and 6)_
+- [x] [`docs/agents.md`](../../agents.md): the Apple and Swift tool groups per role, the watch
       app-log recipe
+      _(plan, 2026-11-02: "Apple and Swift groups" table under Tool profiles with the `security`
+      narrowing and the no-blanket-grant rule; the unified-log recipe under Observers (watch); a
+      Swift/Xcode row in edit's enforcement table — `editGuardRules` on Claude, `DenyTools` on
+      OpenCode)_
 
 ### Phase 8: Integration test
 
@@ -646,8 +661,8 @@ that.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-207-xcode-project-compatibility | 3h 26m | 2026-11-02 13:12 |
+| MUX-207-xcode-project-compatibility | 3h 35m | 2026-11-02 13:56 |
 
 ## Status
 
-In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) complete 2026-11-02: the live tibo run under workspace-write passed build-docs but failed the suite on a Seatbelt `system-info` deny no grant reaches, so by user decision 4 every Codex agent now launches with no sandbox (`MUXCODE_CODEX_SANDBOX=workspace-write` opts back in), and the re-run on the reloaded no-sandbox agents passed both scripts (hook rows `ts 1793636350`, `1793636337`); the opt-in's missing-`-s` hole and the `TestOpenCodeModelsExist` fallout are fixed and pinned, suite green `ts 1793636696`. Phase 5 (Tool profiles) complete 2026-11-02 — Apple tool groups per role, edit deny + guard, watch recipe, pinned (Phase 4 committed as `16abf8d`, Phase 5 as `5727469`; the stray `config/codex-shim/.build/` was removed before the commit). Phase 6 (Session-start initialization) complete 2026-11-02 13:12: settings and `CLAUDE.md` stub created, never-overwrite, notice and negative control all pinned; the `.muxcode/config` write was withheld wherever it would shadow a home config until user decision 5 (12:57) layered `GetShellConfig` — home base, project overrides per key — and two launcher bypasses of that layering were fixed in review; uncommitted, awaiting the phase gate. Phase 7 (Docs) next
+In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) complete 2026-11-02: the live tibo run under workspace-write passed build-docs but failed the suite on a Seatbelt `system-info` deny no grant reaches, so by user decision 4 every Codex agent now launches with no sandbox (`MUXCODE_CODEX_SANDBOX=workspace-write` opts back in), and the re-run on the reloaded no-sandbox agents passed both scripts (hook rows `ts 1793636350`, `1793636337`); the opt-in's missing-`-s` hole and the `TestOpenCodeModelsExist` fallout are fixed and pinned, suite green `ts 1793636696`. Phase 5 (Tool profiles) complete 2026-11-02 — Apple tool groups per role, edit deny + guard, watch recipe, pinned (Phase 4 committed as `16abf8d`, Phase 5 as `5727469`; the stray `config/codex-shim/.build/` was removed before the commit). Phase 6 (Session-start initialization) complete 2026-11-02 13:12: settings and `CLAUDE.md` stub created, never-overwrite, notice and negative control all pinned; the `.muxcode/config` write was withheld wherever it would shadow a home config until user decision 5 (12:57) layered `GetShellConfig` — home base, project overrides per key — and two launcher bypasses of that layering were fixed in review (committed `977231d`). Phase 7 (Docs) complete 2026-11-02 — `CLAUDE.md` by edit; `docs/hooks.md`, `docs/configuration.md`, `docs/agents.md` by plan. Phase 8 (Integration test) next
