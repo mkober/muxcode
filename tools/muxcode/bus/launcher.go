@@ -213,6 +213,9 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		fmt.Fprintf(os.Stderr, "Warning: install prepare-commit-msg hook: %v\n", err)
 	}
 
+	// Before any agent launches, so a new CLAUDE.md is in its context.
+	announceProjectInit(session, InitProjectFiles(projectDir, DetectProject(projectDir)))
+
 	// Initialize mode cycle state for edit window (edit ↔ auto)
 	if err := WriteModeCycleState(session, DefaultModeCycleState()); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: write edit mode cycle: %v\n", err)

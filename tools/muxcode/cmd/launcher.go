@@ -45,7 +45,7 @@ func RunLauncher(args []string) {
 
 	// Load config (must happen before LoadLauncherConfig reads env)
 	// Use empty projectDir — we don't know it yet; resolution uses cwd
-	bus.LoadShellConfig("")
+	preliminary := bus.LoadShellConfig("")
 
 	cfg := bus.LoadLauncherConfig()
 	bus.SetupPath()
@@ -81,8 +81,7 @@ func RunLauncher(args []string) {
 	// Change to project directory (agents resolve paths relative to it)
 	os.Chdir(projectDir)
 
-	// Re-load config from project dir (may have .muxcode/config)
-	bus.LoadShellConfig(projectDir)
+	cfg = projectLauncherConfig(projectDir, preliminary)
 
 	fmt.Print(launchBanner(projectDir, sessionName, tui.TermWidth()))
 
@@ -90,6 +89,16 @@ func RunLauncher(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// projectLauncherConfig replaces the preliminary load's file values with the
+// chosen project's layered config (it may have a .muxcode/config) and rebuilds
+// the launcher config from them. The pre-picker config was read from the home
+// and start-directory files, so reusing it ignored a project's MUXCODE_WINDOWS,
+// ROLE_MAP, EDITOR and SHELL_INIT (MUX-207 review).
+func projectLauncherConfig(projectDir string, preliminary []string) *bus.LauncherConfig {
+	bus.ReloadShellConfig(projectDir, preliminary)
+	return bus.LoadLauncherConfig()
 }
 
 // Seams tests replace; production consults the bus.

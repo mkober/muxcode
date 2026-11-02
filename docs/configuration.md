@@ -2,14 +2,14 @@
 
 ## Config File
 
-Muxcode uses a shell-sourceable config file. Resolution order:
+Muxcode uses shell-sourceable config files, **layered** (`GetShellConfig`, `bus/config_file.go`):
 
-1. `$MUXCODE_CONFIG` — explicit path (set this env var to use a custom location)
-2. `./.muxcode/config` — project-local config
-3. `~/.config/muxcode/config` — user global config
-4. Built-in defaults
+1. `$MUXCODE_CONFIG` — explicit path. When it names an existing file, that file is read **alone**: neither of the files below is consulted
+2. Otherwise `~/.config/muxcode/config` — user global config — is the **base**
+3. and `./.muxcode/config` — project-local config — **overrides it key by key**: a key the project file sets replaces the global value; every key it leaves unset keeps the global one
+4. Built-in defaults fill whatever neither file sets
 
-Variables set in a higher-priority config completely replace lower-priority values (bash source semantics). To extend rather than replace a value, use the `${VAR:-default}` pattern in your config file.
+Before 2026-11-02 only the first file found was read, so a project config hid the global one entirely — every role's `_CLI`/`_MODEL` and the Atlassian credentials with it. The layering is the user's decision under [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md) (`TestGetShellConfig_LayersProjectOverHome`; `TestGetShellConfig_MuxcodeConfigReadAlone` is the negative control). A value is replaced whole, not merged — to extend rather than replace, use the `${VAR:-default}` pattern in the project file.
 
 The config file is a plain bash script that sets environment variables:
 
@@ -553,6 +553,8 @@ MUXCODE_SHELL_INIT="source .venv/bin/activate"
 MUXCODE_BUILD_PATTERNS="./build.sh|make"
 MUXCODE_TEST_PATTERNS="./test.sh|go test"
 ```
+
+It is layered over `~/.config/muxcode/config` key by key (see [Config File](#config-file)), so a project file that sets only the build and test patterns leaves the global provider, model and credential settings in force. When a session launches in a project that has no `.muxcode/config`, muxcode creates one from project detection with the detected build, test and precheck patterns — alongside a missing `.claude/settings.json` and `CLAUDE.md` stub — and leaves it untracked for review (`InitProjectFiles`, [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)); it never overwrites an existing file, and it writes no project config while `MUXCODE_CONFIG` names a file, since that file would be read instead.
 
 ## Example Configurations
 

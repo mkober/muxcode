@@ -191,7 +191,7 @@ A standalone module mirroring the bus agent loop for local models: `config.go`, 
 - **Skill files**: 3-tier resolution: `.muxcode/skills/` > `~/.config/muxcode/skills/` > `skills/`. YAML frontmatter with `name`, `description`, `roles`, `tags`.
 - **Context files**: `context.d/shared/*.md` (all roles) + `context.d/<role>/*.md`. Priority: project > user > auto-detected.
 - **Tool profiles**: `bus/profile.go` — per-role permissions with `Include` (shared groups), `CdPrefix`, `Tools`. See [Agents](docs/agents.md#tool-profiles).
-- **Config files**: shell-sourceable, resolution: `$MUXCODE_CONFIG` > `.muxcode/config` > `~/.config/muxcode/config`. See [Configuration](docs/configuration.md).
+- **Config files**: shell-sourceable. A `$MUXCODE_CONFIG` naming an existing file is read alone; otherwise `~/.config/muxcode/config` is the base and the project's `.muxcode/config` overrides it key by key (`GetShellConfig`, layered since 2026-11-02 — before, the first file found was read alone, so a project config hid every home setting). Environment variables win over both. `muxcode config set` writes to the first of the three that exists. See [Configuration](docs/configuration.md).
 
 ## See also
 

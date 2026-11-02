@@ -122,6 +122,12 @@ A separate defect; this spec only points at it.
    [Phase 4 findings](#phase-4-findings-2026-11-02)). Every Codex role now launches
    `-s danger-full-access`; `MUXCODE_CODEX_SANDBOX=workspace-write` (or the per-role variable) opts
    back into the sandbox, under which the Phase 4 shims and roots still apply.
+5. **Config files (2026-11-02): "Layer the configs."** Made when Phase 6's session-start init
+   could not write `.muxcode/config` without hiding `~/.config/muxcode/config`, because
+   `GetShellConfig` read only the first file it found. Now the home config is the base and the
+   project config overrides it key by key; `MUXCODE_CONFIG` is still read alone. Session-start init
+   therefore writes the project config everywhere except under `MUXCODE_CONFIG` (see
+   [Phase 6 findings](#phase-6-findings-2026-11-02)).
 
 ## Requirements
 
@@ -150,10 +156,14 @@ A separate defect; this spec only points at it.
       `project.yml` sits below the root, at a bounded depth that skips `.build/`, `DerivedData/`
       and `node_modules/` — _Phase 2, 2026-10-29: depth 3, the skip set plus `Pods`, `Carthage` and
       hidden dirs, pinned by the five `TestDetectProject_Swift*` tests_
-- [ ] Session start creates missing `.muxcode/config`, `.claude/settings.json` and `CLAUDE.md` from
+- [x] Session start creates missing `.muxcode/config`, `.claude/settings.json` and `CLAUDE.md` from
       detection: it never overwrites; it leaves the files untracked; it writes a lifecycle row
       naming what was created; it sends edit a notice listing the new files to review and commit;
       negative control — a project with all three present is untouched
+      _(Phase 6, 2026-11-02: everything but the `.muxcode/config` write held at first — the config
+      was withheld under any home config it would have shadowed; user decision 5 layers the configs
+      so it is now written everywhere except under `MUXCODE_CONFIG`. Ticked on the re-verify, review
+      `e76b2094` clean, `./test.sh` exit 0 `ts 1793643090` — see Phase 6 findings)_
 - [x] Tool profiles grant the Apple and Swift toolchain where each role needs it, and edit's
       `DenyTools` cover Swift and Xcode builds and tests — pinned by the profile test
       _(Phase 5, 2026-11-02: `apple*Tools` per role, edit `DenyTools` + `editGuardRules`;
@@ -515,12 +525,89 @@ exit 0 `ts 1793636337`. Box 3 and AC2 ticked on those rows; Phase 4 complete.
 
 ### Phase 6: Session-start initialization
 
-- [ ] On session launch, create a missing `.muxcode/config` with the detected build, test and
+- [x] On session launch, create a missing `.muxcode/config` with the detected build, test and
       precheck patterns; a missing `.claude/settings.json` with permissions for the detected
       toolchain; a missing `CLAUDE.md` stub naming the build and test commands (decision 1)
-- [ ] Never overwrite an existing file; leave created files untracked (decision 2)
-- [ ] Write a lifecycle row naming what was created, and send edit a notice listing the new files
-- [ ] Negative control pinned: a project with all three present is left byte-identical
+      _(2026-11-02 — `InitProjectFiles` (`bus/project_init.go`), wired into `LaunchSession` before
+      any agent launches: `.claude/settings.json` (read-only toolchain queries only — edit is the one
+      role that consults Claude permissions and its guard refuses builds) and the `CLAUDE.md` stub
+      (skipped when `.claude/CLAUDE.md` exists) are created as specified. The `.muxcode/config`
+      write was at first withheld under any home config, because `GetShellConfig` read only the
+      first file it found and the project config would have hidden every role's `_CLI`/`_MODEL`;
+      **user decision 5** layers the configs instead — home as base, project overriding per key,
+      `MUXCODE_CONFIG` still alone — and the write is now withheld only under `MUXCODE_CONFIG`
+      (`TestGetShellConfig_LayersProjectOverHome`, `TestInitProjectFiles_LayersOverHomeConfig`,
+      `_WithholdsConfigUnderMuxcodeConfig`). Ticked 2026-11-02 13:12 on the re-verify: review
+      `e76b2094` clean after two launcher bypasses were fixed, `./test.sh` exit 0 hook row
+      `ts 1793643090` — see [Phase 6 findings](#phase-6-findings-2026-11-02).)_
+- [x] Never overwrite an existing file; leave created files untracked (decision 2)
+      _(`O_EXCL` on every write — an existing file or a dangling symlink at the path is left alone;
+      no git command runs; `TestInitProjectFiles_LeavesExistingByteIdentical`,
+      `_PartialFillsOnlyTheGap`)_
+- [x] Write a lifecycle row naming what was created, and send edit a notice listing the new files
+      _(`announceProjectInit`: `project-init` "created … (untracked)" or `project-init-skipped`, and
+      a `project-init` request to edit listing the files; `TestAnnounceProjectInit` incl. the
+      skip-only negative)_
+- [x] Negative control pinned: a project with all three present is left byte-identical
+      _(`TestInitProjectFiles_LeavesExistingByteIdentical` — files, dangling symlinks,
+      `.claude/CLAUDE.md`; plus `_NothingDetectedWritesNothing`. `./test.sh` exit 0 hook rows
+      `ts 1793638954`, `1793639143`; review `75eb7eba` clean after the must-fix of `4ad96595`)_
+
+### Phase 6 findings (2026-11-02)
+
+**What shipped (uncommitted at writing).** `bus/project_init.go`: `InitProjectFiles(projectDir,
+types)` creates each missing file with `O_EXCL` — `.muxcode/config` carrying the detected build,
+test and precheck patterns (round-tripped through `GetShellConfig`; after the review must-fix it
+emits only detector-owned type names, never repository paths — `4ad96595` found a detected path
+written verbatim into a shell-config comment, where a newline in a nested `Package.swift` path would
+have injected a config line); `.claude/settings.json` with read-only toolchain queries only; a
+`CLAUDE.md` stub from the detected types' convention text, skipped when `.claude/CLAUDE.md` exists.
+Nothing is written when nothing is detected. `announceProjectInit` logs `project-init` /
+`project-init-skipped` and sends edit a `project-init` request naming the new files. Wired into
+`LaunchSession` (`bus/launcher.go:217`) ahead of every agent launch. Eight tests in
+`project_init_test.go`, including `TestToolchainPermissions_PassEditGuard` with a blocked-command
+control and `TestInitProjectFiles_WithholdsConfigThatWouldShadow`.
+
+**The `.muxcode/config` write was withheld wherever it would shadow — resolved by user decision 5.**
+`GetShellConfig` read the **first** config file it found (`MUXCODE_CONFIG`, then
+`.muxcode/config`, then `~/.config/muxcode/config`) and no other. A freshly written project config
+would therefore have hidden the home config entirely — on this machine that file holds every role's
+`_CLI`/`_MODEL` and the Jira credentials, so tibo's Codex build and test agents would have
+relaunched on the default provider. The first cut of `InitProjectFiles` withheld the config whenever
+`MUXCODE_CONFIG` or a home config existed (reported as skipped and named in edit's notice), which
+here was always. The options put to the user:
+
+| Option | Effect |
+|--------|--------|
+| Keep the withhold | Decision 1's config file is created only on a machine with no home config; the other two files are always created. Box 1 stays partly open, or decision 1 is amended to say so |
+| Layer `GetShellConfig` | Home config as the base, project config overriding per key; the project config can then be written safely everywhere. A behaviour change to config resolution, beyond this spec's scope as written |
+
+**User decision 5 (2026-11-02): layer the configs.** `GetShellConfig` (`bus/config_file.go`) now
+reads `~/.config/muxcode/config` as the base and `.muxcode/config` over it key by key
+(`shellConfigFiles` lists them lowest precedence first, `readShellConfigInto` lets a later file's
+value replace an earlier one's); a `MUXCODE_CONFIG` that names an existing file is still read alone.
+`InitProjectFiles` withholds the project config only under `MUXCODE_CONFIG` — a home config is no
+longer a reason, since the project file layers over it instead of hiding it. Pinned by
+`TestGetShellConfig_LayersProjectOverHome` and `_MuxcodeConfigReadAlone` (`config_file_test.go`),
+`TestInitProjectFiles_LayersOverHomeConfig` and `_WithholdsConfigUnderMuxcodeConfig`.
+[`docs/configuration.md`](../../configuration.md) "Config File" and "Per-Project Config" and the
+root `CLAUDE.md` describe the layering. Box 1 and its acceptance criterion ticked on the graph's
+re-verify of this change (13:12).
+
+**Two launcher bypasses the re-verify's reviews caught, both fixed.** `cmd/launcher.go` loaded the
+shell config twice: once before the project picker, from the home and start-directory files, and
+once after. Review `5d227062` found the first load *exported* the home values into the environment,
+where they outranked the chosen project's layered file; review `bb260241` then found `runSession`
+still received a `cfg` built before project selection, so a project's `MUXCODE_WINDOWS`,
+`ROLE_MAP`, `EDITOR` and `SHELL_INIT` were ignored. Now `RunLauncher` keeps the preliminary load's
+key list, `bus.ReloadShellConfig(projectDir, preliminary)` replaces those file-derived values with
+the chosen project's layered config, and `projectLauncherConfig` rebuilds the launcher config from
+them — pinned by `TestProjectLauncherConfig_ReflectsChosenProject` (`cmd/launcher_test.go`). Review
+`e76b2094` clean; `./test.sh` exit 0 hook rows `ts 1793642697`, `1793642912`, `1793643090`.
+
+**Housekeeping flag.** An untracked `config/codex-shim/.build/` (SwiftPM's `CACHEDIR.TAG`, 10:03)
+was left by a `swift build` run inside the shim directory; it is not part of any phase and should
+be removed before the next commit, not committed.
 
 ### Phase 7: Docs
 
@@ -559,8 +646,8 @@ that.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-207-xcode-project-compatibility | 46m | 2026-10-30 01:03 |
+| MUX-207-xcode-project-compatibility | 3h 26m | 2026-11-02 13:12 |
 
 ## Status
 
-In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) next
+In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) complete 2026-11-02: the live tibo run under workspace-write passed build-docs but failed the suite on a Seatbelt `system-info` deny no grant reaches, so by user decision 4 every Codex agent now launches with no sandbox (`MUXCODE_CODEX_SANDBOX=workspace-write` opts back in), and the re-run on the reloaded no-sandbox agents passed both scripts (hook rows `ts 1793636350`, `1793636337`); the opt-in's missing-`-s` hole and the `TestOpenCodeModelsExist` fallout are fixed and pinned, suite green `ts 1793636696`. Phase 5 (Tool profiles) complete 2026-11-02 — Apple tool groups per role, edit deny + guard, watch recipe, pinned (Phase 4 committed as `16abf8d`, Phase 5 as `5727469`; the stray `config/codex-shim/.build/` was removed before the commit). Phase 6 (Session-start initialization) complete 2026-11-02 13:12: settings and `CLAUDE.md` stub created, never-overwrite, notice and negative control all pinned; the `.muxcode/config` write was withheld wherever it would shadow a home config until user decision 5 (12:57) layered `GetShellConfig` — home base, project overrides per key — and two launcher bypasses of that layering were fixed in review; uncommitted, awaiting the phase gate. Phase 7 (Docs) next

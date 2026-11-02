@@ -12,6 +12,60 @@ import (
 	"github.com/mkober/muxcode/tools/muxcode/tui"
 )
 
+// The launcher config LaunchSession receives must come from the chosen
+// project's layered config, not the pre-picker load from home and the start
+// directory. Control: the pre-picker config holds the home values, so the
+// assertions can only pass if the rebuild happened.
+func TestProjectLauncherConfig_ReflectsChosenProject(t *testing.T) {
+	home, start, project := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_CONFIG", "")
+	for _, k := range []string{"MUXCODE_EDITOR", "MUXCODE_WINDOWS", "MUXCODE_SHELL_INIT", "MUXCODE_ROLE_MAP"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	writeConfig := func(dir, rel, body string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeConfig(home, ".config/muxcode/config", "MUXCODE_EDITOR=vim\nMUXCODE_WINDOWS='edit build'\n")
+	writeConfig(start, ".muxcode/config", "MUXCODE_SHELL_INIT=start-init\n")
+	writeConfig(project, ".muxcode/config", "MUXCODE_EDITOR=hx\nMUXCODE_WINDOWS='edit test'\nMUXCODE_ROLE_MAP='test=runner'\n")
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+	if err := os.Chdir(start); err != nil {
+		t.Fatal(err)
+	}
+
+	preliminary := bus.LoadShellConfig("")
+	if before := bus.LoadLauncherConfig(); before.Editor != "vim" || before.ShellInit != "start-init" {
+		t.Fatalf("control: pre-picker config Editor=%q ShellInit=%q, want the home and start values", before.Editor, before.ShellInit)
+	}
+
+	cfg := projectLauncherConfig(project, preliminary)
+
+	if cfg.Editor != "hx" {
+		t.Errorf("Editor = %q, want the project's hx", cfg.Editor)
+	}
+	if !slices.Equal(cfg.Windows, []string{"edit", "test"}) {
+		t.Errorf("Windows = %v, want the project's [edit test]", cfg.Windows)
+	}
+	if cfg.ShellInit != "" {
+		t.Errorf("ShellInit = %q, want the start directory's value dropped", cfg.ShellInit)
+	}
+	if cfg.RoleMap["test"] != "runner" {
+		t.Errorf("RoleMap = %v, want the project's test=runner", cfg.RoleMap)
+	}
+}
+
 // The banner renders inside a fixed-width display-popup, so a long
 // project path must fit rather than wrap outside the popup border —
 // the live failure this fitting exists to prevent.
