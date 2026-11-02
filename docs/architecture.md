@@ -1067,7 +1067,7 @@ back — the **scrape road** itself is unchanged.
 `read-only`, `workspace-write` or `danger-full-access`, `--add-dir <DIR>` grants extra writable roots
 beside the workspace, and network access is controlled separately and restricted by default.
 **Every Codex role launches with no sandbox (`-s danger-full-access`) by default** — the user's
-decision of 2026-11-02 ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)):
+decision of 2026-11-02 ([MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md)):
 Codex's Seatbelt policy is compiled into the Codex binary, and it denies `system-info
 vfs.disk-space`, so `AVAssetWriter.startWriting()` failed in every directory and tibo's suite
 crashed on the Codex test agent while all 270 tests passed on the host — a denial no writable root,

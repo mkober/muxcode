@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-204 closed 2026-10-09; the next active spec is the user's call_ | — | — |
+| — | _None — MUX-207 closed 2026-11-02; the next active spec is the user's call_ | — | — |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -169,7 +169,6 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
-| [`MUX-207`](./MUX-207-xcode-project-compatibility.md) | Xcode and Swift Projects: Agents Lack the Patterns, Sandbox Access and Tools to Build, Test and Observe Them | High | — |
 | [`MUX-201`](./MUX-201-non-hook-prompt-and-generated-body-drift.md) | Non-Hook Prompt Text and Generated Agent Bodies Drift From the Definition | Medium | [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
 | [`MUX-190`](./MUX-190-codex-agent-drops-a-consumed-request-after-a-guard-denial.md) | A Codex Agent Drops a Consumed Request After a Guard Denial | Medium | — |
 | [`MUX-189`](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) | Batch Delivery Correlates Only the Last Request's Reply | Medium | — |
@@ -323,6 +322,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-202`](../completed/MUX-202-self-upgrade-from-the-quick-menu.md) | Self-Upgrade From the Quick Menu — Check, Download, Rebuild, Restart Daemons |
 | [`MUX-203`](../completed/MUX-203-sensitive-role-conversation-is-never-scrubbed.md) | A Sensitive Role's Own Conversation Is Never Scrubbed — PostToolUse Cannot Reach It |
 | [`MUX-204`](../completed/MUX-204-claude-failing-bash-calls-never-reach-hook-bash.md) | Failing Bash Calls on Claude Never Reach `hook bash` — Only `PostToolUse` Is Registered |
+| [`MUX-207`](../completed/MUX-207-xcode-project-compatibility.md) | Xcode and Swift Projects: Agents Lack the Patterns, Sandbox Access and Tools to Build, Test and Observe Them |
 | [`MUX-139`](../completed/MUX-139-claude-agent-auto-resume.md) | Claude Agent Auto-Resume After Mass Exit |
 | [`MUX-141`](../completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md) | Auto Agent Restarts Relaunch Autonomous Graph Runs |
 | [`MUX-142`](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned Worker Delegates Build/Test Into the Wrong Tree |

@@ -9,7 +9,7 @@ Muxcode uses shell-sourceable config files, **layered** (`GetShellConfig`, `bus/
 3. and `./.muxcode/config` — project-local config — **overrides it key by key**: a key the project file sets replaces the global value; every key it leaves unset keeps the global one
 4. Built-in defaults fill whatever neither file sets
 
-Before 2026-11-02 only the first file found was read, so a project config hid the global one entirely — every role's `_CLI`/`_MODEL` and the Atlassian credentials with it. The layering is the user's decision under [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md) (`TestGetShellConfig_LayersProjectOverHome`; `TestGetShellConfig_MuxcodeConfigReadAlone` is the negative control). A value is replaced whole, not merged — to extend rather than replace, use the `${VAR:-default}` pattern in the project file.
+Before 2026-11-02 only the first file found was read, so a project config hid the global one entirely — every role's `_CLI`/`_MODEL` and the Atlassian credentials with it. The layering is the user's decision under [MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md) (`TestGetShellConfig_LayersProjectOverHome`; `TestGetShellConfig_MuxcodeConfigReadAlone` is the negative control). A value is replaced whole, not merged — to extend rather than replace, use the `${VAR:-default}` pattern in the project file.
 
 The config file is a plain bash script that sets environment variables:
 
@@ -61,7 +61,7 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc\|swift build\|./build-*.sh` | Pipe-separated patterns for build command detection. `xcodebuild` is not a pattern: it is classified by its action word (`build`/`archive` → build, `test` → test, `-list` and other modes → nothing) — see [Hooks → hook bash](hooks.md#hook-bash-bash-hook). A bare `scripts/build-ios.sh` matches `./build-*.sh` by basename ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)) |
+| `MUXCODE_BUILD_PATTERNS` | `./build.sh\|pnpm*build\|go*build\|make\|cargo*build\|cdk*synth\|tsc\|swift build\|./build-*.sh` | Pipe-separated patterns for build command detection. `xcodebuild` is not a pattern: it is classified by its action word (`build`/`archive` → build, `test` → test, `-list` and other modes → nothing) — see [Hooks → hook bash](hooks.md#hook-bash-bash-hook). A bare `scripts/build-ios.sh` matches `./build-*.sh` by basename ([MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md)) |
 | `MUXCODE_BUILD_PRECHECK_PATTERNS` | `xcodegen generate` | Pipe-separated patterns for **build prechecks** — build-stage steps whose success is not the build's verdict. A failing one is the build failing (build-history row, failure path); a passing one moves the workflow to `building`, writes no row and fires nothing, because `xcodegen generate` only writes the `.xcodeproj` that `xcodebuild` then compiles — the `go vet` rule one stage up (MUX-207) |
 | `MUXCODE_TEST_PATTERNS` | `./test.sh\|jest\|pnpm*test\|pytest\|go*test\|cargo*test\|vitest\|make test\|npm test\|npm run test\|yarn test\|yarn run test\|swift test` | Pipe-separated patterns for test command detection — the suite, whose exit code is the test stage's verdict. Consulted before the precheck patterns, so a command listed here is a full test run even if it also matches a precheck. `make test` and the npm/yarn forms are listed because a test agent chooses its own command (`agents/test-runner.md` names them): on 2026-10-05 a Codex test agent ran `make test` green, no verdict was recorded, and the graph's test node held for an approval it never needed. The npm/yarn forms are spelled out, not globbed — `npm*test` would also classify `npm install @testing-library/react` as a suite run |
 | `MUXCODE_TEST_PRECHECK_PATTERNS` | `go*vet` | Pipe-separated patterns for **test prechecks** — test-stage gates run before the suite. A failing precheck is the stage failing: a test-history row and the test chain's failure path, like any failed suite. A passing one proves nothing about a suite that has not run, so it moves the workflow to `testing` but writes no row and fires no chain (`bus.ChainEvent` answers nothing) — test→review waits for the suite's own row. Added 2026-09-09 after a lone passing `go vet` fired review before the suite ran; see [Hooks → hook bash](hooks.md#hook-bash-bash-hook) |
@@ -176,7 +176,7 @@ or per role.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MUXCODE_CODEX_SANDBOX` | (unset → `danger-full-access`) | Codex sandbox for every Codex role. Unset, every Codex agent launches with **no sandbox** (user decision 2026-11-02, [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)); `workspace-write` opts back into the per-role grant table in [Codex CLI sandbox](#codex-cli-sandbox). Any set value other than `danger-full-access` is read as `workspace-write`, so a typo keeps the sandbox |
+| `MUXCODE_CODEX_SANDBOX` | (unset → `danger-full-access`) | Codex sandbox for every Codex role. Unset, every Codex agent launches with **no sandbox** (user decision 2026-11-02, [MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md)); `workspace-write` opts back into the per-role grant table in [Codex CLI sandbox](#codex-cli-sandbox). Any set value other than `danger-full-access` is read as `workspace-write`, so a typo keeps the sandbox |
 | `MUXCODE_<ROLE>_CODEX_SANDBOX` | (unset) | Per-role override of `MUXCODE_CODEX_SANDBOX`, winning in both directions — `MUXCODE_TEST_CODEX_SANDBOX=workspace-write` sandboxes test alone; `MUXCODE_BUILD_CODEX_SANDBOX=danger-full-access` frees build under a sandboxed session (`codexSandboxMode`) |
 | `MUXCODE_CODEX_HOOKS` | (unset → on) | Session-wide switch (`1`/`true`/`on`/`yes` or `0`/`false`/`off`/`no`; unset means on). When on, `PrepareCodexHooks` writes `<repo>/.codex/hooks.json` before every codex launch and the agent's chains, guards and delivery run through hooks |
 | `MUXCODE_{ROLE}_CODEX_HOOKS` | (unset) | Per-role override, wins over the session value (e.g. `MUXCODE_BUILD_CODEX_HOOKS=1`, `MUXCODE_REVIEW_CODEX_HOOKS=0`) |
@@ -234,7 +234,7 @@ Provider comparison:
 | LLM providers | Anthropic only | Anthropic, OpenAI, Google, Groq, Bedrock | OpenAI (GPT-4.1, o3, o4-mini, etc.) | Ollama (any pulled model) |
 | Startup handling | Trust + bypass prompts | TUI frame detection | Prompt ready detection | N/A |
 
-**Codex CLI sandbox**: Codex runs commands under a selectable sandbox. **By default muxcode launches every Codex role with no sandbox** (`-s danger-full-access`) — the user's decision of 2026-11-02 ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)): Codex's Seatbelt policy is compiled into the binary and denies `system-info vfs.disk-space`, so `AVAssetWriter.startWriting()` failed in every directory and tibo's suite crashed on the Codex test agent while all 270 tests passed on the host; no writable root, network switch, env or config can extend it. The approval policy is unchanged (`-a never`; `-a on-request` for review and analyze, where nothing now escalates) and research keeps `--search`.
+**Codex CLI sandbox**: Codex runs commands under a selectable sandbox. **By default muxcode launches every Codex role with no sandbox** (`-s danger-full-access`) — the user's decision of 2026-11-02 ([MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md)): Codex's Seatbelt policy is compiled into the binary and denies `system-info vfs.disk-space`, so `AVAssetWriter.startWriting()` failed in every directory and tibo's suite crashed on the Codex test agent while all 270 tests passed on the host; no writable root, network switch, env or config can extend it. The approval policy is unchanged (`-a never`; `-a on-request` for review and analyze, where nothing now escalates) and research keeps `--search`.
 
 | Variable | Default | Effect |
 |----------|---------|--------|
@@ -546,7 +546,7 @@ Created on first `muxcode init` in the project directory.
 
 ## Session-Start Initialization
 
-On session launch, before any agent starts, `LaunchSession` runs `InitProjectFiles` (`bus/project_init.go`) on the result of `DetectProject` and creates whichever of three files is missing ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md), user decisions 1, 2 and 5):
+On session launch, before any agent starts, `LaunchSession` runs `InitProjectFiles` (`bus/project_init.go`) on the result of `DetectProject` and creates whichever of three files is missing ([MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md), user decisions 1, 2 and 5):
 
 | File | Content | Withheld when |
 |------|---------|---------------|
@@ -567,7 +567,7 @@ MUXCODE_BUILD_PATTERNS="./build.sh|make"
 MUXCODE_TEST_PATTERNS="./test.sh|go test"
 ```
 
-It is layered over `~/.config/muxcode/config` key by key (see [Config File](#config-file)), so a project file that sets only the build and test patterns leaves the global provider, model and credential settings in force. When a session launches in a project that has no `.muxcode/config`, muxcode creates one from project detection with the detected build, test and precheck patterns — alongside a missing `.claude/settings.json` and `CLAUDE.md` stub — and leaves it untracked for review (`InitProjectFiles`, [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)); it never overwrites an existing file, and it writes no project config while `MUXCODE_CONFIG` names a file, since that file would be read instead.
+It is layered over `~/.config/muxcode/config` key by key (see [Config File](#config-file)), so a project file that sets only the build and test patterns leaves the global provider, model and credential settings in force. When a session launches in a project that has no `.muxcode/config`, muxcode creates one from project detection with the detected build, test and precheck patterns — alongside a missing `.claude/settings.json` and `CLAUDE.md` stub — and leaves it untracked for review (`InitProjectFiles`, [MUX-207](requirements/completed/MUX-207-xcode-project-compatibility.md)); it never overwrites an existing file, and it writes no project config while `MUXCODE_CONFIG` names a file, since that file would be read instead.
 
 ## Example Configurations
 
