@@ -458,6 +458,27 @@ func TestDetectProject_SwiftNestedMarkers(t *testing.T) {
 	}
 }
 
+// A project opened through a symlink: WalkDir does not descend into a
+// symlinked root, so nested markers went undetected (review, 2026-11-02).
+// A symlink below the root stays unfollowed.
+func TestDetectProject_SwiftNestedMarkersThroughSymlinkedRoot(t *testing.T) {
+	target := t.TempDir()
+	writeIndicatorFile(t, target, "packages/Kit/Package.swift", "// swift-tools-version:5.9")
+	outside := t.TempDir()
+	writeIndicatorFile(t, outside, "Lib/Package.swift", "// swift-tools-version:5.9")
+	if err := os.Symlink(outside, filepath.Join(target, "vendor")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(swiftIndicators(t, link), ","); got != "packages/Kit/Package.swift" {
+		t.Errorf("indicators through a symlinked root = %s, want packages/Kit/Package.swift", got)
+	}
+}
+
 func TestDetectProject_SwiftSkipsExcludedDirs(t *testing.T) {
 	dir := t.TempDir()
 	for _, d := range []string{".build/checkouts/Dep", "DerivedData/SourcePackages", "node_modules/pkg", "Pods/Dep", "Carthage/Checkouts", ".git/x"} {

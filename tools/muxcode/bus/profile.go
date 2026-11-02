@@ -589,6 +589,19 @@ func appleTestRunShapes() []string {
 	return shapes
 }
 
+// appleTestRunActions are the run chain's watch actions for appleTestRunShapes,
+// each also requiring the call not be a SwiftPM query: `swift test *` admits
+// `swift test --list-tests`, and a watch request for a listing verified nothing
+// (review, 2026-11-02). The swiftpm_query condition is ClassifyCommand's own
+// predicate, so the two cannot drift.
+func appleTestRunActions() ChainActions {
+	actions := runWatchActions(appleTestRunShapes()...)
+	for _, a := range actions {
+		a.Conditions["swiftpm_query"] = false
+	}
+	return actions
+}
+
 // Apple and Swift tool groups (MUX-207), one per role that needs the
 // toolchain. They are appended to a role's Tools rather than registered as
 // SharedTools because only Tools get CdPrefix variants, and a nested SwiftPM
@@ -1018,14 +1031,14 @@ func DefaultConfig() *MuxcodeConfig {
 				// prefix or script path): globMatch's * spans spaces, so a bare
 				// "*.sh *" also matched `ls -la x.sh 2>&1` — reads of a .sh path,
 				// not executions.
-				OnSuccess: runWatchActions(append([]string{
+				OnSuccess: append(runWatchActions(
 					"aws *",
 					"bash *.sh", "bash *.sh *",
 					"sh *.sh", "sh *.sh *",
 					"./*.sh", "./*.sh *",
 					"/*.sh", "/*.sh *",
 					"scripts/*.sh", "scripts/*.sh *",
-				}, appleTestRunShapes()...)...),
+				), appleTestRunActions()...),
 				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",

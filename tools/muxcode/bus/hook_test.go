@@ -478,7 +478,32 @@ func TestClassifyCommand_SwiftAndXcode(t *testing.T) {
 		{"xcodebuild -IDEPackageSupportDisableManifestSandbox=YES -scheme A test", CmdTest},
 		{"xcodebuild -scheme A test | xcpretty", CmdTest},
 		{"xcodebuild -showBuildSettings -scheme A test", CmdUnknown},
+		// A redirection and its target are skipped, not an end (review,
+		// 2026-11-02): a mode option after one still decides the call.
+		{"xcodebuild test > /tmp/log -showBuildSettings", CmdUnknown},
+		{"xcodebuild -scheme A >/tmp/log test", CmdTest},
+		{"xcodebuild -scheme A 2>&1 test", CmdTest},
+		// SwiftPM queries match the swift build/test patterns but run nothing
+		// (review, 2026-11-02); an option operand spelling `list` is no query.
+		{"swift test --list-tests", CmdUnknown},
+		{"swift test list", CmdUnknown},
+		{"cd packages/Kit && swift test -l", CmdUnknown},
+		{"swift test --show-codecov-path", CmdUnknown},
+		{"swift build --show-bin-path", CmdUnknown},
+		{"swift test --filter list", CmdTest},
+		{"swift test > -l", CmdTest},
+		// Shell-equivalent spellings of a query (review, 2026-11-02): the
+		// `list` subcommand after a redirection, quoted arguments.
+		{"swift test >/tmp/log list", CmdUnknown},
+		{"swift test 'list'", CmdUnknown},
+		{`swift test "--list-tests"`, CmdUnknown},
+		{"swift test >/tmp/log", CmdTest},
+		{"xcodebuild 'test' -scheme A", CmdTest},
 		{"scripts/test.sh", CmdTest},
+		// An attached redirection is not part of the script path (review,
+		// 2026-11-02): it was read as basename `log`, or as a redirect target's.
+		{"scripts/test.sh>/tmp/log", CmdTest},
+		{"scripts/run.sh>/tmp/test.sh", CmdUnknown},
 		{"./scripts/test.sh --verbose", CmdTest},
 		{"bash scripts/test.sh", CmdTest},
 		{"scripts/build-ios.sh", CmdBuild},

@@ -74,7 +74,7 @@ func InitProjectFiles(projectDir string, types []ProjectType) ProjectInitResult 
 		if data == nil {
 			return
 		}
-		created, err := createExclusive(filepath.Join(projectDir, rel), data)
+		created, err := createExclusive(projectDir, rel, data)
 		switch {
 		case err != nil:
 			res.Skipped = append(res.Skipped, rel+": "+err.Error())
@@ -184,12 +184,24 @@ func projectClaudeMDContent(name string, types []ProjectType) []byte {
 		name, strings.Join(sections, "\n\n")))
 }
 
-// createExclusive writes data to a new file at p, creating its directory.
-// It returns false with no error when p already exists, symlink included.
-func createExclusive(p string, data []byte) (bool, error) {
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return false, err
+// createExclusive writes data to a new file at rel below root, creating its
+// directories. It returns false with no error when the file already exists,
+// symlink included. A directory between root and the file must be a real
+// directory: O_EXCL guards only the last path element, so a `.claude` or
+// `.muxcode` linked elsewhere would carry the write out of the project
+// (review, 2026-11-02). root itself may be a symlink — it is the project.
+func createExclusive(root, rel string, data []byte) (bool, error) {
+	dir, relDir := root, ""
+	for _, part := range strings.Split(filepath.Dir(filepath.FromSlash(rel)), string(filepath.Separator)) {
+		if part == "." {
+			continue
+		}
+		dir, relDir = filepath.Join(dir, part), filepath.Join(relDir, part)
+		if err := ensureRealDir(dir, relDir); err != nil {
+			return false, err
+		}
 	}
+	p := filepath.Join(root, rel)
 	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if errors.Is(err, fs.ErrExist) {
 		return false, nil
@@ -207,6 +219,25 @@ func createExclusive(p string, data []byte) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// ensureRealDir creates dir if it is missing and refuses it when it is a
+// symlink or not a directory; rel names it in the error.
+func ensureRealDir(dir, rel string) error {
+	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink, so the file would be written outside the project", rel)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", rel)
+	}
+	return nil
 }
 
 // pathPresent reports whether anything, a dangling symlink included, is at p.

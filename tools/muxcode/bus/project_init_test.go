@@ -213,6 +213,46 @@ func TestInitProjectFiles_PartialFillsOnlyTheGap(t *testing.T) {
 	}
 }
 
+// TestInitProjectFiles_RefusesSymlinkedParentDir: O_EXCL guards only the file
+// name, so a `.claude` linked elsewhere once carried settings.json out of the
+// project (review, 2026-11-02). The other two files, under real directories,
+// are still created.
+func TestInitProjectFiles_RefusesSymlinkedParentDir(t *testing.T) {
+	isolateProjectInit(t)
+	dir := swiftRepo(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+
+	res := InitProjectFiles(dir, DetectProject(dir))
+
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote through the symlinked .claude into %s: %v", outside, entries)
+	}
+	if want := []string{initConfigPath, initClaudeMDPath}; !reflect.DeepEqual(res.Created, want) {
+		t.Errorf("Created = %v, want %v", res.Created, want)
+	}
+	if len(res.Skipped) != 1 || !strings.Contains(res.Skipped[0], ".claude is a symlink") {
+		t.Errorf("Skipped = %v, want settings.json refused for the symlinked .claude", res.Skipped)
+	}
+}
+
+// The project root itself may be a symlink: it is the directory the user opened.
+func TestInitProjectFiles_SymlinkedRootIsTheProject(t *testing.T) {
+	isolateProjectInit(t)
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(swiftRepo(t), link); err != nil {
+		t.Fatal(err)
+	}
+
+	res := InitProjectFiles(link, DetectProject(link))
+
+	if want := []string{initConfigPath, initSettingsPath, initClaudeMDPath}; !reflect.DeepEqual(res.Created, want) || len(res.Skipped) != 0 {
+		t.Errorf("result = %+v, want Created %v and nothing skipped", res, want)
+	}
+}
+
 // TestInitProjectFiles_LayersOverHomeConfig: a home config no longer withholds
 // the project's. The project file is written, the home file's role CLI choice
 // still applies through it — before layering it would have relaunched tibo's

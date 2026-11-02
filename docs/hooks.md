@@ -386,6 +386,7 @@ Chain actions support condition expressions that control when they fire. Conditi
 | `spec_phases_remaining` | `true`/`false` | The active spec still has (or has no) phase with an open box — the spec-driven loop condition |
 | `spec_phase_committable` | guarded commit node id | The active spec's current phase is complete in the tree and not at HEAD — the same `phaseCommitReady` predicate as the named node's `phase-progress` guard; graph runs only |
 | `spec_branch` | `true`/`false` | The session repo's current branch is the active spec's id or starts with `<id>-` (`MUX-178-<slug>`); `false` passes off it. Fails closed — no active spec, a pointer outside the repo, a detached HEAD or an unresolvable repo dir all fail — so `50-spec-to-pr` routes to its branch gate rather than committing phases on `main`. Reads the session repo, not `ctx.Branch`: on the graph road the evaluator is the daemon, whose cwd is not the checkout |
+| `swiftpm_query` | `true`/`false` | Whether the triggering command is a **SwiftPM query** — a `swift build` or `swift test` (bare or through `xcrun`, after any `cd … &&`/env prefix) whose arguments include a query flag (`--show-bin-path`, `--print-manifest-job-graph`, `--list-tests`/`-l`, `--show-codecov-path`, `--help`, `--version`, …) or spell `swift test list` — equals the value (`swiftPMQuery`, `bus/hook.go`). A predicate rather than a glob because a query is spelled many ways the shell treats alike (a quoted `'list'`, a redirection before it), and it is the same predicate `ClassifyCommand` uses to leave such calls unclassified, so a listing is never recorded as a passing build or suite and the two cannot drift. The run chain's `appleTestRunActions` set it `false` on every `swift test` watch shape: `swift test *` admits `swift test --list-tests`, and a watch request for a listing verified nothing (review, 2026-11-02, PR #175) |
 
 ### Action arrays (first-match-wins)
 
@@ -419,7 +420,7 @@ In this example, build success on a `release/*` branch sends to deploy; on any o
 
 - **Branch** — current git branch name
 - **ChangedFiles** — list of uncommitted changed files
-- **Command** — the triggering command line (evaluated by `command_match`/`command_not_match`)
+- **Command** — the triggering command line (evaluated by `command_match`/`command_not_match`, and by `swiftpm_query` through the `swiftPMQuery` predicate)
 - **Output** — command stdout/stderr
 - **ExitCode** — command exit code
 

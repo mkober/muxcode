@@ -892,7 +892,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 ### Hook Chain Guarantee
 
-The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (13 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check and `spec_branch` for the start-of-run branch check) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (14 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `swiftpm_query` — a boolean predicate, not a glob, true for a SwiftPM query such as `swift test --list-tests`, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check and `spec_branch` for the start-of-run branch check) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ### Atlassian write authority
 

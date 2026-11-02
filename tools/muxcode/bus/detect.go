@@ -194,9 +194,14 @@ func (ind indicator) accepts(path string) bool {
 // the indicator's Files and Globs, returning slash-separated relative paths in
 // lexical order. Root-level entries are left to DetectProject's own checks. A
 // directory matching a glob (an .xcodeproj bundle) is recorded and not entered;
-// skipDetectDirs and hidden directories are not entered; symlinks are not
-// followed. Unreadable directories are skipped.
+// skipDetectDirs and hidden directories are not entered; symlinks below dir are
+// not followed. dir itself is resolved first, since WalkDir does not descend
+// into a symlinked root and a project opened through a link would otherwise
+// detect no nested marker. Unreadable directories are skipped.
 func (ind indicator) nestedMatches(dir string) []string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
 	var found []string
 	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {

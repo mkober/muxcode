@@ -63,6 +63,17 @@ SESSION="xcode-compat-$$"
 BUSDIR="/tmp/muxcode-bus-$SESSION"
 WORK=$(mktemp -d /tmp/xcode-compat-XXXXXX)
 REAL_HOME=$HOME
+# The user's own config and install tree, captured before the scratch setup
+# unsets them, for real_launch. A tree-built binary resolves no install tree
+# (resolveInstallDir), so without this its live sandbox args would lack the
+# installed BASH_ENV shim; this mirrors resolveInstallDir for the muxcode on PATH.
+REAL_MUXCODE_CONFIG=${MUXCODE_CONFIG:-}
+REAL_INSTALL_DIR=${MUXCODE_INSTALL_DIR:-}
+if [ -z "$REAL_INSTALL_DIR" ]; then
+  case $(dirname "$(command -v muxcode 2>/dev/null)") in
+    */.local/bin) REAL_INSTALL_DIR="$REAL_HOME/.config/muxcode" ;;
+  esac
+fi
 
 cleanup() { rm -rf "$BUSDIR" "$WORK"; }
 trap cleanup EXIT
@@ -130,11 +141,14 @@ lifecycle_count() {
     | wc -l | tr -d ' '
 }
 
-# real_launch CMD... — CMD under the user's own HOME, config and environment,
-# as a launched agent resolves them, not the scratch bus's.
+# real_launch CMD... — CMD under the user's own HOME, config, install tree and
+# environment, as a launched agent resolves them, not the scratch bus's.
 real_launch() {
+  local -a real=()
+  [ -n "$REAL_MUXCODE_CONFIG" ] && real+=("MUXCODE_CONFIG=$REAL_MUXCODE_CONFIG")
+  [ -n "$REAL_INSTALL_DIR" ] && real+=("MUXCODE_INSTALL_DIR=$REAL_INSTALL_DIR")
   env -u BUS_SESSION -u AGENT_ROLE -u TMUX -u TMUX_PANE -u MUXCODE_CONFIG_DIR -u MUXCODE_LIFECYCLE_LOG_DIR \
-    -u MUXCODE_BUILD_CLI -u MUXCODE_TEST_CLI HOME="$REAL_HOME" "$@"
+    -u MUXCODE_BUILD_CLI -u MUXCODE_TEST_CLI HOME="$REAL_HOME" ${real[@]+"${real[@]}"} "$@"
 }
 
 # shell_execs JSONL — "<exit>\t<command>" per finished command in a codex
@@ -487,6 +501,7 @@ elif ! command -v codex >/dev/null 2>&1 || ! command -v swift >/dev/null 2>&1; t
   echo "-- live: skipped (codex and swift must both be on PATH)"
 else
   echo "-- live: codex exec under the build and test roles' own launch flags"
+  [ -n "$REAL_INSTALL_DIR" ] || echo "   note: no installed muxcode found, so the launch flags carry no BASH_ENV shim"
   PKG="$APP/packages/Kit"
   model=()
   [ -n "${MUXCODE_XCODE_COMPAT_LIVE_MODEL:-}" ] && model=(-m "$MUXCODE_XCODE_COMPAT_LIVE_MODEL")

@@ -433,7 +433,8 @@ var DefaultGitPatterns = []string{
 // in MUXCODE_TEST_PATTERNS is a full test run even if it is also a precheck.
 // A command matching both a build and a test pattern takes the longer
 // pattern, ties to build: `make test` is a test run although bare `make` is a
-// build pattern, while `go build -o x-test` stays a build.
+// build pattern, while `go build -o x-test` stays a build. A SwiftPM query
+// (swiftPMQuery) is unclassified whatever the patterns say.
 func ClassifyCommand(command string) CommandType {
 	// Skip bus commands
 	if strings.HasPrefix(command, "muxcode") || strings.HasPrefix(command, "agent-bus") {
@@ -442,6 +443,9 @@ func ClassifyCommand(command string) CommandType {
 
 	// Strip cd prefix and env vars to get the first real command
 	firstCmd := stripCommandPrefix(command)
+	if swiftPMQuery(firstCmd) {
+		return CmdUnknown
+	}
 
 	patterns := loadPatterns()
 
@@ -545,22 +549,16 @@ var xcodebuildModes = map[string]bool{
 // such as `-derivedDataPath build/DerivedData` or `-archivePath test` spell
 // the same words.
 //
-// Words come from shellWords, so a quoted operand (`-scheme "My test App"`)
-// stays one word. An option consumes the next word unless it is a known
-// switch or carries its value inline (`-only-testing:X`, `-key=YES`), so the
+// Arguments come from commandArgs, so a quoted operand (`-scheme "My test App"`)
+// stays one argument and a redirection is no argument at all — a mode option
+// after one (`xcodebuild test > log -showBuildSettings`) still decides the
+// call. An option consumes the next argument unless it is a known switch or
+// carries its value inline (`-only-testing:X`, `-key=YES`), so the
 // unrecognized case errs toward losing an action — no row — never toward
 // inventing a test run from an operand, which would record test success for
-// a call that only compiled. Only the first statement is read
-// (parseShellStatements), and a redirection ends it.
+// a call that only compiled.
 func xcodebuildAction(cmd string) CommandType {
-	stmts, _ := parseShellStatements(cmd)
-	if len(stmts) == 0 {
-		return CmdUnknown
-	}
-	words := shellWords(stmts[0])
-	if len(words) > 0 && words[0] == "xcrun" {
-		words = words[1:]
-	}
+	words := commandArgs(cmd)
 	if len(words) == 0 || path.Base(words[0]) != "xcodebuild" {
 		return CmdUnknown
 	}
@@ -568,8 +566,6 @@ func xcodebuildAction(cmd string) CommandType {
 	for i := 1; i < len(words); i++ {
 		w := words[i]
 		switch {
-		case isShellOperatorWord(w):
-			return found
 		case xcodebuildModes[w]:
 			return CmdUnknown
 		case strings.HasPrefix(w, "-"):
@@ -586,9 +582,76 @@ func xcodebuildAction(cmd string) CommandType {
 }
 
 // isShellOperatorWord reports a shellWords word that is a redirection
-// operator (`>`, `2>&1`, `<`) rather than an argument.
+// operator (`>`, `2>&`, `<`) rather than an argument. shellWords splits every
+// operator from its target, so the next word is always that target.
 func isShellOperatorWord(w string) bool {
 	return strings.ContainsAny(w, "&<>") && strings.Trim(w, "0123456789|&<>") == ""
+}
+
+// commandArgs returns the words cmd's first statement passes to its
+// executable, as the shell would: redirection operators and their targets
+// dropped, outer quotes removed, and a leading `xcrun` skipped so the tool it
+// runs comes first. xcodebuildAction, swiftPMQuery and through it the run
+// chain's swiftpm_query condition all read a call through it, so `'list'` and
+// `> log list` mean `list` to each of them (review, 2026-11-02).
+func commandArgs(cmd string) []string {
+	stmts, _ := parseShellStatements(cmd)
+	if len(stmts) == 0 {
+		return nil
+	}
+	words := shellWords(stmts[0])
+	var args []string
+	for i := 0; i < len(words); i++ {
+		if isShellOperatorWord(words[i]) {
+			i++
+			continue
+		}
+		args = append(args, unquote(words[i]))
+	}
+	if len(args) > 0 && args[0] == "xcrun" {
+		args = args[1:]
+	}
+	return args
+}
+
+// swiftPMQueryArgs are, per `swift` subcommand, the arguments that make the
+// call print something — a test list, a path, help — instead of building or
+// testing. `list` is a subcommand (`swift test list`), so it counts only as
+// the first argument; an option's operand may spell it (`--filter list`).
+var swiftPMQueryArgs = map[string]map[string]bool{
+	"build": {
+		"--show-bin-path": true, "--print-manifest-job-graph": true, "--print-pif-manifest-graph": true,
+		"--help": true, "-h": true, "--version": true,
+	},
+	"test": {
+		"--list-tests": true, "-l": true, "--show-codecov-path": true, "--show-code-coverage-path": true,
+		"--show-coverage-path": true, "--help": true, "-h": true, "--version": true,
+	},
+}
+
+// swiftPMQuery reports a `swift build` or `swift test` call (bare or through
+// xcrun) that only queries SwiftPM. Such a call matches the build and test
+// patterns, and its success would be recorded as a passing build or suite
+// that never ran (review, 2026-11-02). It reads the call through commandArgs,
+// and the run chain's swiftpm_query condition is this same predicate.
+func swiftPMQuery(cmd string) bool {
+	args := commandArgs(cmd)
+	if len(args) < 2 || path.Base(args[0]) != "swift" {
+		return false
+	}
+	queries := swiftPMQueryArgs[args[1]]
+	if queries == nil {
+		return false
+	}
+	if args[1] == "test" && len(args) > 2 && args[2] == "list" {
+		return true
+	}
+	for _, a := range args[2:] {
+		if queries[a] {
+			return true
+		}
+	}
+	return false
 }
 
 // envOrDefault returns patterns from a pipe-delimited env var, or defaults.
@@ -707,12 +770,18 @@ func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 // containing `/` — whose basename matches base, a pattern's last path element.
 // It gives a bare `scripts/test.sh` the verdict `bash scripts/test.sh` already
 // had: tibo's CONTRIBUTING documents the bare form, and it classified as
-// nothing (MUX-207). A multiword base never names one executable.
+// nothing (MUX-207). A multiword base never names one executable. The first
+// word comes from shellWords, so an attached redirection
+// (`scripts/test.sh>/tmp/log`) is not read as part of the path.
 func scriptPathMatches(cmd, base string) bool {
 	if strings.ContainsAny(base, " \t") {
 		return false
 	}
-	exe, _, _ := strings.Cut(cmd, " ")
+	words := shellWords(cmd)
+	if len(words) == 0 {
+		return false
+	}
+	exe := words[0]
 	return strings.Contains(exe, "/") && globMatch(base, path.Base(exe))
 }
 
