@@ -214,7 +214,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	}
 
 	// Before any agent launches, so a new CLAUDE.md is in its context.
-	announceProjectInit(session, InitProjectFiles(projectDir, DetectProject(projectDir)))
+	InitSessionProject(session, projectDir)
 
 	// Initialize mode cycle state for edit window (edit ↔ auto)
 	if err := WriteModeCycleState(session, DefaultModeCycleState()); err != nil {

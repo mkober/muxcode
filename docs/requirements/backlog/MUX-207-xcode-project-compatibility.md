@@ -205,6 +205,8 @@ is a fully configured project left byte-identical.
 | `tools/muxcode/bus/launcher.go` | session launch — where session-start init hooks in |
 | `scripts/probe-xcode-sandbox.sh` | Phase 1 probe — runs each command through `codex sandbox` under the role's real launch policy, verified against `muxcode agent sandbox-fingerprint` |
 | `scripts/test-xcode-compat.sh` | the integration test (new) |
+| `cmd/context.go` | `muxcode context init [DIR]` — session-start init on demand, the script's road (Phase 8) |
+| `bus/project_init.go` | `InitSessionProject`: detect → `InitProjectFiles` → `announceProjectInit`, the one call both the launcher and `context init` make (Phase 8) |
 
 ## Implementation
 
@@ -635,14 +637,33 @@ be removed before the next commit, not committed.
 
 ### Phase 8: Integration test
 
-- [ ] `scripts/test-xcode-compat.sh`, hermetic on a scratch repo with a nested `Package.swift` and
+- [x] `scripts/test-xcode-compat.sh`, hermetic on a scratch repo with a nested `Package.swift` and
       `project.yml`: detection finds both; classification writes rows and fires chains through the
       real `hook bash`, with `swift --version` as the negative control; session-init creates the
-      three files, never overwrites, and leaves a fully configured project untouched
-- [ ] Opt-in live part: a real Codex build and test agent runs `swift build` / `swift test` on the
-      scratch package
-- [ ] Coverage floor so a skipped section cannot read as green
-- [ ] Run through the run agent and record the row here
+      three files, never overwrites, and leaves a fully configured project untouched — 2026-11-02,
+      hermetic run `23 passed, 0 failed (floor 23), 0 live` (run reply `1793661259-run-776fb561`);
+      session init is driven through the new `muxcode context init [DIR]` (see findings below)
+- [x] Opt-in live part: a real Codex build and test agent runs `swift build` / `swift test` on the
+      scratch package — `--live` / `MUXCODE_XCODE_COMPAT_LIVE=1`: one real `codex exec` on the default
+      no-sandbox policy; `23 passed, 0 failed (floor 23), 2 live`, both commands exit 0 and classify
+      to build and test rows (run reply `1793661335-run-6c0d7b6b`)
+- [x] Coverage floor so a skipped section cannot read as green — floor 23, the exact hermetic pass
+      count; the live section is outside the floor and skipped with a printed reason
+- [x] Run through the run agent and record the row here — hook row `run-history.jsonl ts 1793661252`
+      (`bash scripts/test-xcode-compat.sh > /tmp/test-xcode-compat.log 2>&1; echo "EXIT_CODE:$?"`,
+      output `EXIT_CODE:0`); the `--live` runs were log-only (no hook row — the call was backgrounded,
+      so `chain-withheld`), their results read from `/tmp/test-xcode-compat-live-2.log`
+
+### Phase 8 findings (2026-11-02)
+
+| Item | What shipped |
+|------|--------------|
+| `muxcode context init [DIR]` | New subcommand (`cmd/context.go` `contextInit`). Calls `bus.InitSessionProject(session, dir)` — a new one-call wrapper in `bus/project_init.go` (`DetectProject` → `InitProjectFiles` → `announceProjectInit`) that `LaunchSession` now calls too (`bus/launcher.go:217`), so the script and the launcher run **the same road**, announcement included. Prints `created <path>` (project-relative) per file written, `skipped <path>: <reason>` only for a withheld file (`MUXCODE_CONFIG` or a write error — an existing file, or a stub left out for `.claude/CLAUDE.md`, is silent), or `nothing to create`; a non-directory or extra argument exits 1 |
+| `muxcode agent sandbox-args <role>` | New subcommand (`cmd/agent.go` `agentSandboxArgs`): prints `CodexLaunchSandboxArgs(role)` one argument per line under the same `LoadShellConfig` resolution as `sandbox-fingerprint` — the exact slice the fingerprint hashes. `scripts/test-xcode-compat.sh --live` reads it to run `codex exec` under the build and test roles' real launch flags rather than a copy of them |
+| First `--live` run | Failed before reaching Codex on bash 3.2: `line 395: model[@]: unbound variable` (an empty array expanded under `set -u`). Fixed in the script; the re-run is the recorded one |
+| Hook-row gap | Only the hermetic run wrote a hook row; the `--live` runs were backgrounded, so `backgroundLaunch` withheld the row (MUX-176 by design). Evidence for them is the script's own `=== results:` line in the log |
+
+Documented: `docs/agent-bus.md` (`muxcode context` — usage, table row, on-demand paragraph with examples), `docs/configuration.md` (Session-Start Initialization — on-demand sentence), `CLAUDE.md` `test-xcode-compat` entry (by edit).
 
 ## Notes
 
@@ -665,4 +686,4 @@ that.
 
 ## Status
 
-In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) complete 2026-11-02: the live tibo run under workspace-write passed build-docs but failed the suite on a Seatbelt `system-info` deny no grant reaches, so by user decision 4 every Codex agent now launches with no sandbox (`MUXCODE_CODEX_SANDBOX=workspace-write` opts back in), and the re-run on the reloaded no-sandbox agents passed both scripts (hook rows `ts 1793636350`, `1793636337`); the opt-in's missing-`-s` hole and the `TestOpenCodeModelsExist` fallout are fixed and pinned, suite green `ts 1793636696`. Phase 5 (Tool profiles) complete 2026-11-02 — Apple tool groups per role, edit deny + guard, watch recipe, pinned (Phase 4 committed as `16abf8d`, Phase 5 as `5727469`; the stray `config/codex-shim/.build/` was removed before the commit). Phase 6 (Session-start initialization) complete 2026-11-02 13:12: settings and `CLAUDE.md` stub created, never-overwrite, notice and negative control all pinned; the `.muxcode/config` write was withheld wherever it would shadow a home config until user decision 5 (12:57) layered `GetShellConfig` — home base, project overrides per key — and two launcher bypasses of that layering were fixed in review (committed `977231d`). Phase 7 (Docs) complete 2026-11-02 — `CLAUDE.md` by edit; `docs/hooks.md`, `docs/configuration.md`, `docs/agents.md` by plan. Phase 8 (Integration test) next
+In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) complete 2026-11-02: the live tibo run under workspace-write passed build-docs but failed the suite on a Seatbelt `system-info` deny no grant reaches, so by user decision 4 every Codex agent now launches with no sandbox (`MUXCODE_CODEX_SANDBOX=workspace-write` opts back in), and the re-run on the reloaded no-sandbox agents passed both scripts (hook rows `ts 1793636350`, `1793636337`); the opt-in's missing-`-s` hole and the `TestOpenCodeModelsExist` fallout are fixed and pinned, suite green `ts 1793636696`. Phase 5 (Tool profiles) complete 2026-11-02 — Apple tool groups per role, edit deny + guard, watch recipe, pinned (Phase 4 committed as `16abf8d`, Phase 5 as `5727469`; the stray `config/codex-shim/.build/` was removed before the commit). Phase 6 (Session-start initialization) complete 2026-11-02 13:12: settings and `CLAUDE.md` stub created, never-overwrite, notice and negative control all pinned; the `.muxcode/config` write was withheld wherever it would shadow a home config until user decision 5 (12:57) layered `GetShellConfig` — home base, project overrides per key — and two launcher bypasses of that layering were fixed in review (committed `977231d`). Phase 7 (Docs) complete 2026-11-02 — `CLAUDE.md` by edit; `docs/hooks.md`, `docs/configuration.md`, `docs/agents.md` by plan (committed `8455f5e`). Phase 8 (Integration test) complete 2026-11-02 18:15: `scripts/test-xcode-compat.sh` hermetic `23 passed, 0 failed (floor 23)` (run reply `1793661259-run-776fb561`, hook row `ts 1793661252`) and `--live` `23 + 2 live`, both Codex commands exit 0 (run reply `1793661335-run-6c0d7b6b`); `muxcode context init` added as the script's road into session-start init and `muxcode agent sandbox-args` as its road to the roles' real launch flags; suite green on the Phase 8 tree (`./build.sh` ts 1793661843, `./test.sh` ts 1793661907), review `1793661945-review-f58d5d98` 0 must-fix / 0 should-fix (one docs nit, fixed). All phases complete — ready to move to `completed/` when the user says so

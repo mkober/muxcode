@@ -1019,6 +1019,7 @@ Manage per-agent drop-in context files — a lightweight, file-based way to inje
 muxcode context list [--role ROLE] [--no-auto]
 muxcode context prompt <role> [--no-auto]
 muxcode context detect [DIR]
+muxcode context init [DIR]
 ```
 
 **Subcommands:**
@@ -1028,8 +1029,26 @@ muxcode context detect [DIR]
 | `list` | Show all context files with source (project/user/auto), filterable by `--role` |
 | `prompt` | Output formatted context for prompt injection (used by `RunAgentLaunch()`) |
 | `detect` | Auto-detect project type from indicator files and show convention snippets |
+| `init` | Run session-start initialization on `DIR` (default `.`) on demand — the launcher's own road, announcement included |
 
 - `--no-auto` — exclude auto-detected project context (only show manual `context.d/` files)
+
+**Session-start init on demand** (`init`, [MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)): `contextInit` (`cmd/context.go`) calls `bus.InitSessionProject` — the same single call `LaunchSession` makes before any agent starts: `DetectProject`, then `InitProjectFiles` creating whichever of `.muxcode/config`, `.claude/settings.json` and `CLAUDE.md` is missing, then `announceProjectInit` for the current `BUS_SESSION` — so it logs `project-init` (or `project-init-skipped`) and sends edit the `project-init` notice exactly as a launch does, and never overwrites (see [Session-Start Initialization](configuration.md#session-start-initialization)). It prints one `created <path>` line per file written, paths project-relative (`created .muxcode/config`); a `skipped <path>: <reason>` line only when a file was **withheld** — `.muxcode/config` under a `MUXCODE_CONFIG` (`skipped .muxcode/config: MUXCODE_CONFIG names <file>, which muxcode reads instead, …`) or a write error — and `nothing to create` when neither happened. A file that already exists, and a `CLAUDE.md` stub left out because `.claude/CLAUDE.md` exists, are silent: not creating what is not missing is the normal case, not a skip. `scripts/test-xcode-compat.sh` parses these lines, which is why the road exists. A `DIR` that is not a directory, or a second argument, exits 1.
+
+```bash
+$ muxcode context init
+created .muxcode/config
+created .claude/settings.json
+created CLAUDE.md
+
+$ muxcode context init        # again — every file present
+nothing to create
+
+$ MUXCODE_CONFIG=~/.config/muxcode/config muxcode context init /path/to/fresh-repo
+skipped .muxcode/config: MUXCODE_CONFIG names /Users/me/.config/muxcode/config, which muxcode reads instead, so a project config would be ignored
+created .claude/settings.json
+created CLAUDE.md
+```
 
 **Auto-detection:** Scans the working directory for 17 project types (go, nodejs, typescript, python, rust, cdk, java-maven, java-gradle, ruby, docker, terraform, make, cpp, csharp, gdscript, php, swift) via indicator files and glob patterns. Detected types inject convention snippets (~200 bytes each) covering build, test, and lint commands. Manual `context.d/` files shadow auto-detected entries by `(role, name)` key.
 
@@ -1219,6 +1238,27 @@ review	9c12…07de
 
 $ cat /tmp/muxcode-bus-<session>/launchsandbox-build.hash
 3f9c…e21a      # matches — the running build agent has the installed sandbox
+```
+
+### `muxcode agent sandbox-args`
+
+Print the approval and sandbox flags one role launches with on Codex — `CodexLaunchSandboxArgs` (`bus/launch_sandbox.go`), one argument per line, under the same `LoadShellConfig` resolution as `sandbox-fingerprint`. It is the exact slice the fingerprint hashes (`sha256` over the arguments NUL-joined), so joining the printed lines with `\0` and hashing them reproduces the role's fingerprint — which is how a script proves it is launching under the role's real policy rather than a copy of it ([MUX-207](requirements/backlog/MUX-207-xcode-project-compatibility.md)).
+
+```bash
+muxcode agent sandbox-args <role>
+```
+
+- `<role>` — exactly one role. The flags are printed for any role, whatever provider it is configured with — they are what the role *would* launch with on Codex; only `sandbox-fingerprint` blanks a non-Codex role
+- Reads the shell config (`LoadShellConfig`), so per-role provider and `MUXCODE_<ROLE>_CODEX_SANDBOX` overrides apply; set `BUS_SESSION` for the session's runtime overrides
+
+**Who runs it.** `scripts/test-xcode-compat.sh --live`: for each of the build and test roles it reads the role's arguments, checks their hash against `sandbox-fingerprint`, and runs one real `codex exec` under those flags — build's runs `swift build`, test's runs `swift test`, on the scratch package, each command keeping its own exit status — so the live section exercises the default no-sandbox launch policy (`-s danger-full-access`, [Codex CLI sandbox](configuration.md#codex-cli-sandbox)) as the agents themselves get it, and a future change to the flags cannot leave the test running an older policy.
+
+```bash
+$ muxcode agent sandbox-args build
+-a
+never
+-s
+danger-full-access
 ```
 
 ### `muxcode agent status`

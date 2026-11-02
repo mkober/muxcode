@@ -215,6 +215,16 @@ func pathPresent(p string) bool {
 	return err == nil
 }
 
+// InitSessionProject is session-start init as one call: detect projectDir,
+// create its missing project files, and announce the result to session. The
+// launcher runs it before any agent starts; `muxcode context init` runs the
+// same road on demand.
+func InitSessionProject(session, projectDir string) ProjectInitResult {
+	res := InitProjectFiles(projectDir, DetectProject(projectDir))
+	announceProjectInit(session, res)
+	return res
+}
+
 // announceProjectInit records an init in the lifecycle log and tells edit
 // which files are new, so the user reviews and commits them. Edit is told only
 // when something was created: a skip repeats on every launch and is logged,
