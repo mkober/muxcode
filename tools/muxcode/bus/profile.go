@@ -570,6 +570,25 @@ func runWatchActions(patterns ...string) ChainActions {
 	return actions
 }
 
+// appleTestRunShapes are the run chain's Swift verification shapes, each also
+// behind the `cd <dir> &&` a nested SwiftPM package is run with (MUX-207).
+// While the default test patterns classify `swift test`, ChainEvent routes it
+// to the test chain and the run chain never sees it; the shapes apply once a
+// MUXCODE_TEST_PATTERNS override leaves it unclassified.
+//
+// xcodebuild has no shape here. xcodebuildAction is not a pattern, so every
+// real xcodebuild test action reaches the test chain whatever the overrides;
+// the only xcodebuild calls left unclassified for this chain are modes such as
+// `xcodebuild test -showBuildSettings`, which run no tests, and a glob admitting
+// them requested watch for a run that verified nothing (review, 2026-10-29).
+func appleTestRunShapes() []string {
+	var shapes []string
+	for _, s := range []string{"swift test", "swift test *"} {
+		shapes = append(shapes, s, "cd * && "+s)
+	}
+	return shapes
+}
+
 // DefaultConfig returns compiled-in defaults matching current bash/Go behavior.
 //
 // A chain message may state only what its trigger establishes: a command's
@@ -965,14 +984,14 @@ func DefaultConfig() *MuxcodeConfig {
 				// prefix or script path): globMatch's * spans spaces, so a bare
 				// "*.sh *" also matched `ls -la x.sh 2>&1` — reads of a .sh path,
 				// not executions.
-				OnSuccess: runWatchActions(
+				OnSuccess: runWatchActions(append([]string{
 					"aws *",
 					"bash *.sh", "bash *.sh *",
 					"sh *.sh", "sh *.sh *",
 					"./*.sh", "./*.sh *",
 					"/*.sh", "/*.sh *",
 					"scripts/*.sh", "scripts/*.sh *",
-				),
+				}, appleTestRunShapes()...)...),
 				OnFailure: ChainActions{{
 					SendTo:  "edit",
 					Action:  "notify",

@@ -129,10 +129,13 @@ A separate defect; this spec only points at it.
       script_
 - [ ] Codex build and test agents can build and test a SwiftPM package nested below the repo root:
       tibo's `scripts/test.sh` and `scripts/build-docs.sh` pass on the Codex test and build agents
-- [ ] Swift and Xcode build and test commands are classified: each writes an authoritative history
+- [x] Swift and Xcode build and test commands are classified: each writes an authoritative history
       row and fires its chain; a bare `scripts/test.sh` / `scripts/build-*.sh` is classified as well
       as the `bash` form; negative control — a non-build Swift call such as `swift --version` stays
-      unclassified
+      unclassified — _Phase 3, 2026-10-29: patterns, `xcodebuildAction`, basename matching for the
+      bare form, `swift --version` and the operand traps pinned in `hook_test.go` and
+      `conditions_test.go`. Suite pass is the test agent's report (`./test.sh` EXIT=0,
+      `ts 1793305737`); no hook row for the run_
 - [x] Detection finds a Swift or Xcode project whose `Package.swift`, `*.xcodeproj` or XcodeGen
       `project.yml` sits below the root, at a bounded depth that skips `.build/`, `DerivedData/`
       and `node_modules/` — _Phase 2, 2026-10-29: depth 3, the skip set plus `Pods`, `Carthage` and
@@ -310,11 +313,31 @@ probe is read-only only with respect to the repository.
 
 ### Phase 3: Classification
 
-- [ ] Swift and Xcode build and test patterns — project-derived and/or defaults — for `swift build`,
-      `swift test`, `xcodebuild … build|test`, `xcodegen generate`
-- [ ] A bare `scripts/test.sh` / `scripts/build-*.sh` classifies as the `bash` form does
-- [ ] The run chain's watch allowlist admits the `swift test` / `xcodebuild test` verification shapes
-- [ ] Negative control pinned: `swift --version` and other non-build Swift calls stay unclassified
+- [x] Swift and Xcode build and test patterns — project-derived and/or defaults — for `swift build`,
+      `swift test`, `xcodebuild … build|test`, `xcodegen generate` — _`bus/hook.go` 2026-10-29:
+      `swift build` and `./build-*.sh` in `DefaultBuildPatterns`, `swift test` in
+      `DefaultTestPatterns`; `xcodebuild` classified by its **action words** (`xcodebuildAction`:
+      test actions → `CmdTest`, build actions → `CmdBuild`, modes such as `-list`/`-showBuildSettings`
+      → unknown; options consume their operand so `-archivePath test` or `-scheme "My test App"`
+      cannot spell an action); `xcodegen generate` is the new `CmdBuildPrecheck`
+      (`DefaultBuildPrecheckPatterns`), feeding build→test only on failure — the `go vet` hazard
+      one stage up. The evidence guard and `graph_exec`'s stage map follow the same classification_
+- [x] A bare `scripts/test.sh` / `scripts/build-*.sh` classifies as the `bash` form does —
+      _`matchPatterns`: a first word containing `/` matches a path-carrying pattern by basename;
+      pinned by `scripts/test.sh`, `./scripts/test.sh --verbose`, `scripts/build-ios.sh` classified
+      and `scripts/test-all.sh`, `cat scripts/test.sh` not_
+- [x] The run chain's watch allowlist admits the `swift test` / `xcodebuild test` verification shapes
+      — _`appleTestRunShapes` (`bus/profile.go`): `swift test`, `swift test *`, each behind
+      `cd * &&` for a nested package. Reachable only under a `MUXCODE_TEST_PATTERNS` override:
+      with the defaults `ChainEvent` routes `swift test` to the test chain for every role, so the
+      run chain never sees it (worker flag, 2026-10-29). `xcodebuild` deliberately **not** added: `xcodebuildAction` is
+      not a pattern, so every real xcodebuild test action reaches the test chain whatever the
+      overrides, and a glob would admit `xcodebuild test -showBuildSettings`, which runs no test
+      (review should-fix, 2026-10-29)_
+- [x] Negative control pinned: `swift --version` and other non-build Swift calls stay unclassified
+      — _`TestClassifyCommand_SwiftAndXcode` and the conditions table: `swift --version`,
+      `xcodebuild -list`, `-showBuildSettings … test`, a scheme or path named `test`, a quoted
+      scheme — all unclassified or classified by their real action_
 
 ### Phase 4: Codex sandbox fix
 
@@ -378,8 +401,8 @@ that.
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-207-xcode-project-compatibility | 17m | 2026-10-29 16:05 |
+| MUX-207-xcode-project-compatibility | 46m | 2026-10-30 01:03 |
 
 ## Status
 
-In Progress — Phases 1–2 complete 2026-10-29; Phase 3 (classification) next
+In Progress — Phases 1–3 complete 2026-10-29; Phase 4 (Codex sandbox fix) next

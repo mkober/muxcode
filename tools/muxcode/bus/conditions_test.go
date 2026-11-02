@@ -712,6 +712,18 @@ func TestRunChainWatchAllowlist(t *testing.T) {
 		{"absolute script with args", "/tmp/verify.sh --flag x", true},
 		{"script with args", "scripts/deploy.sh prod", true},
 		{"script with redirection", "bash /tmp/verify.sh > /tmp/out.log 2>&1", true},
+		// Swift and Xcode verification runs (MUX-207), bare and in a nested package.
+		{"swift test", "swift test", true},
+		{"swift test nested", "cd packages/TiboKit && swift test --filter Kit", true},
+		// Swift and Xcode calls that verify nothing. No xcodebuild call is
+		// admitted: a real test action always takes the test chain, and the
+		// ones left here — listing, settings, enumeration — run no tests.
+		{"swift build", "swift build", false},
+		{"swift version", "swift --version", false},
+		{"xcodebuild list", "xcodebuild -list -project App.xcodeproj", false},
+		{"xcodebuild test settings", "xcodebuild test -showBuildSettings -scheme App", false},
+		{"xcodebuild test enumeration", "cd apps/ios && xcodebuild test -enumerate-tests -scheme App", false},
+		{"xcodebuild scheme named test", "xcodebuild -scheme test build", false},
 	}
 
 	for _, tt := range tests {

@@ -51,6 +51,9 @@ func TestCheckEvidenceGuard_BundledDenied(t *testing.T) {
 		{"test", "go vet ./... && echo vet-ok", "test", "go vet ./..."},
 		{"deploy", "cdk deploy --all || echo failed", "deploy", "cdk deploy --all"},
 		{"deploy", "./build.sh && cdk diff", "build", "./build.sh"},
+		{"build", "xcodegen generate && xcodebuild -scheme A build", "build", "xcodegen generate"},
+		{"test", "xcodebuild test -scheme A | xcpretty", "test", "xcodebuild test -scheme A"},
+		{"build", "scripts/build-ios.sh && echo ok", "build", "scripts/build-ios.sh"},
 	}
 	for _, c := range cases {
 		d := CheckEvidenceGuard(c.role, c.command)
