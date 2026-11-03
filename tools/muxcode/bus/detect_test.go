@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -426,5 +427,138 @@ func TestDetectProject_TypescriptFile(t *testing.T) {
 	}
 	if types[0].Name != "typescript" {
 		t.Errorf("expected 'typescript', got '%s'", types[0].Name)
+	}
+}
+
+const xcodeGenSpec = "name: App\ntargets:\n  App:\n    type: application\n    platform: iOS\n"
+
+// swiftIndicators returns the swift type's indicators, failing when swift is
+// not the one type detected.
+func swiftIndicators(t *testing.T, dir string) []string {
+	t.Helper()
+	types := DetectProject(dir)
+	if len(types) != 1 || types[0].Name != "swift" {
+		t.Fatalf("expected only swift, got %+v", types)
+	}
+	return types[0].Indicators
+}
+
+// tibo's layout (MUX-207): every marker sits below the root.
+func TestDetectProject_SwiftNestedMarkers(t *testing.T) {
+	dir := t.TempDir()
+	writeIndicatorFile(t, dir, "packages/TiboKit/Package.swift", "// swift-tools-version:5.9")
+	writeIndicatorFile(t, dir, "tools/DocsGen/Package.swift", "// swift-tools-version:5.9")
+	writeIndicatorFile(t, dir, "apps/ios/project.yml", xcodeGenSpec)
+	writeIndicatorFile(t, dir, "apps/macos/Tibo.xcodeproj/project.pbxproj", "")
+
+	got := strings.Join(swiftIndicators(t, dir), ",")
+	want := "apps/ios/project.yml,apps/macos/Tibo.xcodeproj,packages/TiboKit/Package.swift,tools/DocsGen/Package.swift"
+	if got != want {
+		t.Errorf("indicators = %s, want %s", got, want)
+	}
+}
+
+// A project opened through a symlink: WalkDir does not descend into a
+// symlinked root, so nested markers went undetected (review, 2026-11-02).
+// A symlink below the root stays unfollowed.
+func TestDetectProject_SwiftNestedMarkersThroughSymlinkedRoot(t *testing.T) {
+	target := t.TempDir()
+	writeIndicatorFile(t, target, "packages/Kit/Package.swift", "// swift-tools-version:5.9")
+	outside := t.TempDir()
+	writeIndicatorFile(t, outside, "Lib/Package.swift", "// swift-tools-version:5.9")
+	if err := os.Symlink(outside, filepath.Join(target, "vendor")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "project")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.Join(swiftIndicators(t, link), ","); got != "packages/Kit/Package.swift" {
+		t.Errorf("indicators through a symlinked root = %s, want packages/Kit/Package.swift", got)
+	}
+}
+
+func TestDetectProject_SwiftSkipsExcludedDirs(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{".build/checkouts/Dep", "DerivedData/SourcePackages", "node_modules/pkg", "Pods/Dep", "Carthage/Checkouts", ".git/x"} {
+		writeIndicatorFile(t, dir, d+"/Package.swift", "// swift-tools-version:5.9")
+	}
+	writeIndicatorFile(t, dir, "apps/DerivedData/x/project.yml", xcodeGenSpec)
+
+	if types := DetectProject(dir); len(types) != 0 {
+		t.Errorf("markers inside excluded directories detected: %+v", types)
+	}
+}
+
+func TestDetectProject_SwiftDepthBound(t *testing.T) {
+	dir := t.TempDir()
+	writeIndicatorFile(t, dir, "a/b/c/Package.swift", "")
+	writeIndicatorFile(t, dir, "w/x/y/z/Package.swift", "")
+
+	got := swiftIndicators(t, dir)
+	if len(got) != 1 || got[0] != "a/b/c/Package.swift" {
+		t.Errorf("indicators = %v, want only a/b/c/Package.swift (depth %d)", got, swiftDetectDepth)
+	}
+}
+
+// project.yml is a common name; only an XcodeGen spec counts, at the root or below.
+func TestDetectProject_ProjectYmlMustBeXcodeGen(t *testing.T) {
+	dir := t.TempDir()
+	writeIndicatorFile(t, dir, "project.yml", "version: 2\njobs:\n  build: {}\n")
+	writeIndicatorFile(t, dir, "deploy/project.yml", "stages:\n  - deploy\n")
+	if types := DetectProject(dir); len(types) != 0 {
+		t.Fatalf("non-XcodeGen project.yml detected: %+v", types)
+	}
+
+	writeIndicatorFile(t, dir, "project.yml", xcodeGenSpec)
+	if got := swiftIndicators(t, dir); len(got) != 1 || got[0] != "project.yml" {
+		t.Errorf("indicators = %v, want [project.yml]", got)
+	}
+}
+
+// A root-only project keeps its old indicators, and an .xcodeproj bundle is
+// never entered: a Package.swift inside one is not a nested package.
+func TestDetectProject_SwiftRootOnlyUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	writeIndicatorFile(t, dir, "Package.swift", "// swift-tools-version:5.9")
+	writeIndicatorFile(t, dir, "App.xcodeproj/swiftpm/Package.swift", "")
+	writeIndicatorFile(t, dir, "Sources/App/main.swift", "")
+
+	got := strings.Join(swiftIndicators(t, dir), ",")
+	if got != "Package.swift,*.xcodeproj" {
+		t.Errorf("indicators = %s, want Package.swift,*.xcodeproj", got)
+	}
+}
+
+func TestConventionText_Swift(t *testing.T) {
+	rootOnly := "## Swift Project\n" +
+		"- Build: `swift build`\n" +
+		"- Test: `swift test`\n" +
+		"- Naming: camelCase functions/properties, PascalCase types"
+	if got := conventionText(ProjectType{Name: "swift", Indicators: []string{"Package.swift"}}); got != rootOnly {
+		t.Errorf("root-only package text changed:\n%s", got)
+	}
+
+	nested := conventionText(ProjectType{Name: "swift", Indicators: []string{
+		"apps/ios/project.yml", "apps/macos/Tibo.xcodeproj", "packages/TiboKit/Package.swift",
+	}})
+	for _, want := range []string{"`packages/TiboKit`", "`apps/ios/project.yml`", "xcodegen generate", "xcodebuild -list", "xcrun simctl", "swift build"} {
+		if !strings.Contains(nested, want) {
+			t.Errorf("nested text missing %q:\n%s", want, nested)
+		}
+	}
+
+	xcodeOnly := conventionText(ProjectType{Name: "swift", Indicators: []string{"*.xcodeproj"}})
+	if strings.Contains(xcodeOnly, "swift build") || !strings.Contains(xcodeOnly, "xcodebuild") {
+		t.Errorf("Xcode-only text should name xcodebuild, not swift build:\n%s", xcodeOnly)
+	}
+
+	var many []string
+	for i := 0; i < maxListedMarkers+2; i++ {
+		many = append(many, fmt.Sprintf("p%d/Package.swift", i))
+	}
+	if got := conventionText(ProjectType{Name: "swift", Indicators: many}); !strings.Contains(got, "and 2 more") || strings.Contains(got, "`p7`") {
+		t.Errorf("package list not capped at %d:\n%s", maxListedMarkers, got)
 	}
 }

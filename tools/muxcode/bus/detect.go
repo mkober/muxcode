@@ -1,10 +1,15 @@
 package bus
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -17,11 +22,36 @@ type ProjectType struct {
 }
 
 // indicator defines how to detect a project type.
+//
+// Files and Globs are checked at the root. Depth > 0 also looks for them up to
+// that many directory levels below it (nestedMatches), recording each nested
+// match as its slash-separated path relative to the root. Accept, when set,
+// must also pass for a Files match — a content check for a filename other
+// tools share.
 type indicator struct {
 	Name    string
 	Files   []string // exact filenames to check
 	Globs   []string // glob patterns to check
+	Depth   int
+	Accept  func(path string) bool
 	Extract func(dir string) map[string]string
+}
+
+// swiftDetectDepth bounds the nested Swift search. An app repo keeps its
+// packages and XcodeGen specs a level or two down — tibo has
+// packages/TiboKit/Package.swift and apps/ios/project.yml — and was detected
+// as nothing while only the root was checked (MUX-207).
+const swiftDetectDepth = 3
+
+// skipDetectDirs are never descended into by a nested search: build output and
+// dependency checkouts are deep, large, and hold other projects' markers.
+// Hidden directories (.git, .swiftpm) are skipped as well.
+var skipDetectDirs = map[string]bool{
+	".build":       true,
+	"DerivedData":  true,
+	"node_modules": true,
+	"Pods":         true,
+	"Carthage":     true,
 }
 
 // indicators is the registry of all detectable project types.
@@ -96,9 +126,11 @@ var indicators = []indicator{
 		Extract: extractPHP,
 	},
 	{
-		Name:  "swift",
-		Files: []string{"Package.swift"},
-		Globs: []string{"*.xcodeproj"},
+		Name:   "swift",
+		Files:  []string{"Package.swift", "project.yml"},
+		Globs:  []string{"*.xcodeproj"},
+		Depth:  swiftDetectDepth,
+		Accept: acceptSwiftMarker,
 	},
 }
 
@@ -113,7 +145,7 @@ func DetectProject(dir string) []ProjectType {
 		// Check exact file matches
 		for _, f := range ind.Files {
 			path := filepath.Join(dir, f)
-			if _, err := os.Stat(path); err == nil {
+			if _, err := os.Stat(path); err == nil && ind.accepts(path) {
 				found = append(found, f)
 			}
 		}
@@ -126,6 +158,10 @@ func DetectProject(dir string) []ProjectType {
 				// Record just the glob pattern, not all matches
 				found = append(found, g)
 			}
+		}
+
+		if ind.Depth > 0 {
+			found = append(found, ind.nestedMatches(dir)...)
 		}
 
 		if len(found) == 0 {
@@ -148,6 +184,93 @@ func DetectProject(dir string) []ProjectType {
 		return detected[i].Name < detected[j].Name
 	})
 	return detected
+}
+
+func (ind indicator) accepts(path string) bool {
+	return ind.Accept == nil || ind.Accept(path)
+}
+
+// nestedMatches walks below dir, at most ind.Depth directory levels down, for
+// the indicator's Files and Globs, returning slash-separated relative paths in
+// lexical order. Root-level entries are left to DetectProject's own checks. A
+// directory matching a glob (an .xcodeproj bundle) is recorded and not entered;
+// skipDetectDirs and hidden directories are not entered; symlinks below dir are
+// not followed. dir itself is resolved first, since WalkDir does not descend
+// into a symlinked root and a project opened through a link would otherwise
+// detect no nested marker. Unreadable directories are skipped.
+func (ind indicator) nestedMatches(dir string) []string {
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	var found []string
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if d != nil && d.IsDir() && p != dir {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel, relErr := filepath.Rel(dir, p)
+		if relErr != nil || rel == "." {
+			return nil
+		}
+		levels := strings.Count(rel, string(filepath.Separator))
+		name := d.Name()
+		if d.IsDir() {
+			if matchesAnyGlob(ind.Globs, name) {
+				if levels > 0 {
+					found = append(found, filepath.ToSlash(rel))
+				}
+				return fs.SkipDir
+			}
+			if levels >= ind.Depth || skipDetectDirs[name] || strings.HasPrefix(name, ".") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if levels == 0 {
+			return nil
+		}
+		if (slices.Contains(ind.Files, name) && ind.accepts(p)) || matchesAnyGlob(ind.Globs, name) {
+			found = append(found, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return found
+}
+
+func matchesAnyGlob(globs []string, name string) bool {
+	for _, g := range globs {
+		if ok, _ := filepath.Match(g, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// acceptSwiftMarker accepts every Swift marker but project.yml, which must be
+// an XcodeGen spec.
+func acceptSwiftMarker(p string) bool {
+	return filepath.Base(p) != "project.yml" || isXcodeGenSpec(p)
+}
+
+// isXcodeGenSpec reports whether a project.yml is an XcodeGen spec: it has a
+// top-level `targets:` or `include:` key within its first 256 KiB. The filename
+// alone is shared with other tools.
+func isXcodeGenSpec(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(io.LimitReader(f, 256<<10))
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "targets:") || strings.HasPrefix(line, "include:") {
+			return true
+		}
+	}
+	return false
 }
 
 // AutoContextFiles converts detected project types into ContextFile entries
@@ -307,14 +430,73 @@ func conventionText(pt ProjectType) string {
 		return s
 
 	case "swift":
-		return "## Swift Project\n" +
-			"- Build: `swift build`\n" +
-			"- Test: `swift test`\n" +
-			"- Naming: camelCase functions/properties, PascalCase types"
+		return swiftConventionText(pt.Indicators)
 
 	default:
 		return ""
 	}
+}
+
+// maxListedMarkers caps how many package or spec paths the Swift context
+// names, so a large monorepo cannot flood every agent's context.
+const maxListedMarkers = 6
+
+// swiftConventionText builds the Swift context from the markers detection
+// found: SwiftPM lines for packages, Xcode lines for projects and XcodeGen
+// specs, and the locations of packages and specs below the root, since their
+// commands run from those directories. No markers reads as a root SwiftPM
+// package, the text a root-only package has always had.
+func swiftConventionText(found []string) string {
+	var pkgDirs, specs []string
+	xcode := false
+	for _, f := range found {
+		switch path.Base(f) {
+		case "Package.swift":
+			if d := path.Dir(f); d != "." {
+				pkgDirs = append(pkgDirs, d)
+			}
+		case "project.yml":
+			specs = append(specs, f)
+			xcode = true
+		default:
+			xcode = true
+		}
+	}
+	spm := len(pkgDirs) > 0 || slices.Contains(found, "Package.swift") || !xcode
+
+	var b strings.Builder
+	b.WriteString("## Swift Project\n")
+	if len(pkgDirs) > 0 {
+		fmt.Fprintf(&b, "- SwiftPM packages: %s — run `swift` commands from the package directory\n", codeList(pkgDirs))
+	}
+	if spm {
+		b.WriteString("- Build: `swift build`\n- Test: `swift test`\n")
+	}
+	if len(specs) > 0 {
+		fmt.Fprintf(&b, "- XcodeGen specs: %s — `xcodegen generate` in the spec's directory regenerates its `.xcodeproj`; edit `project.yml`, never the generated project\n", codeList(specs))
+	}
+	if xcode {
+		b.WriteString("- Xcode build: `xcodebuild -project <App>.xcodeproj -scheme <Scheme> -destination 'generic/platform=iOS Simulator' build` (or `generic/platform=macOS`, `generic/platform=tvOS Simulator`)\n" +
+			"- Xcode test: `xcodebuild test -project <App>.xcodeproj -scheme <Scheme> -destination 'platform=iOS Simulator,name=<Device>'` — a named simulator needs an installed runtime (`xcrun simctl list runtimes`)\n" +
+			"- Schemes and destinations: `xcodebuild -list -project <App>.xcodeproj`, `xcodebuild -showdestinations -project <App>.xcodeproj -scheme <Scheme>`\n" +
+			"- Simulators: `xcrun simctl list devices available`; `xcrun simctl boot|install|launch` to run on one\n")
+	}
+	b.WriteString("- Naming: camelCase functions/properties, PascalCase types")
+	return b.String()
+}
+
+// codeList renders paths as a backticked, comma-separated list of at most
+// maxListedMarkers entries, naming how many more were left out.
+func codeList(paths []string) string {
+	shown := paths
+	if len(shown) > maxListedMarkers {
+		shown = shown[:maxListedMarkers]
+	}
+	s := "`" + strings.Join(shown, "`, `") + "`"
+	if extra := len(paths) - len(shown); extra > 0 {
+		s += fmt.Sprintf(" and %d more", extra)
+	}
+	return s
 }
 
 // FormatDetectOutput formats detected project types as columnar CLI output.

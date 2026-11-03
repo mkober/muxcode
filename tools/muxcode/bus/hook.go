@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -341,12 +342,15 @@ func HookOutcome(exitCode string) string {
 //
 // CmdTestPrecheck is a test-stage gate such as `go vet`: failing it fails the
 // stage, passing it proves nothing about the suite, so only its failure is
-// evidence (ChainEvent).
+// evidence (ChainEvent). CmdBuildPrecheck is the build stage's counterpart,
+// such as `xcodegen generate`, which writes the project `xcodebuild` then
+// compiles.
 type CommandType int
 
 const (
 	CmdUnknown CommandType = iota
 	CmdBuild
+	CmdBuildPrecheck
 	CmdTest
 	CmdTestPrecheck
 	CmdDeploy
@@ -356,9 +360,21 @@ const (
 )
 
 // DefaultBuildPatterns are the default patterns for detecting build commands.
+//
+// `./build-*.sh` names per-target build scripts such as tibo's
+// scripts/build-ios.sh (MUX-207); like every pattern carrying a path, it also
+// matches the script by basename under another directory (matchPatterns).
+// `xcodebuild` is classified by its action, not by pattern (xcodebuildAction).
 var DefaultBuildPatterns = []string{
 	"./build.sh", "pnpm*build", "go*build", "make", "cargo*build", "cdk*synth", "tsc",
+	"swift build", "./build-*.sh",
 }
+
+// DefaultBuildPrecheckPatterns name the build-stage steps whose success is not
+// the build's verdict: `xcodegen generate` only writes the .xcodeproj the
+// build compiles, so its passing must not fire build→test before `xcodebuild`
+// has run — the go vet hazard of DefaultTestPrecheckPatterns, one stage up.
+var DefaultBuildPrecheckPatterns = []string{"xcodegen generate"}
 
 // DefaultTestPatterns are the default patterns for detecting test commands.
 //
@@ -370,7 +386,7 @@ var DefaultBuildPatterns = []string{
 // `npm install @testing-library/react` as a suite run.
 var DefaultTestPatterns = []string{
 	"./test.sh", "jest", "pnpm*test", "pytest", "go*test", "cargo*test", "vitest", "make test",
-	"npm test", "npm run test", "yarn test", "yarn run test",
+	"npm test", "npm run test", "yarn test", "yarn run test", "swift test",
 }
 
 // DefaultTestPrecheckPatterns name the test-stage gates whose success is not
@@ -417,7 +433,8 @@ var DefaultGitPatterns = []string{
 // in MUXCODE_TEST_PATTERNS is a full test run even if it is also a precheck.
 // A command matching both a build and a test pattern takes the longer
 // pattern, ties to build: `make test` is a test run although bare `make` is a
-// build pattern, while `go build -o x-test` stays a build.
+// build pattern, while `go build -o x-test` stays a build. A SwiftPM query
+// (swiftPMQuery) is unclassified whatever the patterns say.
 func ClassifyCommand(command string) CommandType {
 	// Skip bus commands
 	if strings.HasPrefix(command, "muxcode") || strings.HasPrefix(command, "agent-bus") {
@@ -426,6 +443,9 @@ func ClassifyCommand(command string) CommandType {
 
 	// Strip cd prefix and env vars to get the first real command
 	firstCmd := stripCommandPrefix(command)
+	if swiftPMQuery(firstCmd) {
+		return CmdUnknown
+	}
 
 	patterns := loadPatterns()
 
@@ -435,6 +455,12 @@ func ClassifyCommand(command string) CommandType {
 	}
 	if test > 0 {
 		return CmdTest
+	}
+	if action := xcodebuildAction(firstCmd); action != CmdUnknown {
+		return action
+	}
+	if matchPatterns(firstCmd, patterns.buildPrecheck, true) {
+		return CmdBuildPrecheck
 	}
 	if matchPatterns(firstCmd, patterns.testPrecheck, true) {
 		return CmdTestPrecheck
@@ -453,24 +479,179 @@ func ClassifyCommand(command string) CommandType {
 
 // commandPatterns holds all loaded command patterns.
 type commandPatterns struct {
-	build        []string
-	test         []string
-	testPrecheck []string
-	deploy       []string
-	deployApply  []string
-	git          []string
+	build         []string
+	buildPrecheck []string
+	test          []string
+	testPrecheck  []string
+	deploy        []string
+	deployApply   []string
+	git           []string
 }
 
 // loadPatterns loads command patterns from env vars or defaults.
 func loadPatterns() commandPatterns {
 	return commandPatterns{
-		build:        envOrDefault("MUXCODE_BUILD_PATTERNS", DefaultBuildPatterns),
-		test:         envOrDefault("MUXCODE_TEST_PATTERNS", DefaultTestPatterns),
-		testPrecheck: envOrDefault("MUXCODE_TEST_PRECHECK_PATTERNS", DefaultTestPrecheckPatterns),
-		deploy:       envOrDefault("MUXCODE_DEPLOY_PATTERNS", DefaultDeployPatterns),
-		deployApply:  envOrDefault("MUXCODE_DEPLOY_APPLY_PATTERNS", DefaultDeployApplyPatterns),
-		git:          envOrDefault("MUXCODE_GIT_PATTERNS", DefaultGitPatterns),
+		build:         envOrDefault("MUXCODE_BUILD_PATTERNS", DefaultBuildPatterns),
+		buildPrecheck: envOrDefault("MUXCODE_BUILD_PRECHECK_PATTERNS", DefaultBuildPrecheckPatterns),
+		test:          envOrDefault("MUXCODE_TEST_PATTERNS", DefaultTestPatterns),
+		testPrecheck:  envOrDefault("MUXCODE_TEST_PRECHECK_PATTERNS", DefaultTestPrecheckPatterns),
+		deploy:        envOrDefault("MUXCODE_DEPLOY_PATTERNS", DefaultDeployPatterns),
+		deployApply:   envOrDefault("MUXCODE_DEPLOY_APPLY_PATTERNS", DefaultDeployApplyPatterns),
+		git:           envOrDefault("MUXCODE_GIT_PATTERNS", DefaultGitPatterns),
 	}
+}
+
+// xcodebuildActions maps xcodebuild's action words to the stage each reports.
+// clean, docbuild, installsrc and the -list/-show* modes report neither.
+var xcodebuildActions = map[string]CommandType{
+	"build":                 CmdBuild,
+	"build-for-testing":     CmdBuild,
+	"archive":               CmdBuild,
+	"test":                  CmdTest,
+	"test-without-building": CmdTest,
+}
+
+// xcodebuildSwitches are the xcodebuild options that take no operand (from
+// `xcodebuild -help`, Xcode 27). Every other `-option` consumes the next word.
+var xcodebuildSwitches = map[string]bool{
+	"-verbose": true, "-quiet": true, "-json": true, "-alltargets": true,
+	"-parallelizeTargets": true, "-hideShellScriptEnvironment": true,
+	"-allowProvisioningUpdates": true, "-allowProvisioningDeviceRegistration": true,
+	"-skipUnavailableActions": true, "-disableAutomaticPackageResolution": true,
+	"-onlyUsePackageVersionsFromResolvedFile": true, "-skipPackageUpdates": true,
+	"-disablePackageRepositoryCache": true, "-skipPackagePluginValidation": true,
+	"-skipMacroValidation": true, "-skipPackageSignatureValidation": true,
+	"-showBuildTimingSummary": true, "-retry-tests-on-failure": true,
+	"-run-tests-until-failure": true,
+}
+
+// xcodebuildModes are the options that turn a call into something other than
+// running its actions — listing, showing settings, exporting, resolving
+// packages — so the call neither builds nor tests whatever action it names.
+var xcodebuildModes = map[string]bool{
+	"-usage": true, "-help": true, "-license": true, "-version": true, "-list": true,
+	"-showsdks": true, "-showdestinations": true, "-showTestPlans": true,
+	"-showBuildSettings": true, "-showBuildSettingsForIndex": true,
+	"-checkFirstLaunchStatus": true, "-runFirstLaunch": true,
+	"-downloadAllPlatforms": true, "-downloadPlatform": true, "-importPlatform": true,
+	"-prepareDeviceSupport": true, "-downloadComponent": true, "-importComponent": true,
+	"-deleteComponent": true, "-showComponent": true, "-convert-project": true,
+	"-find-executable": true, "-find-library": true, "-exportArchive": true,
+	"-exportNotarizedApp": true, "-exportLocalizations": true, "-importLocalizations": true,
+	"-enumerate-tests": true, "-resolvePackageDependencies": true, "-create-xcframework": true,
+}
+
+// xcodebuildAction classifies an `xcodebuild` (or `xcrun xcodebuild`) call by
+// the action words among its arguments: CmdTest when any is a test action,
+// CmdBuild when any is a build action, CmdUnknown otherwise — including no
+// action at all, xcodebuild's implicit build, and any mode option. A glob
+// cannot do this: an action is a bare word anywhere in the call, and operands
+// such as `-derivedDataPath build/DerivedData` or `-archivePath test` spell
+// the same words.
+//
+// Arguments come from commandArgs, so a quoted operand (`-scheme "My test App"`)
+// stays one argument and a redirection is no argument at all — a mode option
+// after one (`xcodebuild test > log -showBuildSettings`) still decides the
+// call. An option consumes the next argument unless it is a known switch or
+// carries its value inline (`-only-testing:X`, `-key=YES`), so the
+// unrecognized case errs toward losing an action — no row — never toward
+// inventing a test run from an operand, which would record test success for
+// a call that only compiled.
+func xcodebuildAction(cmd string) CommandType {
+	words := commandArgs(cmd)
+	if len(words) == 0 || path.Base(words[0]) != "xcodebuild" {
+		return CmdUnknown
+	}
+	found := CmdUnknown
+	for i := 1; i < len(words); i++ {
+		w := words[i]
+		switch {
+		case xcodebuildModes[w]:
+			return CmdUnknown
+		case strings.HasPrefix(w, "-"):
+			if !xcodebuildSwitches[w] && !strings.ContainsAny(w, "=:") {
+				i++
+			}
+		case xcodebuildActions[w] == CmdTest:
+			found = CmdTest
+		case xcodebuildActions[w] == CmdBuild && found == CmdUnknown:
+			found = CmdBuild
+		}
+	}
+	return found
+}
+
+// isShellOperatorWord reports a shellWords word that is a redirection
+// operator (`>`, `2>&`, `<`) rather than an argument. shellWords splits every
+// operator from its target, so the next word is always that target.
+func isShellOperatorWord(w string) bool {
+	return strings.ContainsAny(w, "&<>") && strings.Trim(w, "0123456789|&<>") == ""
+}
+
+// commandArgs returns the words cmd's first statement passes to its
+// executable, as the shell would: redirection operators and their targets
+// dropped, outer quotes removed, and a leading `xcrun` skipped so the tool it
+// runs comes first. xcodebuildAction, swiftPMQuery and through it the run
+// chain's swiftpm_query condition all read a call through it, so `'list'` and
+// `> log list` mean `list` to each of them (review, 2026-11-02).
+func commandArgs(cmd string) []string {
+	stmts, _ := parseShellStatements(cmd)
+	if len(stmts) == 0 {
+		return nil
+	}
+	words := shellWords(stmts[0])
+	var args []string
+	for i := 0; i < len(words); i++ {
+		if isShellOperatorWord(words[i]) {
+			i++
+			continue
+		}
+		args = append(args, unquote(words[i]))
+	}
+	if len(args) > 0 && args[0] == "xcrun" {
+		args = args[1:]
+	}
+	return args
+}
+
+// swiftPMQueryArgs are, per `swift` subcommand, the arguments that make the
+// call print something — a test list, a path, help — instead of building or
+// testing. `list` is a subcommand (`swift test list`), so it counts only as
+// the first argument; an option's operand may spell it (`--filter list`).
+var swiftPMQueryArgs = map[string]map[string]bool{
+	"build": {
+		"--show-bin-path": true, "--print-manifest-job-graph": true, "--print-pif-manifest-graph": true,
+		"--help": true, "-h": true, "--version": true,
+	},
+	"test": {
+		"--list-tests": true, "-l": true, "--show-codecov-path": true, "--show-code-coverage-path": true,
+		"--show-coverage-path": true, "--help": true, "-h": true, "--version": true,
+	},
+}
+
+// swiftPMQuery reports a `swift build` or `swift test` call (bare or through
+// xcrun) that only queries SwiftPM. Such a call matches the build and test
+// patterns, and its success would be recorded as a passing build or suite
+// that never ran (review, 2026-11-02). It reads the call through commandArgs,
+// and the run chain's swiftpm_query condition is this same predicate.
+func swiftPMQuery(cmd string) bool {
+	args := commandArgs(cmd)
+	if len(args) < 2 || path.Base(args[0]) != "swift" {
+		return false
+	}
+	queries := swiftPMQueryArgs[args[1]]
+	if queries == nil {
+		return false
+	}
+	if args[1] == "test" && len(args) > 2 && args[2] == "list" {
+		return true
+	}
+	for _, a := range args[2:] {
+		if queries[a] {
+			return true
+		}
+	}
+	return false
 }
 
 // envOrDefault returns patterns from a pipe-delimited env var, or defaults.
@@ -577,9 +758,31 @@ func matchPatterns(cmd string, patterns []string, withWrappers bool) bool {
 					return true
 				}
 			}
+			if scriptPathMatches(cmd, base) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// scriptPathMatches reports whether cmd executes a path — a first token
+// containing `/` — whose basename matches base, a pattern's last path element.
+// It gives a bare `scripts/test.sh` the verdict `bash scripts/test.sh` already
+// had: tibo's CONTRIBUTING documents the bare form, and it classified as
+// nothing (MUX-207). A multiword base never names one executable. The first
+// word comes from shellWords, so an attached redirection
+// (`scripts/test.sh>/tmp/log`) is not read as part of the path.
+func scriptPathMatches(cmd, base string) bool {
+	if strings.ContainsAny(base, " \t") {
+		return false
+	}
+	words := shellWords(cmd)
+	if len(words) == 0 {
+		return false
+	}
+	exe := words[0]
+	return strings.Contains(exe, "/") && globMatch(base, path.Base(exe))
 }
 
 // runnerPrefixes are wrapper forms whose nested argument is the command
@@ -845,16 +1048,17 @@ type HookBashResult struct {
 // ChainEvent names the chain a classified call feeds — "build", "test",
 // "deploy", or "run"/"watch" for an unclassified call in those roles — and ""
 // when the call is not evidence of any stage's outcome: a bus command, a git
-// or deploy-diff call, or a passing test precheck. That last gap is the
-// point of the precheck class: `go vet` failing is the test stage failing,
-// `go vet` passing says nothing about a suite that has not run, so it writes
-// no row and fires no chain, and the suite's own row is the verdict.
+// or deploy-diff call, or a passing precheck. That last gap is the point of
+// the precheck classes: `go vet` failing is the test stage failing, `go vet`
+// passing says nothing about a suite that has not run, so it writes no row and
+// fires no chain, and the suite's own row is the verdict. `xcodegen generate`
+// stands in the same place before `xcodebuild`.
 func ChainEvent(role string, cmdType CommandType, outcome string) string {
 	if precheckPassed(cmdType, outcome) {
 		return ""
 	}
 	switch cmdType {
-	case CmdBuild:
+	case CmdBuild, CmdBuildPrecheck:
 		return "build"
 	case CmdTest, CmdTestPrecheck:
 		return "test"
@@ -871,10 +1075,10 @@ func ChainEvent(role string, cmdType CommandType, outcome string) string {
 	return ""
 }
 
-// precheckPassed reports the one classified call that is not evidence: a
-// test precheck that succeeded. See ChainEvent.
+// precheckPassed reports the classified calls that are not evidence: a build
+// or test precheck that succeeded. See ChainEvent.
 func precheckPassed(cmdType CommandType, outcome string) bool {
-	return cmdType == CmdTestPrecheck && outcome == OutcomeSuccess
+	return (cmdType == CmdBuildPrecheck || cmdType == CmdTestPrecheck) && outcome == OutcomeSuccess
 }
 
 // ProcessBashHook processes a PostToolUse or PostToolUseFailure Bash event
@@ -921,7 +1125,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 
 	// Workflow: transition on command detection
 	switch cmdType {
-	case CmdBuild:
+	case CmdBuild, CmdBuildPrecheck:
 		TransitionWorkflow(session, StateBuilding, "hook:bash:build")
 	case CmdTest, CmdTestPrecheck:
 		TransitionWorkflow(session, StateTesting, "hook:bash:test")
@@ -939,7 +1143,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 	}
 
 	switch cmdType {
-	case CmdBuild:
+	case CmdBuild, CmdBuildPrecheck:
 		errors := ExtractErrors(output, 20, 1000)
 		changes := ExtractBuildChanges()
 		entry := HookHistoryEntry{
@@ -1080,6 +1284,10 @@ var editGuardRules = []guardRule{
 			"go test", "cargo test",
 		},
 		reason: `BLOCKED: Test commands are prohibited in the edit window. Delegate to the test agent. Run: muxcode send test test "Run tests and report results" --wait`,
+	},
+	{
+		prefixes: []string{"swift build", "swift test", "xcodebuild", "xcrun xcodebuild"},
+		reason:   `BLOCKED: Swift and Xcode builds and tests are prohibited in the edit window. Delegate builds to the build agent and tests to the test agent. Run: muxcode send build build "Run the Swift/Xcode build and report results" --wait (or muxcode send test test "Run the Swift/Xcode tests and report results" --wait)`,
 	},
 	{
 		prefixes: []string{"cdk ", "npx cdk ", "terraform ", "pulumi ", "sam "},

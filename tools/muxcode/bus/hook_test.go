@@ -443,6 +443,173 @@ func TestGitPatternsFireOnTheKeywordNotTheProse(t *testing.T) {
 	}
 }
 
+// MUX-207: tibo's Swift and Xcode build and test calls wrote no history row
+// and fired no chain. Each Unknown row is a negative control a looser rule
+// (a `swift*` or `xcodebuild*test` glob, any path basename) would misclassify.
+func TestClassifyCommand_SwiftAndXcode(t *testing.T) {
+	tests := []struct {
+		command string
+		want    CommandType
+	}{
+		{"swift build", CmdBuild},
+		{"swift build -c release --disable-sandbox", CmdBuild},
+		{"cd packages/TiboKit && swift build", CmdBuild},
+		{"swift test", CmdTest},
+		{"swift test --filter ProbeKitTests", CmdTest},
+		{"xcodegen generate", CmdBuildPrecheck},
+		{"cd apps/ios && xcodegen generate --spec project.yml", CmdBuildPrecheck},
+		{"xcodebuild -project A.xcodeproj -scheme A -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData build", CmdBuild},
+		{"xcodebuild test -scheme A -derivedDataPath build/DerivedData", CmdTest},
+		{"xcodebuild -scheme A clean build test", CmdTest},
+		{"xcrun xcodebuild build-for-testing -scheme A", CmdBuild},
+		{"xcodebuild test-without-building -xctestrun A.xctestrun", CmdTest},
+		{"xcodebuild -scheme test -configuration test build", CmdBuild},
+		{"xcodebuild archive -scheme A -archivePath build/A.xcarchive", CmdBuild},
+		// Operands that spell an action word (review, 2026-10-29): each was
+		// read as a test run, recording test success for a call that ran none.
+		{`xcodebuild -scheme "My test App" build`, CmdBuild},
+		{"xcodebuild archive -archivePath test", CmdBuild},
+		{"xcodebuild -resultBundlePath test -scheme A build", CmdBuild},
+		{"xcodebuild -scheme A build > test", CmdBuild},
+		{"xcodebuild -scheme A build; ls test", CmdBuild},
+		// Switches and inline values consume no operand; a pipe ends the call.
+		{"xcodebuild -quiet test -scheme A", CmdTest},
+		{"xcodebuild -only-testing:AppTests/Foo test -scheme A", CmdTest},
+		{"xcodebuild -IDEPackageSupportDisableManifestSandbox=YES -scheme A test", CmdTest},
+		{"xcodebuild -scheme A test | xcpretty", CmdTest},
+		{"xcodebuild -showBuildSettings -scheme A test", CmdUnknown},
+		// A redirection and its target are skipped, not an end (review,
+		// 2026-11-02): a mode option after one still decides the call.
+		{"xcodebuild test > /tmp/log -showBuildSettings", CmdUnknown},
+		{"xcodebuild -scheme A >/tmp/log test", CmdTest},
+		{"xcodebuild -scheme A 2>&1 test", CmdTest},
+		// SwiftPM queries match the swift build/test patterns but run nothing
+		// (review, 2026-11-02); an option operand spelling `list` is no query.
+		{"swift test --list-tests", CmdUnknown},
+		{"swift test list", CmdUnknown},
+		{"cd packages/Kit && swift test -l", CmdUnknown},
+		{"swift test --show-codecov-path", CmdUnknown},
+		{"swift build --show-bin-path", CmdUnknown},
+		{"swift test --filter list", CmdTest},
+		{"swift test > -l", CmdTest},
+		// Shell-equivalent spellings of a query (review, 2026-11-02): the
+		// `list` subcommand after a redirection, quoted arguments.
+		{"swift test >/tmp/log list", CmdUnknown},
+		{"swift test 'list'", CmdUnknown},
+		{`swift test "--list-tests"`, CmdUnknown},
+		{"swift test >/tmp/log", CmdTest},
+		{"xcodebuild 'test' -scheme A", CmdTest},
+		{"scripts/test.sh", CmdTest},
+		// An attached redirection is not part of the script path (review,
+		// 2026-11-02): it was read as basename `log`, or as a redirect target's.
+		{"scripts/test.sh>/tmp/log", CmdTest},
+		{"scripts/run.sh>/tmp/test.sh", CmdUnknown},
+		{"./scripts/test.sh --verbose", CmdTest},
+		{"bash scripts/test.sh", CmdTest},
+		{"scripts/build-ios.sh", CmdBuild},
+		{"bash scripts/build-tvos.sh", CmdBuild},
+
+		{"swift --version", CmdUnknown},
+		{"swift package resolve", CmdUnknown},
+		{"swift run probe", CmdUnknown},
+		{"xcodebuild -version", CmdUnknown},
+		{"xcodebuild -list -project A.xcodeproj", CmdUnknown},
+		{"xcodebuild -showBuildSettings -scheme A -derivedDataPath build/test", CmdUnknown},
+		{"xcodebuild -scheme A -destination generic/platform=iOS", CmdUnknown},
+		{"xcodebuild clean", CmdUnknown},
+		{"xcodegen dump --type json", CmdUnknown},
+		{"scripts/test-all.sh", CmdUnknown},
+		{"scripts/rebuild-cache.sh", CmdUnknown},
+		{"cat scripts/test.sh", CmdUnknown},
+	}
+	for _, tt := range tests {
+		if got := ClassifyCommand(tt.command); got != tt.want {
+			t.Errorf("ClassifyCommand(%q) = %d, want %d", tt.command, got, tt.want)
+		}
+	}
+}
+
+// A passing `xcodegen generate` only writes the project; the build is the
+// `xcodebuild` after it, so only that row and its chain are the verdict.
+func TestProcessBashHook_XcodeBuildStage(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-xcode"
+	t.Setenv("BUS_SESSION", session)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+	histPath := filepath.Join(busDir, "build-history.jsonl")
+	event := func(command string, exit int) *ToolEvent {
+		ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":%q},"exit_code":%d,"tool_response":{"stdout":"out"}}`, command, exit)))
+		return ev
+	}
+
+	genPass := ProcessBashHook(session, "build", event("cd apps/ios && xcodegen generate", 0))
+	if genPass.CommandType != CmdBuildPrecheck || genPass.Chain != "" || genPass.Logged {
+		t.Fatalf("passing xcodegen = %+v, want CmdBuildPrecheck, no chain, not logged", genPass)
+	}
+	if _, err := os.Stat(histPath); !os.IsNotExist(err) {
+		t.Error("passing xcodegen wrote a build-history row")
+	}
+
+	build := ProcessBashHook(session, "build", event("cd apps/ios && xcodebuild -scheme App -derivedDataPath build/DD build", 0))
+	if build.CommandType != CmdBuild || build.Chain != "build" || !build.Logged {
+		t.Fatalf("xcodebuild build = %+v, want CmdBuild, build chain, logged", build)
+	}
+
+	genFail := ProcessBashHook(session, "build", event("xcodegen generate", 1))
+	if genFail.CommandType != CmdBuildPrecheck || genFail.Chain != "build" || !genFail.Logged {
+		t.Fatalf("failing xcodegen = %+v, want CmdBuildPrecheck, build chain, logged", genFail)
+	}
+	data, _ := os.ReadFile(histPath)
+	if strings.Count(string(data), "\n") != 2 || !strings.Contains(string(data), `"command":"xcodegen generate","exit_code":"1","outcome":"failure"`) {
+		t.Errorf("build-history = %q, want the xcodebuild row and the failing xcodegen row", data)
+	}
+
+	test := ProcessBashHook(session, "test", event("cd packages/Kit && swift test", 0))
+	if test.CommandType != CmdTest || test.Chain != "test" || !test.Logged {
+		t.Errorf("swift test = %+v, want CmdTest, test chain, logged", test)
+	}
+}
+
+// On the run role a call ClassifyCommand leaves unknown takes the run chain,
+// whose success requests watch only for a verification shape. An action-first
+// xcodebuild mode call runs no tests and must request nothing; a real
+// xcodebuild test takes the test chain instead (review, 2026-10-29).
+func TestRunRoleXcodebuildChain(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-run-xcode"
+	t.Setenv("BUS_SESSION", session)
+	os.MkdirAll(BusDir(session), 0755)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	chainOf := func(command string) (string, *ChainAction) {
+		ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":%q},"exit_code":0,"tool_response":{"stdout":"out"}}`, command)))
+		res := ProcessBashHook(session, "run", ev)
+		if res.Chain == "" {
+			return "", nil
+		}
+		return res.Chain, ResolveChain(res.Chain, OutcomeSuccess, &ChainContext{Command: command, ExitCode: 0})
+	}
+
+	for _, cmd := range []string{
+		"xcodebuild test -showBuildSettings -scheme App",
+		"cd apps/ios && xcodebuild test -enumerate-tests -scheme App",
+		"xcodebuild test-without-building -list",
+	} {
+		if chain, action := chainOf(cmd); chain != "run" || action != nil {
+			t.Errorf("%q on run: chain %q, action %+v — want the run chain and no watch request", cmd, chain, action)
+		}
+	}
+
+	if chain, action := chainOf("cd apps/ios && xcodebuild test -scheme App"); chain != "test" || action == nil {
+		t.Errorf("real xcodebuild test on run: chain %q, action %+v — want the test chain to fire", chain, action)
+	}
+	if chain, action := chainOf("bash scripts/verify.sh"); chain != "run" || action == nil || action.SendTo != "watch" {
+		t.Errorf("verification script on run: chain %q, action %+v — want a watch request", chain, action)
+	}
+}
+
 func TestClassifyCommand_CdPrefix(t *testing.T) {
 	if got := ClassifyCommand("cd /foo && go build ."); got != CmdBuild {
 		t.Errorf("ClassifyCommand with cd prefix = %d, want CmdBuild", got)
@@ -553,6 +720,11 @@ func TestCheckEditGuard_Blocked(t *testing.T) {
 		{"jest --watch", "Test commands"},
 		{"go test ./...", "Test commands"},
 		{"pytest -v", "Test commands"},
+		{"swift build", "Swift and Xcode"},
+		{"cd packages/TiboKit && swift test", "Swift and Xcode"},
+		{"xcodebuild -scheme Tibo -destination 'generic/platform=iOS Simulator' build", "Swift and Xcode"},
+		{"xcodebuild test -scheme Tibo", "Swift and Xcode"},
+		{"xcrun xcodebuild build", "Swift and Xcode"},
 		{"cdk diff", "Deploy commands"},
 		{"npx cdk synth", "Deploy commands"},
 		{"terraform plan", "Deploy commands"},
@@ -585,6 +757,8 @@ func TestCheckEditGuard_Allowed(t *testing.T) {
 		"muxcode send build build test",
 		"cat /tmp/foo",
 		"which node",
+		"swift --version",
+		"which xcodebuild",
 	}
 	for _, cmd := range allowed {
 		if d := CheckEditGuard(cmd); d != nil {
@@ -1451,6 +1625,9 @@ func TestChainEvent(t *testing.T) {
 		{"test", CmdTestPrecheck, OutcomeSuccess, ""},
 		{"test", CmdTestPrecheck, OutcomeFailure, "test"},
 		{"test", CmdTestPrecheck, OutcomeUnknown, "test"},
+		{"build", CmdBuildPrecheck, OutcomeSuccess, ""},
+		{"build", CmdBuildPrecheck, OutcomeFailure, "build"},
+		{"build", CmdBuildPrecheck, OutcomeUnknown, "build"},
 		{"deploy", CmdDeployApply, OutcomeSuccess, "deploy"},
 		{"deploy", CmdDeploy, OutcomeSuccess, ""},
 		{"commit", CmdGit, OutcomeSuccess, ""},

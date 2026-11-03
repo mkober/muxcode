@@ -33,9 +33,11 @@ func Agent(args []string) {
 		agentDefinition(subArgs)
 	case "sandbox-fingerprint":
 		agentSandboxFingerprint(subArgs)
+	case "sandbox-args":
+		agentSandboxArgs(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown agent subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status|definition|sandbox-fingerprint> [flags]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent <run|launch|config|status|definition|sandbox-fingerprint|sandbox-args> [flags]\n")
 		os.Exit(1)
 	}
 }
@@ -52,6 +54,21 @@ func agentSandboxFingerprint(roles []string) {
 	bus.LoadShellConfig("")
 	for _, role := range roles {
 		fmt.Printf("%s\t%s\n", role, bus.LaunchSandboxFingerprint(role))
+	}
+}
+
+// agentSandboxArgs prints the approval and sandbox flags role launches with on
+// Codex, one argument per line, under the same config resolution as
+// sandbox-fingerprint — so a script can run `codex exec` under a role's real
+// launch policy (scripts/test-xcode-compat.sh) and check the flags hash to it.
+func agentSandboxArgs(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode agent sandbox-args <role>\n")
+		os.Exit(1)
+	}
+	bus.LoadShellConfig("")
+	for _, a := range bus.CodexLaunchSandboxArgs(args[0]) {
+		fmt.Println(a)
 	}
 }
 

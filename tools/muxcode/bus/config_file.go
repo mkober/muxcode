@@ -7,83 +7,89 @@ import (
 	"strings"
 )
 
-// GetShellConfig loads the shell-sourceable config file and returns env vars.
-// Resolution: MUXCODE_CONFIG env → .muxcode/config → ~/.config/muxcode/config
-// Returns a map of KEY=VALUE pairs. Only includes vars not already set in environment.
-// projectDir, if non-empty, is used to resolve the .muxcode/config path.
+// GetShellConfig loads the shell-sourceable config and returns its KEY=VALUE
+// pairs, leaving out keys already set in the environment. A MUXCODE_CONFIG that
+// names an existing file is read alone. Otherwise ~/.config/muxcode/config is
+// the base and the project's .muxcode/config overrides it key by key, so a
+// project file changes only what it names: the user's role CLI and model
+// choices and credentials still apply. Until 2026-11-02 the first file found
+// was read alone, so a project config hid the user's entirely (MUX-207, user
+// decision). projectDir, if non-empty, locates the .muxcode/config.
 func GetShellConfig(projectDir string) map[string]string {
 	result := make(map[string]string)
-
-	var configFile string
-
-	if v := os.Getenv("MUXCODE_CONFIG"); v != "" {
-		if _, err := os.Stat(v); err == nil {
-			configFile = v
-		}
+	for _, path := range shellConfigFiles(projectDir) {
+		readShellConfigInto(path, result)
 	}
-	if configFile == "" {
-		p := ".muxcode/config"
-		if projectDir != "" {
-			p = filepath.Join(projectDir, ".muxcode", "config")
-		}
-		if _, err := os.Stat(p); err == nil {
-			configFile = p
-		}
-	}
-	if configFile == "" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			p := filepath.Join(home, ".config", "muxcode", "config")
-			if _, err := os.Stat(p); err == nil {
-				configFile = p
-			}
-		}
-	}
+	return result
+}
 
-	if configFile == "" {
-		return result
+// shellConfigFiles lists the files GetShellConfig reads, lowest precedence
+// first. Absent files are listed too; reading one adds nothing.
+func shellConfigFiles(projectDir string) []string {
+	if v := os.Getenv("MUXCODE_CONFIG"); v != "" && fileExists(v) {
+		return []string{v}
 	}
+	var files []string
+	if home, _ := os.UserHomeDir(); home != "" {
+		files = append(files, filepath.Join(home, ".config", "muxcode", "config"))
+	}
+	project := ".muxcode/config"
+	if projectDir != "" {
+		project = filepath.Join(projectDir, ".muxcode", "config")
+	}
+	return append(files, project)
+}
 
-	data, err := os.ReadFile(configFile)
+// readShellConfigInto parses one config file into result, a later file's value
+// replacing an earlier one's.
+func readShellConfigInto(path string, result map[string]string) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return result
+		return
 	}
-
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		// Skip comments and empty lines
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Handle export prefix
 		line = strings.TrimPrefix(line, "export ")
-		// Parse KEY=VALUE
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
 		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		// Strip surrounding quotes and expand env vars (e.g. $HOME)
-		val = os.ExpandEnv(StripQuotes(val))
-		// Only include if not already set (env takes precedence)
+		val := os.ExpandEnv(StripQuotes(strings.TrimSpace(parts[1])))
 		if os.Getenv(key) == "" {
 			result[key] = val
 		}
 	}
-
-	return result
 }
 
-// LoadShellConfig loads the shell-sourceable config file and sets env vars.
+// LoadShellConfig loads the shell-sourceable config file and sets env vars,
+// returning the keys it set — never one the environment already held — for
+// ReloadShellConfig.
 // Deprecated: Use GetShellConfig and merge the result into command environment
 // to avoid modifying the global process environment.
-func LoadShellConfig(projectDir string) {
-	// Reuse the new function but apply via os.Setenv for backward compatibility
+func LoadShellConfig(projectDir string) []string {
 	config := GetShellConfig(projectDir)
+	keys := make([]string, 0, len(config))
 	for key, val := range config {
 		os.Setenv(key, val)
+		keys = append(keys, key)
 	}
+	return keys
+}
+
+// ReloadShellConfig unsets the keys an earlier LoadShellConfig set, then loads
+// projectDir's config. Without the retraction a file value exported by the
+// first load reads as an environment override on the second, so the launcher's
+// pre-picker load let a home MUXCODE_BUILD_CLI beat the chosen project's
+// (MUX-207 review). Keys the user exported themselves keep their precedence.
+func ReloadShellConfig(projectDir string, prior []string) []string {
+	for _, key := range prior {
+		os.Unsetenv(key)
+	}
+	return LoadShellConfig(projectDir)
 }
 
 // ResolveConfigPath returns the path to the config file used for persistent

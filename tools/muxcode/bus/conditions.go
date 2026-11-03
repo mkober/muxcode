@@ -47,6 +47,7 @@ var knownConditionTypes = map[string]bool{
 	"spec_phases_remaining":  true,
 	"spec_phase_committable": true,
 	"spec_branch":            true,
+	"swiftpm_query":          true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -116,6 +117,8 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalSpecPhaseCommittable(value, ctx)
 	case "spec_branch":
 		return evalSpecBranch(value, ctx)
+	case "swiftpm_query":
+		return evalSwiftPMQuery(value, ctx)
 	default:
 		return ConditionResult{
 			Type:   condType,
@@ -284,6 +287,24 @@ func evalCommandNotMatch(value any, ctx *ChainContext) ConditionResult {
 		result.Detail = fmt.Sprintf("command %q matches excluded pattern %q", ctx.Command, pattern)
 	}
 	return result
+}
+
+// evalSwiftPMQuery passes when whether the command is a SwiftPM query
+// (swiftPMQuery, the predicate ClassifyCommand uses) equals the boolean value.
+// It is a predicate, not a glob, because a query is spelled many ways the
+// shell treats alike — a quoted `'list'`, a redirection before it.
+func evalSwiftPMQuery(value any, ctx *ChainContext) ConditionResult {
+	want, ok := value.(bool)
+	if !ok {
+		return ConditionResult{Type: "swiftpm_query", Passed: false, Detail: "value must be a boolean"}
+	}
+	got := swiftPMQuery(stripCommandPrefix(ctx.Command))
+	return ConditionResult{
+		Type:    "swiftpm_query",
+		Pattern: fmt.Sprintf("%t", want),
+		Passed:  got == want,
+		Detail:  fmt.Sprintf("command %q is a SwiftPM query: %t", ctx.Command, got),
+	}
 }
 
 // evalOutputContains checks if command output contains a substring.

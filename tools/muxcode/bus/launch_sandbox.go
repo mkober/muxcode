@@ -27,8 +27,15 @@ func LaunchSandboxFingerprint(role string) string {
 	if ResolveProviderCLI(role) != "codex" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(strings.Join(codexSandboxArgs(role), "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join(CodexLaunchSandboxArgs(role), "\x00")))
 	return fmt.Sprintf("%x", sum)
+}
+
+// CodexLaunchSandboxArgs returns the approval and sandbox flags role launches
+// with on Codex, whatever its configured provider — the slice
+// LaunchSandboxFingerprint hashes, joined by NUL.
+func CodexLaunchSandboxArgs(role string) []string {
+	return codexSandboxArgs(role)
 }
 
 func launchSandboxPath(session, role string) string {

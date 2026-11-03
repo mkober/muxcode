@@ -51,16 +51,17 @@ func CheckEvidenceGuard(role, command string) *GuardDecision {
 }
 
 // evidenceStatementKind names the chain a statement would feed — "build",
-// "test" or "deploy" — using the patterns ClassifyCommand applies. A test
-// precheck is "test": its failure is the stage's evidence and bundling
-// would lose it.
+// "test" or "deploy" — using the patterns and xcodebuild actions
+// ClassifyCommand applies. A precheck takes its stage: its failure is the
+// stage's evidence and bundling would lose it.
 func evidenceStatementKind(stmt string) string {
 	cmd := stripCommandPrefix(strings.TrimSpace(stmt))
 	p := loadPatterns()
+	xcode := xcodebuildAction(cmd)
 	switch {
-	case matchPatterns(cmd, p.build, true):
+	case matchPatterns(cmd, p.build, true), xcode == CmdBuild, matchPatterns(cmd, p.buildPrecheck, true):
 		return "build"
-	case matchPatterns(cmd, p.test, true), matchPatterns(cmd, p.testPrecheck, true):
+	case matchPatterns(cmd, p.test, true), xcode == CmdTest, matchPatterns(cmd, p.testPrecheck, true):
 		return "test"
 	case matchPatterns(cmd, p.deploy, true):
 		return "deploy"

@@ -2501,7 +2501,7 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 // An action listed here is evidenced by a command, so a row of any other type
 // is another command's verdict wearing this node's name.
 var actionEvidenceTypes = map[string][]CommandType{
-	"build":  {CmdBuild},
+	"build":  {CmdBuild, CmdBuildPrecheck},
 	"test":   {CmdTest, CmdTestPrecheck},
 	"deploy": {CmdDeploy, CmdDeployApply},
 }

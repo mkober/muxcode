@@ -1,0 +1,13 @@
+#!/bin/sh
+# muxcode Codex shim (MUX-207). xcodebuild resolves Swift packages inside
+# SwiftPM's nested sandbox, which macOS refuses within Codex's Seatbelt
+# sandbox, so the two user defaults that turn it off are added unless the call
+# already sets them. Outside a Codex sandbox the call passes through unchanged.
+. "${0%/*}/lib.sh"
+
+if shim_in_codex_sandbox; then
+  for shim_flag in -IDEPackageSupportDisablePluginExecutionSandbox=YES -IDEPackageSupportDisableManifestSandbox=YES; do
+    shim_has_prefix "${shim_flag%%=*}=" "$@" || set -- "$shim_flag" "$@"
+  done
+fi
+shim_exec xcodebuild "$@"

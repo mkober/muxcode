@@ -1,0 +1,10 @@
+# BASH_ENV for muxcode's Codex build and test agents (MUX-207). Codex runs
+# every command as `bash -lc`, and a login profile may set PATH outright, so a
+# PATH entry made at launch is lost; bash reads this file after the profile,
+# which puts the shim directory beside it back in front.
+muxcode_shim_dir=${BASH_SOURCE[0]%/*}
+case $PATH in
+  "$muxcode_shim_dir":*) ;;
+  *) PATH=$muxcode_shim_dir:$PATH && export PATH ;;
+esac
+unset muxcode_shim_dir

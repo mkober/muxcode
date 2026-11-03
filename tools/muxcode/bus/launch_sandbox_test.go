@@ -36,18 +36,25 @@ func TestLaunchSandboxFingerprint_CodexOnly(t *testing.T) {
 }
 
 // The fingerprint must follow the sandbox flags, or an install that widens a
-// grant goes unseen — and stay stable while they are unchanged, or every Codex
-// agent reloads on every check.
+// grant or drops the sandbox goes unseen — and stay stable while they are
+// unchanged, or every Codex agent reloads on every check.
 func TestLaunchSandboxFingerprint_FollowsSandboxArgs(t *testing.T) {
 	sandboxTestEnv(t)
 	t.Setenv("MUXCODE_REVIEW_CLI", "codex")
+	t.Setenv("MUXCODE_CODEX_SANDBOX", codexSandboxWorkspaceWrite)
+	t.Setenv(roleCodexSandboxEnvVar("review"), "")
 	before := LaunchSandboxFingerprint("review")
 	if again := LaunchSandboxFingerprint("review"); again != before {
 		t.Fatalf("fingerprint unstable for unchanged flags: %s then %s", before, again)
 	}
 	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
-	if after := LaunchSandboxFingerprint("review"); after == before {
+	after := LaunchSandboxFingerprint("review")
+	if after == before {
 		t.Error("fingerprint unchanged after the sandbox's writable roots changed")
+	}
+	t.Setenv("MUXCODE_CODEX_SANDBOX", "")
+	if open := LaunchSandboxFingerprint("review"); open == after {
+		t.Error("fingerprint unchanged after the sandbox was dropped")
 	}
 }
 
