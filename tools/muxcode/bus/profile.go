@@ -570,6 +570,42 @@ func runWatchActions(patterns ...string) ChainActions {
 	return actions
 }
 
+// watchLogShapes are the log-inspection commands whose outcome the watch chain
+// reports to edit — the log readers of watch's tool profile. They are matched
+// by first_command_match, so a `cd <dir> &&` its CdPrefix profile admits needs
+// no shape of its own. An ungated watch chain notified edit on every scratch
+// echo, ps or ls watch ran while investigating — four notices in three minutes
+// on 2026-09-10, and a `nohup muxcode inbox …` on 2026-09-22 (MUX-177).
+var watchLogShapes = []string{
+	"tail *", "journalctl *", "zcat *",
+	"grep *.log", "grep *.log *", "grep */log/*", "grep */logs/*",
+	"aws logs *", "aws cloudwatch *", "gcloud logging *", "az monitor *",
+	"kubectl logs *", "kubectl get events", "kubectl get events *",
+	"docker logs *", "docker-compose logs *", "stern *",
+	"log show", "log show *", "log stream", "log stream *",
+	"xcrun simctl spawn * log show*", "xcrun simctl spawn * log stream*",
+}
+
+// watchNotifyActions gates one watch-chain notice to edit behind
+// watchLogShapes, first-match-wins, with the bus-call exclusion the run chain
+// carries.
+func watchNotifyActions(message string) ChainActions {
+	actions := make(ChainActions, 0, len(watchLogShapes))
+	for _, p := range watchLogShapes {
+		actions = append(actions, ChainAction{
+			SendTo:  "edit",
+			Action:  "notify",
+			Message: message,
+			Type:    "event",
+			Conditions: map[string]any{
+				"first_command_match": p,
+				"command_not_match":   "muxcode *",
+			},
+		})
+	}
+	return actions
+}
+
 // appleTestRunShapes are the run chain's Swift verification shapes, each also
 // behind the `cd <dir> &&` a nested SwiftPM package is run with (MUX-207).
 // While the default test patterns classify `swift test`, ChainEvent routes it
@@ -1054,24 +1090,9 @@ func DefaultConfig() *MuxcodeConfig {
 				NotifyAnalystOn: []string{"failure", "unknown"},
 			},
 			"watch": {
-				OnSuccess: ChainActions{{
-					SendTo:  "edit",
-					Action:  "notify",
-					Message: "Watch command exited 0 (${command}) — see watch's own report for findings",
-					Type:    "event",
-				}},
-				OnFailure: ChainActions{{
-					SendTo:  "edit",
-					Action:  "notify",
-					Message: "Watch command FAILED (exit ${exit_code}): ${command} — check watch window",
-					Type:    "event",
-				}},
-				OnUnknown: ChainActions{{
-					SendTo:  "edit",
-					Action:  "notify",
-					Message: "Watch completed (exit code unknown): ${command}",
-					Type:    "event",
-				}},
+				OnSuccess:       watchNotifyActions("Watch command exited 0 (${command}) — see watch's own report for findings"),
+				OnFailure:       watchNotifyActions("Watch command FAILED (exit ${exit_code}): ${command} — check watch window"),
+				OnUnknown:       watchNotifyActions("Watch completed (exit code unknown): ${command}"),
 				NotifyAnalystOn: []string{"failure"},
 			},
 			"build": {

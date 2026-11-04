@@ -40,6 +40,7 @@ var knownConditionTypes = map[string]bool{
 	"branch_not_match":       true,
 	"command_match":          true,
 	"command_not_match":      true,
+	"first_command_match":    true,
 	"env_set":                true,
 	"env_equals":             true,
 	"output_contains":        true,
@@ -103,6 +104,8 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalCommandMatch(value, ctx)
 	case "command_not_match":
 		return evalCommandNotMatch(value, ctx)
+	case "first_command_match":
+		return evalFirstCommandMatch(value, ctx)
 	case "env_set":
 		return evalEnvSet(value)
 	case "env_equals":
@@ -273,18 +276,42 @@ func evalCommandMatch(value any, ctx *ChainContext) ConditionResult {
 	return result
 }
 
-// evalCommandNotMatch checks that the command string does NOT match a glob pattern.
+// evalCommandNotMatch checks that the command string does NOT match a glob
+// pattern, read both raw and after stripCommandPrefix: an exclusion such as
+// "muxcode *" must also catch `cd dir && muxcode send …`, which ClassifyCommand's
+// raw prefix test leaves unclassified and so feeds the run or watch chain
+// (MUX-177).
 func evalCommandNotMatch(value any, ctx *ChainContext) ConditionResult {
 	pattern, ok := value.(string)
 	if !ok {
 		return ConditionResult{Type: "command_not_match", Passed: false, Detail: "pattern must be a string"}
 	}
 	result := ConditionResult{Type: "command_not_match", Pattern: pattern}
-	result.Passed = !globMatch(pattern, ctx.Command)
+	result.Passed = !globMatch(pattern, ctx.Command) && !globMatch(pattern, stripCommandPrefix(ctx.Command))
 	if result.Passed {
 		result.Detail = fmt.Sprintf("command %q does not match %q (good)", ctx.Command, pattern)
 	} else {
 		result.Detail = fmt.Sprintf("command %q matches excluded pattern %q", ctx.Command, pattern)
+	}
+	return result
+}
+
+// evalFirstCommandMatch checks that the command, after stripCommandPrefix
+// removes a genuine `cd <dir> &&` and env assignments, matches a glob pattern.
+// A raw "cd * && tail *" is not that: its first * spans later `&&`s and quoted
+// text, so `cd /repo && echo "x && tail app.log"` read as a log read (MUX-177
+// review, 2026-11-03).
+func evalFirstCommandMatch(value any, ctx *ChainContext) ConditionResult {
+	pattern, ok := value.(string)
+	if !ok {
+		return ConditionResult{Type: "first_command_match", Passed: false, Detail: "pattern must be a string"}
+	}
+	first := stripCommandPrefix(ctx.Command)
+	result := ConditionResult{Type: "first_command_match", Pattern: pattern, Passed: globMatch(pattern, first)}
+	if result.Passed {
+		result.Detail = fmt.Sprintf("first command %q matches %q", first, pattern)
+	} else {
+		result.Detail = fmt.Sprintf("first command %q does not match %q", first, pattern)
 	}
 	return result
 }

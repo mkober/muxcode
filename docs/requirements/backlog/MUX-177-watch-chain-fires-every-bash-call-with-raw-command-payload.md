@@ -87,11 +87,11 @@ had no chain involvement), and the `run` chain's own allowlist, which is working
 
 ### Acceptance criteria
 
-- [ ] A routine bash call in the watch pane that produces no log finding sends edit **no** `notify`
-- [ ] A genuine watch finding still reaches edit — pinned by a test, so the fix does not buy quiet by disabling the chain
+- [x] A routine bash call in the watch pane that produces no log finding sends edit **no** `notify` — Phase 1, 2026-11-03: 16 non-firing rows incl. the 2026-09-10 scratch block and 2026-09-22 listener call verbatim, across all three outcomes; `ps` through the real hook
+- [x] A genuine watch finding still reaches edit — pinned by a test, so the fix does not buy quiet by disabling the chain — Phase 1, 2026-11-03: `TestWatchChainLogAllowlist` firing rows and `TestWatchRoleChainGate` (`tail` notifies on exit 0 and 1)
 - [ ] No chain message carries a multi-line body; `${command}` is bounded (single line, truncated with an explicit marker) or omitted
 - [ ] A chain message that would exceed the hygiene limits is truncated rather than sent raw, and the truncation is visible in the message
-- [ ] Watch's own `muxcode *` calls never fire the watch chain (the exclusion the run chain already has)
+- [x] Watch's own `muxcode *` calls never fire the watch chain (the exclusion the run chain already has) — Phase 1, 2026-11-03: `command_not_match: "muxcode *"` on every branch, now also tested after `stripCommandPrefix`, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded too (`TestCommandNotMatch`, the nohup and cd-prefixed rows)
 - [ ] `docs/hooks.md` chain table and `CLAUDE.md` record the watch chain's gate alongside the run chain's
 
 ### Technical approach
@@ -123,9 +123,34 @@ only route to report.
 
 ### Phase 1: Gate the watch chain
 
-- [ ] Add `command_match` (log-inspection allowlist) and `command_not_match: "muxcode *"` to the watch chain's branches
-- [ ] Unit tests: a `tail`/`grep` log command fires; a `ps`/`echo`/`ls` scratch command does not; a `muxcode send` never does
-- [ ] **Negative control:** a genuine log-inspection command still fires the notify
+- [x] Add `command_match` (log-inspection allowlist) and `command_not_match: "muxcode *"` to the watch chain's branches — 2026-11-03, as `first_command_match` (the allowlist read after `stripCommandPrefix`, see findings) plus `command_not_match: "muxcode *"` on all three branches (`watchNotifyActions`, `profile.go`)
+- [x] Unit tests: a `tail`/`grep` log command fires; a `ps`/`echo`/`ls` scratch command does not; a `muxcode send` never does — `TestWatchChainLogAllowlist` (11 firing, 16 non-firing rows × 3 outcomes), `TestCommandNotMatch`, `TestWatchRoleChainGate`; suite green `./test.sh` ts 1793727902 on the fix tree
+- [x] **Negative control:** a genuine log-inspection command still fires the notify — `tail`, log `grep`, `aws`/`kubectl`/`docker logs`, `log show`, cd- and env-prefixed tails notify edit on success, failure and unknown; through the real hook, `tail` on exit 0 and 1
+
+#### Phase 1 findings (2026-11-03)
+
+Verified 12:45 on the fix tree: `./build.sh` ts 1793727826, `./test.sh` ts 1793727902 (both after the
+last file write at 1793727792), review `1793727928-review-0a4e79d9` 0 must-fix / 0 should-fix / 0 nits
+("prior wildcard finding is resolved"). Uncommitted at verification, on branch
+`MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload`
+(graph run `1793727228-50-spec-to-pr-5f982531`):
+
+| Item | In the tree |
+|------|-------------|
+| Gate | `watchLogShapes` (`profile.go`: `tail *`, `journalctl *`, `grep *.log`/`*/log(s)/*`, `aws logs`/`cloudwatch`, `gcloud logging`, `az monitor`, `kubectl logs`/`get events`, `docker(-compose) logs`, `stern`, `log show`/`stream`, `xcrun simctl spawn * log …`); `watchNotifyActions` puts one first-match-wins action per shape on **all three** branches (`OnSuccess`/`OnFailure`/`OnUnknown`), each with `first_command_match: <shape>` and `command_not_match: "muxcode *"` |
+| New condition | `first_command_match` (`conditions.go`, the 15th type): the glob is read against `stripCommandPrefix(command)` — a genuine `cd <dir> &&` and env assignments removed — so no `cd * && <reader>` shape is needed. `command_not_match` now tests the stripped command as well as the raw one, so `cd dir && muxcode send …` is excluded (the Recurrence note's blind spot) |
+| Tests | `TestWatchChainLogAllowlist` (`conditions_test.go`): 11 firing rows (tail, grep of a log, aws/kubectl/docker logs, `log show`, cd- and env-prefixed tails) × 3 outcomes, 16 non-firing rows (echo, ls, `ps aux \| grep`, cat, a code grep, `gh pr checks`, sleep, curl, the 2026-09-10 scratch block, the 2026-09-22 detached listener, `muxcode send`/`inbox`, and the review's `cd /repo && echo "example && tail app.log"`, `cd … && muxcode send … && tail`, `cd … && ls && tail`); `TestCommandNotMatch` rows for cd- and env-prefixed `muxcode`; `TestWatchRoleChainGate` (`hook_test.go`) through the real `ProcessBashHook` + `BuildChainContext`: the prefixed bus call, the cd-prefixed send and a `ps` resolve no edge, a `tail` notifies edit on exit 0 and 1 |
+
+Review history: the first review (`1793727743`, 1 must-fix) found that a raw `cd * && tail *` shape's
+first `*` spanned later `&&`s and quoted text, so `cd /repo && echo "example && tail app.log"` read as
+a log read; the fix replaced every `cd *` shape with `first_command_match` and added that command, a
+`cd … && muxcode send … && tail` and a `cd … && ls && tail` as non-firing rows. The first verify-spec
+(12:42) held the boxes because that suite run predated the fix; the fix tree's own chain ticked them.
+
+Known limit, left for Phase 2 by design: a multi-line block whose **first** line is a log reader still
+notifies — the allowlist gates on the first statement, and bounding the body is Phase 2's work.
+Follow-up for Phase 3: `first_command_match` is the 15th condition type — `docs/hooks.md`'s table,
+`docs/architecture.md`'s count (14 as of 2026-11-02) and `CLAUDE.md`'s "13 types" all move.
 
 ### Phase 2: Bound the interpolation
 
@@ -138,6 +163,9 @@ only route to report.
 
 - [ ] `docs/hooks.md` chain table: the watch chain's gate, beside the run chain's
 - [ ] `CLAUDE.md`: extend the run-chain allowlist note to say every notifying chain is gated and `${command}` is bounded
+- [ ] `docs/hooks.md` conditions table: a `first_command_match` row — glob read against `stripCommandPrefix(command)` (a genuine `cd <dir> &&` and env assignments removed), why it is not `command_match` with a `cd * &&` shape (the first `*` spans later `&&`s and quoted text — the Phase 1 review finding)
+- [ ] `docs/hooks.md` `command_not_match` row: now also tests the prefix-stripped command, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded — this narrows the run chain's own `muxcode *` exclusion the same way, never widens it
+- [ ] Condition count: `docs/architecture.md` 14 → 15 types with `first_command_match` named in its list (`docs/hooks.md` carries the table, no count; `CLAUDE.md` already reads 15 with both `swiftpm_query` and `first_command_match` — done by the Phase 1 worker, nothing left there)
 
 ### Phase 4: Integration test
 
@@ -163,6 +191,12 @@ edges firing on evidence that does not support them.
 command escapes the `HasPrefix("muxcode")` classification and lands in the unconditioned watch
 chain — recorded under [Recurrence](#recurrence-2026-09-22-session-muxcode); not re-scoped.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload | 3m | 2026-11-03 12:45 |
+
 ## Status
 
-Backlog — recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)); not started.
+In Progress — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); uncommitted at verification. Phase 2 (Bound the interpolation) next. Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).

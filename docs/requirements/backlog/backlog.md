@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-207 closed 2026-11-02; the next active spec is the user's call_ | — | — |
+| [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message | 2026-11-03 | Active spec (set by the user); not started — 20 open items |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.

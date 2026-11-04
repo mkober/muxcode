@@ -610,6 +610,44 @@ func TestRunRoleXcodebuildChain(t *testing.T) {
 	}
 }
 
+// TestWatchRoleChainGate drives watch-role calls through ProcessBashHook and
+// BuildChainContext (MUX-177): a prefixed bus call and a scratch read reach the
+// watch chain unclassified and must resolve no notify, while a log read — the
+// negative control — still notifies edit on success and on failure.
+func TestWatchRoleChainGate(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-watch-gate"
+	t.Setenv("BUS_SESSION", session)
+	os.MkdirAll(BusDir(session), 0755)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	edgeOf := func(command string, code int) (string, *ChainAction) {
+		ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":%q},"exit_code":%d,"tool_response":{"stdout":"out"}}`, command, code)))
+		res := ProcessBashHook(session, "watch", ev)
+		if res.Chain == "" {
+			return "", nil
+		}
+		return res.Chain, ResolveChain(res.Chain, HookOutcome(strconv.Itoa(code)), BuildChainContext(ev))
+	}
+
+	for _, cmd := range []string{
+		"nohup muxcode inbox --poll --loop > /tmp/l.log 2>&1 & disown",
+		"cd /repo && muxcode send edit notify done",
+		"ps -o pid,ppid,stat,command -p 42",
+	} {
+		if chain, edge := edgeOf(cmd, 0); chain != "watch" || edge != nil {
+			t.Errorf("%q on watch: chain %q, edge %+v — want the watch chain and no notify", cmd, chain, edge)
+		}
+	}
+
+	for _, code := range []int{0, 1} {
+		if chain, edge := edgeOf("tail -n 200 /var/log/app.log", code); chain != "watch" || edge == nil || edge.SendTo != "edit" {
+			t.Errorf("log read on watch exit %d: chain %q, edge %+v — want an edit notify", code, chain, edge)
+		}
+	}
+}
+
 func TestClassifyCommand_CdPrefix(t *testing.T) {
 	if got := ClassifyCommand("cd /foo && go build ."); got != CmdBuild {
 		t.Errorf("ClassifyCommand with cd prefix = %d, want CmdBuild", got)
