@@ -92,7 +92,7 @@ had no chain involvement), and the `run` chain's own allowlist, which is working
 - [x] No chain message carries a multi-line body; `${command}` is bounded (single line, truncated with an explicit marker) or omitted — Phase 2, 2026-11-04: `boundCommand` joins lines with ` ⏎ ` and cuts at 200 bytes with `… [truncated N bytes]`, on every chain and subscription expansion; the other variables (`${branch}`, `${serve_url}`, `${changed_files}` — comma-joined, 10 names) were already one line
 - [x] A chain message that would exceed the hygiene limits is truncated rather than sent raw, and the truncation is visible in the message — Phase 2, 2026-11-04: `TestChainMessagesPassValidatePayload` expands a 1.5k heredoc through every default chain action that names `${command}` (run, watch, serve all reached) and asserts `validatePayload()` accepts the result and the `[truncated` marker is in it; the raw heredoc failing is the control
 - [x] Watch's own `muxcode *` calls never fire the watch chain (the exclusion the run chain already has) — Phase 1, 2026-11-03: `command_not_match: "muxcode *"` on every branch, now also tested after `stripCommandPrefix`, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded too (`TestCommandNotMatch`, the nohup and cd-prefixed rows)
-- [ ] `docs/hooks.md` chain table and `CLAUDE.md` record the watch chain's gate alongside the run chain's
+- [x] `docs/hooks.md` chain table and `CLAUDE.md` record the watch chain's gate alongside the run chain's — Phase 3, 2026-11-05: `docs/hooks.md` "Deploy-Run-Watch Chain" paragraph directly after the run gate's, and `CLAUDE.md`'s "Conditional chains" bullet extended after its run-allowlist sentence; both name all three branches, `watchLogShapes` + `first_command_match` + `command_not_match: "muxcode *"`, and the `${command}` bound
 
 ### Technical approach
 
@@ -181,11 +181,21 @@ only from a user-written chain.
 
 ### Phase 3: Docs
 
-- [ ] `docs/hooks.md` chain table: the watch chain's gate, beside the run chain's
-- [ ] `CLAUDE.md`: extend the run-chain allowlist note to say every notifying chain is gated and `${command}` is bounded
-- [ ] `docs/hooks.md` conditions table: a `first_command_match` row — glob read against `stripCommandPrefix(command)` (a genuine `cd <dir> &&` and env assignments removed), why it is not `command_match` with a `cd * &&` shape (the first `*` spans later `&&`s and quoted text — the Phase 1 review finding)
-- [ ] `docs/hooks.md` `command_not_match` row: now also tests the prefix-stripped command, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded — this narrows the run chain's own `muxcode *` exclusion the same way, never widens it
-- [ ] Condition count: `docs/architecture.md` 14 → 15 types with `first_command_match` named in its list (`docs/hooks.md` carries the table, no count; `CLAUDE.md` already reads 15 with both `swiftpm_query` and `first_command_match` — done by the Phase 1 worker, nothing left there)
+- [x] `docs/hooks.md` chain table: the watch chain's gate, beside the run chain's — 2026-11-05: a paragraph under "Deploy-Run-Watch Chain" directly after the run gate's: all three branches, every `watchLogShapes` shape, `first_command_match` + `command_not_match: "muxcode *"`, what does not fire, the 2026-09-10 incident, why not `command_match`, the three pinning tests; plus the `${command}` bound under "Message templates" (`boundCommand`, 200 bytes, ` ⏎ `, visible marker, one-pass replacement, `validatePayload()`)
+- [x] `CLAUDE.md`: extend the run-chain allowlist note to say every notifying chain is gated and `${command}` is bounded — 2026-11-05 (edit): the "Conditional chains" bullet now records the watch gate on all three branches (`watchNotifyActions`, the shapes, `command_not_match` tested on the stripped command too, the pre-MUX-177 raw-command notices), that a run **failure** still notifies for any command by design, and the `boundCommand` bound (` ⏎ `, 200 bytes, one-pass). Review `1793890396` nit — "a chain message always passes `validatePayload()`" over-claimed — qualified by plan to the default templates naming `${command}`, with user templates and `${changed_files}` named as unbounded
+- [x] `docs/hooks.md` conditions table: a `first_command_match` row — glob read against `stripCommandPrefix(command)` (a genuine `cd <dir> &&` and env assignments removed), why it is not `command_match` with a `cd * &&` shape (the first `*` spans later `&&`s and quoted text — the Phase 1 review finding) — 2026-11-05: row after `command_not_match`, with the review's `cd /repo && echo "example && tail app.log"` as the example; the "Chain context" Command bullet names it too
+- [x] `docs/hooks.md` `command_not_match` row: now also tests the prefix-stripped command, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded — this narrows the run chain's own `muxcode *` exclusion the same way, never widens it — 2026-11-05: row rewritten with both forms, the strip order (`cd <dir> &&` then env assignments) and the narrows-never-widens note
+- [x] Condition count: `docs/architecture.md` 14 → 15 types with `first_command_match` named in its list (`docs/hooks.md` carries the table, no count; `CLAUDE.md` already reads 15 with both `swiftpm_query` and `first_command_match` — done by the Phase 1 worker, nothing left there) — 2026-11-05: `docs/architecture.md` "15 condition types", `first_command_match` named with its purpose
+
+#### Phase 3 findings (2026-11-05)
+
+Verified 09:53: `CLAUDE.md` written by edit at 1793890152, `docs/hooks.md` and `docs/architecture.md` by plan at
+1793890277/1793890280 (handoff `/tmp/mux177-phase3-docs.md`), `./test.sh` ts 1793890350 (docs-only phase; the
+chain ran intact), review `1793890396-review-9439cd1b` 0 must-fix / 0 should-fix / 1 nit ("other documentation
+matches implementation"). The nit — `CLAUDE.md` claimed every chain message passes `validatePayload()` when only
+`${command}` is bounded — is fixed in the tree: the claim now covers the default templates naming `${command}`
+and names a user template's own text and `${changed_files}` as unbounded, matching `docs/hooks.md` and the Phase 2
+residual. Uncommitted at verification.
 
 ### Phase 4: Integration test
 
@@ -215,8 +225,8 @@ chain — recorded under [Recurrence](#recurrence-2026-09-22-session-muxcode); n
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload | 3m | 2026-11-03 12:45 |
+| MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload | 23m | 2026-11-05 09:53 |
 
 ## Status
 
-In Progress — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); committed as `66d7622`. Phase 2 (Bound the interpolation) complete 2026-11-04 11:06: `boundCommand` (` ⏎ `-joined, 200-byte cut with a visible marker) on every chain and subscription expansion, one-pass token replacement after the review's rescan finding, suite green ts 1793808379, review 1793808406 clean ([Phase 2 findings](#phase-2-findings-2026-11-04)); uncommitted at verification. Phase 3 (Docs) next. Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).
+In Progress — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); committed as `66d7622`. Phase 2 (Bound the interpolation) complete 2026-11-04 11:06: `boundCommand` (` ⏎ `-joined, 200-byte cut with a visible marker) on every chain and subscription expansion, one-pass token replacement after the review's rescan finding, suite green ts 1793808379, review 1793808406 clean ([Phase 2 findings](#phase-2-findings-2026-11-04)); committed as `e6d5839`. Phase 3 (Docs) complete 2026-11-05 09:53: `docs/hooks.md` watch gate + condition rows + `${command}` bound, `docs/architecture.md` 15 types, `CLAUDE.md` bullet by edit, review 1793890396 clean bar one nit fixed in the tree ([Phase 3 findings](#phase-3-findings-2026-11-05)); uncommitted at verification. Phase 4 (Integration test) next — the last phase; AC 1–6 all satisfied, pending Phase 4's end-to-end proof. Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).

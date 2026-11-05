@@ -365,6 +365,8 @@ Preview commands (`cdk diff`, `terraform plan`) are logged to deploy history but
 
 The run→watch step is gated by a **`command_match` allowlist** — the run chain's `OnSuccess` is a first-match-wins action array (`runWatchActions()` in `bus/profile.go`) where each action carries one `command_match` condition for a verification-run shape (`aws *` invocations, first-token-anchored `.sh` script executions such as `bash *.sh`, `./*.sh`, `scripts/*.sh`). Commands matching no shape fire nothing, so incidental reads in the run window (`cat`, `ls`, `grep`) never trigger a watch request; `muxcode *` commands are additionally excluded via `command_not_match`. Patterns anchor the script to the first token because glob `*` spans spaces — a bare `*.sh *` would also match `ls -la x.sh`, a read of a script path rather than an execution. See [`run-chain-watch-overfire`](requirements/completed/MUX-084-run-chain-watch-overfire.md); integration test: `scripts/test-run-chain-scope.sh`.
 
+The watch chain is gated the same way, on **all three** of its branches ([MUX-177](requirements/backlog/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md)): `OnSuccess`, `OnFailure` and `OnUnknown` are each `watchNotifyActions()` (`bus/profile.go`) — one first-match-wins action per log-reader shape in `watchLogShapes` (`tail *`, `journalctl *`, `zcat *`, `grep *.log`/`grep *.log *`/`grep */log/*`/`grep */logs/*`, `aws logs *`, `aws cloudwatch *`, `gcloud logging *`, `az monitor *`, `kubectl logs *`, `kubectl get events [*]`, `docker logs *`, `docker-compose logs *`, `stern *`, `log show [*]`, `log stream [*]`, `xcrun simctl spawn * log show*`/`log stream*`), each carrying `first_command_match: <shape>` and `command_not_match: "muxcode *"` and sending edit a `notify`. Anything else run in the watch pane — `ps`, `ls`, `echo`, a scratch heredoc, a `nohup muxcode inbox …` listener, a `muxcode send` — notifies nothing. Before this the watch chain carried no conditions at all, so on 2026-09-10 every bash call in the watch pane sent edit a notice with the raw command as its body, four-line shell blocks included. The shapes use `first_command_match` rather than `command_match` because they must survive a `cd <dir> &&` or env-assignment prefix, and a `cd * && tail *` glob cannot do that safely — its first `*` spans later `&&`s and quoted text (see [Condition types](#condition-types)). The run chain is unchanged. Pinned by `TestWatchChainLogAllowlist` and `TestCommandNotMatch` (`bus/conditions_test.go`) and, through the real hook, `TestWatchRoleChainGate` (`bus/hook_test.go`).
+
 ## Conditional chains
 
 Chain actions support condition expressions that control when they fire. Conditions are evaluated as AND logic — all conditions in an action must pass for it to fire.
@@ -378,7 +380,8 @@ Chain actions support condition expressions that control when they fire. Conditi
 | `branch_match` | regex | Current branch name matches |
 | `branch_not_match` | regex | Current branch name does not match |
 | `command_match` | glob pattern | The triggering command matches the pattern |
-| `command_not_match` | glob pattern | The triggering command does not match the pattern |
+| `command_not_match` | glob pattern | The triggering command does not match the pattern — tested against the raw command **and** its prefix-stripped form (`stripCommandPrefix`: one leading `cd <dir> &&`, then env assignments, removed), so `muxcode *` also excludes `cd dir && muxcode send …` and `VAR=1 muxcode …` ([MUX-177](requirements/backlog/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md)). A pattern matching either form fails the condition, so this can only exclude more commands: it narrows the run chain's own `muxcode *` exclusion the same way and never widens what fires |
+| `first_command_match` | glob pattern | The triggering command, read after `stripCommandPrefix` (a genuine leading `cd <dir> &&` and env assignments removed), matches the pattern — `cd /repo && tail app.log` matches `tail *`, `AWS_PROFILE=x aws logs tail …` matches `aws logs *`. Added for the watch chain's log-reader gate (MUX-177). Not `command_match` with a `cd * && tail *` shape, because glob `*` spans spaces, `&&` and quoted text: `cd /repo && echo "example && tail app.log"` matched that shape and read as a log read (the Phase 1 review's must-fix). Matching the first real command on its own leaves nothing for a later `&&` to be spanned into |
 | `env_set` | env var name | Environment variable is set and non-empty |
 | `env_equals` | `VAR=value` | Environment variable equals the specified value |
 | `output_contains` | substring | Command output contains the substring |
@@ -420,7 +423,7 @@ In this example, build success on a `release/*` branch sends to deploy; on any o
 
 - **Branch** — current git branch name
 - **ChangedFiles** — list of uncommitted changed files
-- **Command** — the triggering command line (evaluated by `command_match`/`command_not_match`, and by `swiftpm_query` through the `swiftPMQuery` predicate)
+- **Command** — the triggering command line (evaluated by `command_match`/`command_not_match`, by `first_command_match` after `stripCommandPrefix`, and by `swiftpm_query` through the `swiftPMQuery` predicate)
 - **Output** — command stdout/stderr
 - **ExitCode** — command exit code
 
@@ -428,7 +431,9 @@ Git information (branch, changed files) is lazy-loaded via `PopulateGitInfo()` �
 
 ### Message templates
 
-Chain messages support template variables: `${exit_code}`, `${command}`, `${branch}`, `${changed_files}`. Templates are expanded via `ExpandMessageWithContext()`.
+Chain messages support template variables: `${exit_code}`, `${command}`, `${branch}`, `${changed_files}` and `${serve_url}`. Templates are expanded via `ExpandMessageWithContext()` (`ExpandMessage` delegates to it; subscriptions go through `ExpandSubscriptionMessage` under the same rules).
+
+`${command}` is **bounded** at substitution (`boundCommand`, `bus/profile.go`; [MUX-177](requirements/backlog/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md)): a multi-line command is split on CR/LF, each line trimmed, blanks dropped, and the rest joined with ` ⏎ `; past `chainCommandMaxLen` (200 bytes) it is cut at a rune boundary and suffixed `… [truncated N bytes]`, so the truncation is visible in the message. A one-line command within the limit passes through byte-for-byte. Every token is replaced in one pass over the template (`strings.NewReplacer`), so a substituted value is never rescanned — a command carrying a literal `${changed_files}` stays literal rather than expanding after the bound. The limit is sized so the longest default template stays under `validatePayload()`'s no-newline / 500-byte hygiene check, which the raw body failed: a multi-line payload misses the `Bash(muxcode *)` permission glob and prompts instead of delivering, the shape of the 2026-09-10 watch notices. Pinned by `TestBoundCommand` (`bus/profile_test.go`) and `TestChainMessagesPassValidatePayload` (`cmd/send_test.go`, every default chain action that names `${command}` — run, watch and serve all reached).
 
 ### CLI
 
