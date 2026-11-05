@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestDefaultConfig_HasAllRoles(t *testing.T) {
@@ -703,6 +704,58 @@ func TestExpandMessage(t *testing.T) {
 			t.Errorf("ExpandMessage(%q, %q, %q) = %q, want %q",
 				tt.template, tt.exitCode, tt.command, got, tt.want)
 		}
+	}
+}
+
+// TestBoundCommand pins MUX-177 Phase 2: ${command} reaches a chain message on
+// one line and within chainCommandMaxLen bytes, its truncation visible. The
+// unchanged rows are the negative control — a bound that rewrote every command
+// would still pass the multi-line and oversized rows.
+func TestBoundCommand(t *testing.T) {
+	heredoc := "BUS_DIR=/tmp/muxcode-bus-muxcode\n  echo $BUS_DIR\r\n\nls -la $BUS_DIR\ncat <<EOF\nx\nEOF"
+	if got, want := boundCommand(heredoc), "BUS_DIR=/tmp/muxcode-bus-muxcode ⏎ echo $BUS_DIR ⏎ ls -la $BUS_DIR ⏎ cat <<EOF ⏎ x ⏎ EOF"; got != want {
+		t.Errorf("boundCommand(heredoc) = %q, want %q", got, want)
+	}
+
+	long := strings.Repeat("x", chainCommandMaxLen+37)
+	if got, want := boundCommand(long), strings.Repeat("x", chainCommandMaxLen)+"… [truncated 37 bytes]"; got != want {
+		t.Errorf("boundCommand(%d bytes) = %q, want the first %d and a marker", len(long), got, chainCommandMaxLen)
+	}
+
+	// "é" is two bytes; a leading "x" puts byte chainCommandMaxLen mid-rune.
+	multibyte := "x" + strings.Repeat("é", chainCommandMaxLen)
+	got := boundCommand(multibyte)
+	if !utf8.ValidString(got) || !strings.HasSuffix(got, "… [truncated 202 bytes]") {
+		t.Errorf("boundCommand(multibyte) = %q, want a valid cut at %d bytes and its marker", got, chainCommandMaxLen-1)
+	}
+
+	for _, unchanged := range []string{
+		"tail -n 100 /var/log/app.log",
+		"grep  -c ERROR\tapp.log",
+		strings.Repeat("a", chainCommandMaxLen),
+		"",
+	} {
+		if got := boundCommand(unchanged); got != unchanged {
+			t.Errorf("boundCommand(%q) = %q, want it unchanged", unchanged, got)
+		}
+	}
+
+	if got := ExpandMessage("Run FAILED (exit ${exit_code}): ${command}", "3", "bash a.sh\nbash b.sh"); got != "Run FAILED (exit 3): bash a.sh ⏎ bash b.sh" {
+		t.Errorf("ExpandMessage did not bound ${command}: %q", got)
+	}
+}
+
+// TestExpandMessageWithContextNoRescan pins the one-pass expansion: a
+// command's literal ${changed_files} and ${branch} stay literal rather than
+// expanding after boundCommand bounded it, while the same tokens in the
+// template — the negative control — still expand.
+func TestExpandMessageWithContextNoRescan(t *testing.T) {
+	ctx := &ChainContext{Branch: "feat", ChangedFiles: []string{"a.go", "b.go"}}
+	got := ExpandMessageWithContext("Run FAILED (exit ${exit_code}): ${command} on ${branch} [${changed_files}]", "2",
+		"echo '${changed_files} ${branch} ${exit_code}'", ctx)
+	want := "Run FAILED (exit 2): echo '${changed_files} ${branch} ${exit_code}' on feat [a.go, b.go]"
+	if got != want {
+		t.Errorf("ExpandMessageWithContext = %q, want %q", got, want)
 	}
 }
 

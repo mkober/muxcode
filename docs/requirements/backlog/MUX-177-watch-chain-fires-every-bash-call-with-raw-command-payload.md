@@ -89,8 +89,8 @@ had no chain involvement), and the `run` chain's own allowlist, which is working
 
 - [x] A routine bash call in the watch pane that produces no log finding sends edit **no** `notify` — Phase 1, 2026-11-03: 16 non-firing rows incl. the 2026-09-10 scratch block and 2026-09-22 listener call verbatim, across all three outcomes; `ps` through the real hook
 - [x] A genuine watch finding still reaches edit — pinned by a test, so the fix does not buy quiet by disabling the chain — Phase 1, 2026-11-03: `TestWatchChainLogAllowlist` firing rows and `TestWatchRoleChainGate` (`tail` notifies on exit 0 and 1)
-- [ ] No chain message carries a multi-line body; `${command}` is bounded (single line, truncated with an explicit marker) or omitted
-- [ ] A chain message that would exceed the hygiene limits is truncated rather than sent raw, and the truncation is visible in the message
+- [x] No chain message carries a multi-line body; `${command}` is bounded (single line, truncated with an explicit marker) or omitted — Phase 2, 2026-11-04: `boundCommand` joins lines with ` ⏎ ` and cuts at 200 bytes with `… [truncated N bytes]`, on every chain and subscription expansion; the other variables (`${branch}`, `${serve_url}`, `${changed_files}` — comma-joined, 10 names) were already one line
+- [x] A chain message that would exceed the hygiene limits is truncated rather than sent raw, and the truncation is visible in the message — Phase 2, 2026-11-04: `TestChainMessagesPassValidatePayload` expands a 1.5k heredoc through every default chain action that names `${command}` (run, watch, serve all reached) and asserts `validatePayload()` accepts the result and the `[truncated` marker is in it; the raw heredoc failing is the control
 - [x] Watch's own `muxcode *` calls never fire the watch chain (the exclusion the run chain already has) — Phase 1, 2026-11-03: `command_not_match: "muxcode *"` on every branch, now also tested after `stripCommandPrefix`, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded too (`TestCommandNotMatch`, the nohup and cd-prefixed rows)
 - [ ] `docs/hooks.md` chain table and `CLAUDE.md` record the watch chain's gate alongside the run chain's
 
@@ -154,10 +154,30 @@ Follow-up for Phase 3: `first_command_match` is the 15th condition type — `doc
 
 ### Phase 2: Bound the interpolation
 
-- [ ] `${command}` substitution collapses newlines and truncates at a fixed width with an explicit marker
-- [ ] Applies to every chain that interpolates `${command}` (run, watch, serve), not watch alone
-- [ ] Unit test: a multi-line heredoc command yields a single-line bounded message that passes `validatePayload()`
-- [ ] **Negative control:** a short single-line command is passed through unchanged
+- [x] `${command}` substitution collapses newlines and truncates at a fixed width with an explicit marker — 2026-11-04: `boundCommand` (`profile.go`): lines trimmed, blanks dropped, joined with ` ⏎ `; cut at a rune boundary within `chainCommandMaxLen` = 200 bytes, suffixed `… [truncated N bytes]`
+- [x] Applies to every chain that interpolates `${command}` (run, watch, serve), not watch alone — 2026-11-04: the one substitution point is `ExpandMessageWithContext` (`ExpandMessage` now delegates to it), so every chain is bounded; `ExpandSubscriptionMessage` bounds the same way
+- [x] Unit test: a multi-line heredoc command yields a single-line bounded message that passes `validatePayload()` — 2026-11-04: `TestChainMessagesPassValidatePayload` (`cmd/send_test.go`, every default chain action naming `${command}`, run/watch/serve asserted reached), `TestBoundCommand` (`profile_test.go`: heredoc with `\r\n` and blank lines, a 237-byte line, a multibyte cut), a subscription row; suite green `./test.sh` ts 1793808379
+- [x] **Negative control:** a short single-line command is passed through unchanged — 2026-11-04: `TestBoundCommand` unchanged rows — a `tail`, a tab-holding `grep`, exactly 200 bytes, empty — byte-identical; the raw heredoc failing `validatePayload()` proves the check can see the defect
+
+#### Phase 2 findings (2026-11-04)
+
+Verified 11:06 on the tree: `./build.sh` ts 1793808313, `./test.sh` ts 1793808379 (both after the last
+file write at 1793808289), review `1793808406-review-782db78e` 0 must-fix / 0 should-fix / 0 nits
+("prior expansion finding resolved"). Uncommitted at verification, on branch
+`MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload`
+(graph run `1793727228-50-spec-to-pr-5f982531`):
+
+| Item | In the tree |
+|------|-------------|
+| Bound | `boundCommand` (`profile.go`): a command holding `\n` or `\r` is split, each line trimmed, blanks dropped, the rest joined with ` ⏎ `; then, past `chainCommandMaxLen` (200 bytes — with the longest default template it keeps the message under `validatePayload()`'s 500), cut back to a rune start and suffixed `… [truncated N bytes]`. Within the limit and on one line, the command is returned as is |
+| Reach | `ExpandMessageWithContext` substitutes `${command}` through `boundCommand`; `ExpandMessage` is now a nil-ctx call to it, so the run, watch and serve chains (and any user chain) share the bound. `ExpandSubscriptionMessage` applies it too |
+| One pass | Both expanders now build a `strings.NewReplacer` and replace every token in one pass over the **template**, with the git and serve lookups keyed on the template rather than the partly expanded string — a substituted value is never rescanned, so a command holding a literal `${changed_files}` cannot expand after the bound (the review's finding; `TestExpandMessageWithContextNoRescan`, `TestExpandSubscriptionMessage_NoRescan`, each with the template's own tokens expanding as the control) |
+| Tests | `TestBoundCommand` (heredoc → one line; 237 bytes → 200 + `[truncated 37 bytes]`; `x` + 200 × `é` cut to a valid string at 199 bytes; four unchanged rows; `ExpandMessage` bounding); `TestChainMessagesPassValidatePayload` (`cmd`): a 1.5k heredoc opening with a literal `${changed_files}`, expanded through every default chain action naming `${command}` with a ten-long-path context, passes `validatePayload()` and shows `[truncated`, with run, watch and serve asserted reached and the raw heredoc asserted rejected; a `multi-line command bounded` row in `TestExpandSubscriptionMessage` |
+
+No integration script for this phase; Phase 4's `scripts/test-watch-chain-gate.sh` carries the
+"no message body contains a newline" assertion end to end. Residual, outside this spec: `${changed_files}`
+is bounded by count (10 names), not bytes — no default chain template names it, so it reaches a message
+only from a user-written chain.
 
 ### Phase 3: Docs
 
@@ -199,4 +219,4 @@ chain — recorded under [Recurrence](#recurrence-2026-09-22-session-muxcode); n
 
 ## Status
 
-In Progress — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); uncommitted at verification. Phase 2 (Bound the interpolation) next. Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).
+In Progress — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); committed as `66d7622`. Phase 2 (Bound the interpolation) complete 2026-11-04 11:06: `boundCommand` (` ⏎ `-joined, 200-byte cut with a visible marker) on every chain and subscription expansion, one-pass token replacement after the review's rescan finding, suite green ts 1793808379, review 1793808406 clean ([Phase 2 findings](#phase-2-findings-2026-11-04)); uncommitted at verification. Phase 3 (Docs) next. Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).

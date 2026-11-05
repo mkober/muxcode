@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // MuxcodeConfig holds tool profiles, event chains, auto-CC, and send policy config.
@@ -448,32 +449,65 @@ func ChainShouldNotifyPlan(eventType, outcome string) bool {
 	return false
 }
 
-// ExpandMessage substitutes template variables in a chain message.
-// Supported: ${exit_code}, ${command}, ${branch}, ${changed_files}
+// ExpandMessage substitutes ${exit_code} and ${command} in a chain message;
+// see ExpandMessageWithContext.
 func ExpandMessage(template, exitCode, command string) string {
-	s := strings.ReplaceAll(template, "${exit_code}", exitCode)
-	s = strings.ReplaceAll(s, "${command}", command)
-	return s
+	return ExpandMessageWithContext(template, exitCode, command, nil)
 }
 
-// ExpandMessageWithContext substitutes all template variables including context-aware ones.
-// Supported: ${exit_code}, ${command}, ${branch}, ${changed_files}, ${serve_url}
+// chainCommandMaxLen is the most bytes of a command a chain message carries.
+// With the longest default template it keeps a message under the 500-byte
+// delegation-hygiene limit validatePayload checks.
+const chainCommandMaxLen = 200
+
+// boundCommand renders a command for a chain message on one line: its lines
+// trimmed and joined by " ⏎ ", then cut at a rune boundary within
+// chainCommandMaxLen bytes with a "… [truncated N bytes]" marker. A
+// single-line command within the limit is returned unchanged. A raw
+// multi-line body misses the `Bash(muxcode *)` glob and prompts instead of
+// delivering; on 2026-09-10 the watch chain sent edit four-line shell blocks
+// as its message (MUX-177).
+func boundCommand(command string) string {
+	if strings.ContainsAny(command, "\r\n") {
+		var lines []string
+		for _, l := range strings.FieldsFunc(command, func(r rune) bool { return r == '\n' || r == '\r' }) {
+			if l = strings.TrimSpace(l); l != "" {
+				lines = append(lines, l)
+			}
+		}
+		command = strings.Join(lines, " ⏎ ")
+	}
+	if len(command) <= chainCommandMaxLen {
+		return command
+	}
+	cut := chainCommandMaxLen
+	for cut > 0 && !utf8.RuneStart(command[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s… [truncated %d bytes]", command[:cut], len(command)-cut)
+}
+
+// ExpandMessageWithContext substitutes a chain message's variables:
+// ${exit_code} and ${command} (through boundCommand) always, and with a ctx
+// ${branch}, ${changed_files} and ${serve_url} (the first running dev
+// server), git and serve state read only when the template names them.
+//
+// Every token is replaced in one pass over the template, and a substituted
+// value is never rescanned: a command holding a literal ${changed_files}
+// would otherwise expand after boundCommand had bounded it (MUX-177 review).
+// With no ctx, the context tokens stay literal.
 func ExpandMessageWithContext(template, exitCode, command string, ctx *ChainContext) string {
-	s := ExpandMessage(template, exitCode, command)
+	pairs := []string{"${exit_code}", exitCode, "${command}", boundCommand(command)}
 	if ctx != nil {
-		// Populate git info lazily if the template references it
-		if strings.Contains(s, "${branch}") || strings.Contains(s, "${changed_files}") {
+		if strings.Contains(template, "${branch}") || strings.Contains(template, "${changed_files}") {
 			ctx.PopulateGitInfo()
 		}
-		s = strings.ReplaceAll(s, "${branch}", ctx.Branch)
-		s = strings.ReplaceAll(s, "${changed_files}", formatChangedFiles(ctx.ChangedFiles))
-		// Expand ${serve_url} from the current serve state (first running server)
-		if strings.Contains(s, "${serve_url}") {
-			serveUrl := resolveServeURL(ctx.Session)
-			s = strings.ReplaceAll(s, "${serve_url}", serveUrl)
+		pairs = append(pairs, "${branch}", ctx.Branch, "${changed_files}", formatChangedFiles(ctx.ChangedFiles))
+		if strings.Contains(template, "${serve_url}") {
+			pairs = append(pairs, "${serve_url}", resolveServeURL(ctx.Session))
 		}
 	}
-	return s
+	return strings.NewReplacer(pairs...).Replace(template)
 }
 
 // resolveServeURL returns the URL of the first running dev server, or "(unknown)" if none.

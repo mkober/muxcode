@@ -235,23 +235,24 @@ func FireSubscriptions(session, from, event, outcome, exitCode, command string, 
 // ExpandSubscriptionMessage substitutes template variables in a subscription message.
 // Supported: ${event}, ${outcome}, ${exit_code}, ${command}, ${branch}, ${changed_files}
 // When ctx is nil, ${branch} and ${changed_files} are left as empty strings.
+// ${command} is bounded as a chain message's is, and every token is replaced
+// in one pass so no substituted value is rescanned (ExpandMessageWithContext).
 func ExpandSubscriptionMessage(template, event, outcome, exitCode, command string, ctx *ChainContext) string {
-	s := strings.ReplaceAll(template, "${event}", event)
-	s = strings.ReplaceAll(s, "${outcome}", outcome)
-	s = strings.ReplaceAll(s, "${exit_code}", exitCode)
-	s = strings.ReplaceAll(s, "${command}", command)
+	branch, changed := "", ""
 	if ctx != nil {
-		// Populate git info lazily if the template references it
-		if strings.Contains(s, "${branch}") || strings.Contains(s, "${changed_files}") {
+		if strings.Contains(template, "${branch}") || strings.Contains(template, "${changed_files}") {
 			ctx.PopulateGitInfo()
 		}
-		s = strings.ReplaceAll(s, "${branch}", ctx.Branch)
-		s = strings.ReplaceAll(s, "${changed_files}", formatChangedFiles(ctx.ChangedFiles))
-	} else {
-		s = strings.ReplaceAll(s, "${branch}", "")
-		s = strings.ReplaceAll(s, "${changed_files}", "")
+		branch, changed = ctx.Branch, formatChangedFiles(ctx.ChangedFiles)
 	}
-	return s
+	return strings.NewReplacer(
+		"${event}", event,
+		"${outcome}", outcome,
+		"${exit_code}", exitCode,
+		"${command}", boundCommand(command),
+		"${branch}", branch,
+		"${changed_files}", changed,
+	).Replace(template)
 }
 
 // FormatSubscriptionList formats subscriptions as a human-readable table.
