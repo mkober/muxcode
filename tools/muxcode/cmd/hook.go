@@ -224,16 +224,7 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 
 	// Notify analyst if configured
 	if bus.ChainShouldNotifyAnalyst(eventType, outcome) && action.SendTo != "analyze" {
-		var analystMsg string
-		switch outcome {
-		case "success":
-			analystMsg = fmt.Sprintf("%s succeeded: %s", capitalize(eventType), command)
-		case "failure":
-			analystMsg = fmt.Sprintf("%s FAILED (exit %s): %s", capitalize(eventType), exitCode, command)
-		case "unknown":
-			analystMsg = fmt.Sprintf("%s completed (exit code unknown): %s", capitalize(eventType), command)
-		}
-		if analystMsg != "" {
+		if analystMsg := analystNotice(eventType, outcome, exitCode, command); analystMsg != "" {
 			aMsg := bus.NewMessage(from, "analyze", "event", "notify", analystMsg, "")
 			_ = bus.SendNoCC(session, aMsg)
 		}

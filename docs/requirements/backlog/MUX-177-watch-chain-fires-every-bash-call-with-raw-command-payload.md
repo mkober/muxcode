@@ -199,11 +199,32 @@ residual. Uncommitted at verification.
 
 ### Phase 4: Integration test
 
-- [ ] `scripts/test-watch-chain-gate.sh`: run a scratch non-log bash call in a watch-role pane and assert **no** notify reaches edit
-- [ ] **Negative control:** a log-inspection call in the same pane **does** notify edit
-- [ ] Assert no message body contains a newline
-- [ ] Coverage floor pinned to the exact pass count so a skipped section cannot read green
-- [ ] Run through the run agent (**foreground**, per MUX-171) and record the counts here
+- [x] `scripts/test-watch-chain-gate.sh`: run a scratch non-log bash call in a watch-role pane and assert **no** notify reaches edit — 2026-11-05: hermetic (tree-built muxcode, scratch bus, Claude `PostToolUse`/`PostToolUseFailure` payloads into the real `hook bash` as `AGENT_ROLE=watch`); 7 scratch calls (`ps | grep`, a bus-dir `ls`, the 2026-09-10 heredoc, the 2026-09-22 nohup listener, a cd-prefixed `muxcode send`, an empty code grep on exit 1, quoted `&& tail` text after a `cd`) each prove the hook ran (+1 watch-history row) and leave edit's **and** analyze's inboxes empty; a bare bus call writes no row and notifies nobody
+- [x] **Negative control:** a log-inspection call in the same pane **does** notify edit — 2026-11-05: `tail` on exit 0, a log `grep` on exit 1 (edit and analyze), a cd-prefixed `kubectl logs`; each asserted as exactly one notice with the expected body
+- [x] Assert no message body contains a newline — 2026-11-05: every message in every scratch inbox (≥ 8) checked for `[\r\n]` and for > 500 bytes — `validatePayload()`'s two limits; plus a 31-line `tail`-led watch block and a 42-line failing run heredoc each asserted to reach edit and analyze joined with ` ⏎ ` and carrying `[truncated `
+- [x] Coverage floor pinned to the exact pass count so a skipped section cannot read green — 2026-11-05: `EXPECTED_PASS=18`; any failure or a count other than 18 exits 1
+- [x] Run through the run agent (**foreground**, per MUX-171) and record the counts here — 2026-11-05: run task `1793892656-spawn-5d9ee28e-a947a99f`, foreground at ts 1793892674, `EXIT_CODE:0` — **18 passed, 0 failed, floor 18** (8 silent, 4 negative control, 4 bounded, 2 hygiene)
+
+#### Phase 4 findings (2026-11-05)
+
+Verified 10:41: script written 1793892646, run by the run agent 1793892674 (18/18), `./build.sh` ts 1793892785,
+`./test.sh` ts 1793892854 (both after the last code write at 1793892543), review `1793893260-review-4a2d1f29`
+0 must-fix / 0 should-fix / 0 nits. Uncommitted at verification.
+
+**The script found a fourth leak and the phase fixed it.** The analyst's copy of a chain outcome
+(`triggerChain` in `cmd/hook.go` and `Chain` in `cmd/chain.go`) was built with `fmt.Sprintf` from the **raw**
+command, so a failing heredoc reached analyze multi-line even after Phase 2 bounded the chain message itself.
+Both sites now call `analystNotice` (`cmd/chain.go`), which expands `… ${command}` templates through
+`bus.ExpandMessage` and so shares `boundCommand`; `TestAnalystNoticeBounded` (`cmd/send_test.go`) pins all
+three outcomes under `validatePayload()` with the marker visible, the three plain-text forms unchanged, and
+`""` for an outcome the analyst is not told of. The script's own evidence that it can see this: run against
+the **installed** (pre-fix) binary via `MUXCODE_WATCH_CHAIN_GATE_BIN` (run task `1793892711`, reply
+1793892748) it reported 14 passed / 4 failed — the bounded-analyze and gate rows — where the tree build
+passes 18. (The run agent noted that wrapper's exit status did not propagate; that was the worker's `/tmp`
+wrapper script, not `test-watch-chain-gate.sh`, which exits 1 on any failure or floor miss.)
+
+`CLAUDE.md`'s `scripts/test-*.sh` row lists `test-watch-chain-gate` (edit, 1793892761);
+`docs/hooks.md`'s watch-gate and `${command}` paragraphs now point at the script and the analyst bound (plan).
 
 ## Notes
 
@@ -225,8 +246,8 @@ chain — recorded under [Recurrence](#recurrence-2026-09-22-session-muxcode); n
 
 | Branch | Active time | Last updated |
 |--------|-------------|--------------|
-| MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload | 23m | 2026-11-05 09:53 |
+| MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload | 50m | 2026-11-07 00:02 |
 
 ## Status
 
-In Progress — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); committed as `66d7622`. Phase 2 (Bound the interpolation) complete 2026-11-04 11:06: `boundCommand` (` ⏎ `-joined, 200-byte cut with a visible marker) on every chain and subscription expansion, one-pass token replacement after the review's rescan finding, suite green ts 1793808379, review 1793808406 clean ([Phase 2 findings](#phase-2-findings-2026-11-04)); committed as `e6d5839`. Phase 3 (Docs) complete 2026-11-05 09:53: `docs/hooks.md` watch gate + condition rows + `${command}` bound, `docs/architecture.md` 15 types, `CLAUDE.md` bullet by edit, review 1793890396 clean bar one nit fixed in the tree ([Phase 3 findings](#phase-3-findings-2026-11-05)); uncommitted at verification. Phase 4 (Integration test) next — the last phase; AC 1–6 all satisfied, pending Phase 4's end-to-end proof. Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).
+Complete — all four phases verified 2026-11-05 10:41 and acceptance criteria 1–6 ticked; Phase 4 uncommitted at verification, so the phase-gate commit, PR and close-out (move to `completed/`) are still ahead — the `50-spec-to-pr` run's commit gate and `close-spec` node, both user-approved. Phase 4 ([findings](#phase-4-findings-2026-11-05)): `scripts/test-watch-chain-gate.sh` 18/18 through the run agent, and it caught a fourth raw-command leak (the analyst notice), fixed in the same phase. History — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); committed as `66d7622`. Phase 2 (Bound the interpolation) complete 2026-11-04 11:06: `boundCommand` (` ⏎ `-joined, 200-byte cut with a visible marker) on every chain and subscription expansion, one-pass token replacement after the review's rescan finding, suite green ts 1793808379, review 1793808406 clean ([Phase 2 findings](#phase-2-findings-2026-11-04)); committed as `e6d5839`. Phase 3 (Docs) complete 2026-11-05 09:53: `docs/hooks.md` watch gate + condition rows + `${command}` bound, `docs/architecture.md` 15 types, `CLAUDE.md` bullet by edit, review 1793890396 clean bar one nit fixed in the tree ([Phase 3 findings](#phase-3-findings-2026-11-05)); uncommitted at verification. Phase 4 (Integration test) complete 2026-11-05 10:41: `scripts/test-watch-chain-gate.sh` 18/18 through the run agent, the analyst-notice leak it caught fixed in the same phase, suite green ts 1793892854, review 1793893260 clean ([Phase 4 findings](#phase-4-findings-2026-11-05)); uncommitted at verification. Re-verified 2026-11-07 on the unchanged tree after a suite re-run (ts 1794027681, green) and review 1794027673 (0/0/3 nits: two doc wording nits fixed in the tree — this sentence and `docs/hooks.md`'s bare-bus-call row claim — and one left for the script, whose bare-bus-call check should assert the analyze inbox stays empty as well as edit's). Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).
