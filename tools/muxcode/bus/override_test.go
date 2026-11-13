@@ -7,9 +7,14 @@ import (
 )
 
 func TestRuntimeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv(BusDirBaseEnv, "")
+	ResetBusDirBase()
 	session := "test-session"
 	dir := RuntimeConfigDir(session)
-	expected := filepath.Join("/tmp", "muxcode-bus-"+session, "config")
+	expected := filepath.Join(home, ".local", "state", "muxcode", "bus", "muxcode-bus-"+session, "config")
 	if dir != expected {
 		t.Errorf("RuntimeConfigDir = %q, want %q", dir, expected)
 	}

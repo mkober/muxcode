@@ -27,7 +27,8 @@ total=0
 log_pass() { ((pass++)); ((total++)); echo -e "  ${GREEN}PASS${NC} $1"; }
 log_fail() { ((fail++)); ((total++)); echo -e "  ${RED}FAIL${NC} $1: $2"; }
 
-BUS_DIR="/tmp/muxcode-bus-${SESSION}"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 
 # ============================================================
 echo "=== Hot Reload Integration Test ==="

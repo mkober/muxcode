@@ -27,6 +27,7 @@ command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 MUX=$(command -v muxcode)
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-169 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -34,7 +35,7 @@ FIX="$REPO/tools/muxcode/bus/testdata/codex-hooks"
 SESSION="startup-self-reply-$$"
 WORK=$(mktemp -d /tmp/startup-self-reply-XXXXXX)
 PROJ="$WORK/project"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 mkdir -p "$PROJ" "$WORK/bin" "$WORK/codex-home" "$WORK/lifecycle"
 
 cleanup() { rm -rf "$BUSDIR" "$WORK"; }

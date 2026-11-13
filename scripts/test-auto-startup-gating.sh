@@ -47,8 +47,8 @@ done
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(mktemp -d /tmp/auto-startup-XXXXXX)
 SESSION="auto-startup-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
-LOG="$BUSDIR/log.jsonl"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+BUSDIR="" LOG="" # resolved once the scratch muxcode is built
 
 # The script is itself run by an agent: an inherited AGENT_ROLE would reach
 # every pane the private server creates and the launched auto agent would read
@@ -76,7 +76,7 @@ cleanup() {
   stop_daemon
   tmux kill-server 2>/dev/null
   sleep 1
-  rm -rf "$BUSDIR" "$WORK" 2>/dev/null || { sleep 2; rm -rf "$BUSDIR" "$WORK" 2>/dev/null; }
+  rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK" 2>/dev/null || { sleep 2; rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK" 2>/dev/null; }
   true
 }
 trap cleanup EXIT
@@ -174,6 +174,8 @@ echo "=== MUX-141 auto startup gating integration test ==="
 (cd "$REPO/scripts/fixtures/claude-stub" && go build -buildvcs=false -o "$WORK/bin/claude" .) \
   || { echo "SKIP: go build claude-stub failed"; exit 2; }
 MUX="$WORK/bin/muxcode"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
+LOG="$BUSDIR/log.jsonl"
 ok "scratch muxcode and claude-stub built from this tree"
 
 cp "$REPO/agents/autonomous-agent.md" "$WORK/install/agents/autonomous-agent.md"

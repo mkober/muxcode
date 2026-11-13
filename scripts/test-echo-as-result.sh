@@ -44,7 +44,8 @@ bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); }
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="echo-as-result-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 export MUXCODE_LIFECYCLE_LOG_DIR="/tmp/echo-as-result-lifecycle-$$"
 REAL_LOG_DIR="${HOME}/.config/muxcode/logs"
 REAL_LOGS_BEFORE="$(ls -1 "$REAL_LOG_DIR" 2>/dev/null | sort)"

@@ -54,6 +54,7 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 MUX=$(command -v muxcode)
 MUXDIR=$(dirname "$MUX")
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-176 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 LIVE=0
@@ -63,12 +64,12 @@ fi
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SESSION="chain-completion-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/chain-completion-XXXXXX)
 PROJ="$WORK/project"
 mkdir -p "$PROJ" "$WORK/config" "$WORK/lifecycle"
 
-cleanup() { rm -rf "$BUSDIR" "$WORK"; }
+cleanup() { rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK"; }
 trap cleanup EXIT
 
 ok()   { PASS=$((PASS + 1)); echo "  ok: $1"; }

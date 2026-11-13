@@ -28,7 +28,8 @@ total=0
 log_pass() { pass=$((pass + 1)); total=$((total + 1)); echo -e "  ${GREEN}PASS${NC} $1"; }
 log_fail() { fail=$((fail + 1)); total=$((total + 1)); echo -e "  ${RED}FAIL${NC} $1: $2"; }
 
-BUS_DIR="/tmp/muxcode-bus-${SESSION}"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 
 # ============================================================
 echo "=== Multi-Agent Reload Integration Test ==="

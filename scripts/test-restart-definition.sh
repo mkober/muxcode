@@ -31,7 +31,8 @@ done
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(mktemp -d /tmp/restart-def-XXXXXX)
 SESSION="restart-def-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+BUSDIR="" # resolved once the scratch muxcode is built
 
 export BUS_SESSION="$SESSION" AGENT_ROLE=edit BUS_ROLE=edit
 export HOME="$WORK/home" # empty user tier — definitions come only from the scratch install dir
@@ -59,7 +60,7 @@ cleanup() {
   pkill -f "watch $SESSION" 2>/dev/null
   tmux kill-server 2>/dev/null
   sleep 1
-  rm -rf "$BUSDIR" "$WORK" 2>/dev/null || { sleep 2; rm -rf "$BUSDIR" "$WORK" 2>/dev/null; }
+  rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK" 2>/dev/null || { sleep 2; rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK" 2>/dev/null; }
   true
 }
 trap cleanup EXIT
@@ -114,6 +115,7 @@ echo "=== MUX-136 restart-restores-definition integration test ==="
 (cd "$REPO/scripts/fixtures/claude-stub" && go build -buildvcs=false -o "$WORK/bin/claude" .) \
   || { echo "SKIP: go build claude-stub failed"; exit 2; }
 MUX="$WORK/bin/muxcode"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 ok "scratch muxcode and claude-stub built from this tree"
 
 printf -- '---\ndescription: Docs\ntools: Read, Edit\n---\nMaintain docs.\n' >"$WORK/install/agents/planner.md"

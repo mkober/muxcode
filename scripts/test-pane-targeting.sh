@@ -29,6 +29,7 @@ command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 MUX=$(command -v muxcode)
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-117 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="pane-id-test-$$"
@@ -44,15 +45,16 @@ unset TMUX
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"
-export MUXCODE_AGENT_CLI=claude MUXCODE_RUN_CLI=claude
+# Per-role CLI variables outrank MUXCODE_AGENT_CLI, and a live session exports them.
+export MUXCODE_AGENT_CLI=claude MUXCODE_RUN_CLI=claude MUXCODE_EDIT_CLI=claude MUXCODE_BUILD_CLI=claude MUXCODE_REVIEW_CLI=claude
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_CONTROL_PANE_CHECK_SECS=2
 unset MUXCODE_CONTROL_PANE_DISABLE MUXCODE_CONTROL_PANE_EXCLUDE 2>/dev/null || true
 unset MUXCODE_AUTO_CLEAR_ROLES 2>/dev/null || true
-BUSDIR="/tmp/muxcode-bus-$SESSION"
-BUSDIR2="/tmp/muxcode-bus-$LEGACY"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
+BUSDIR2="$(muxcode_bus_dir "$MUX" "$LEGACY")" || exit 1
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/$SESSION.log"
 LIFELOG2="$MUXCODE_LIFECYCLE_LOG_DIR/$LEGACY.log"
 

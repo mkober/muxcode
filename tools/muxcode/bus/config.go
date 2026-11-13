@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -212,48 +213,102 @@ func agentRuntimeAncestor() (string, error) {
 	return "", nil
 }
 
-// busDirOverride, when non-empty, replaces the default /tmp base for BusDir.
-// Used by tests to isolate bus directories in t.TempDir() instead of polluting
-// the real /tmp/muxcode-bus-* namespace. Set via SetBusDirBase / ResetBusDirBase.
+// busDirOverride, when non-empty, replaces the default base for BusDir. Used
+// by tests to isolate bus directories in t.TempDir() instead of the real
+// state directory. Set via SetBusDirBase / ResetBusDirBase.
 var busDirOverride string
 
 // SetBusDirBase overrides the base directory for BusDir. When set, BusDir
-// returns baseDir/muxcode-bus-{session} instead of /tmp/muxcode-bus-{session}.
+// returns baseDir/muxcode-bus-{session}.
 // Intended for tests only — production code should never call this.
 func SetBusDirBase(baseDir string) {
 	busDirOverride = baseDir
 }
 
-// ResetBusDirBase clears the BusDir override, restoring default /tmp behavior.
+// ResetBusDirBase clears the BusDir override, restoring the default base.
 func ResetBusDirBase() {
 	busDirOverride = ""
 }
 
 // BusDirBaseEnv relocates every bus directory, and the cross-session scans
-// over them (DiscoverSessions, CleanupStale), to an absolute scratch base. It
-// exists for integration fixtures whose processes must neither see nor be seen
-// by real sessions — a mass-exit correlation scan reads every bus directory it
-// can discover. Bash hooks and pollers still hardcode /tmp, so it is never for
-// a real session.
+// over them (DiscoverSessions, CleanupStale), to an absolute base. Integration
+// fixtures use it so their processes neither see nor are seen by real
+// sessions — a mass-exit correlation scan reads every bus directory it can
+// discover.
 const BusDirBaseEnv = "MUXCODE_BUS_BASE"
 
-// BusDirBase is the directory holding muxcode-bus-{session} dirs: the test
-// override, else an absolute MUXCODE_BUS_BASE, else /tmp — /tmp directly (not
-// os.TempDir) for compatibility with bash scripts that hardcode
-// /tmp/muxcode-bus-{SESSION}/.
-func BusDirBase() string {
-	if busDirOverride != "" {
-		return busDirOverride
+// BusDirEnv carries the resolved bus directory into every pane the launcher
+// creates, beside BUS_SESSION, so scripts read it instead of computing it.
+const BusDirEnv = "MUXCODE_BUS_DIR"
+
+// LegacyBusDirBase is where bus directories lived before MUX-208. macOS's
+// tmp_cleaner deletes files there untouched for three days, which is why the
+// default moved; it is read only to migrate and to clean up.
+const LegacyBusDirBase = "/tmp"
+
+// StateDir is muxcode's per-user state root: an absolute $XDG_STATE_HOME's
+// muxcode/, else ~/.local/state/muxcode. It panics when the home directory
+// cannot be resolved — falling back to /tmp would reintroduce MUX-208.
+func StateDir() string {
+	dir, err := stateDir()
+	if err != nil {
+		panic(err.Error())
 	}
-	if v := os.Getenv(BusDirBaseEnv); filepath.IsAbs(v) {
-		return v
-	}
-	return "/tmp"
+	return dir
 }
 
-// BusDir returns the bus directory for a session.
+func stateDir() (string, error) {
+	if x := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(x) {
+		return filepath.Join(x, "muxcode"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "", fmt.Errorf("muxcode: cannot resolve the state directory (set HOME or an absolute XDG_STATE_HOME): %v", err)
+	}
+	return filepath.Join(home, ".local", "state", "muxcode"), nil
+}
+
+// busDirBaseOverridden reports whether a test override or MUXCODE_BUS_BASE
+// replaces the default base — the cases migration and the /tmp scans skip.
+func busDirBaseOverridden() bool {
+	return busDirOverride != "" || filepath.IsAbs(os.Getenv(BusDirBaseEnv))
+}
+
+// BusDirBase is the directory holding muxcode-bus-{session} dirs: the test
+// override, else an absolute MUXCODE_BUS_BASE, else StateDir()/bus. Never
+// /tmp by default (MUX-208).
+func BusDirBase() string {
+	base, err := busDirBase()
+	if err != nil {
+		panic(err.Error())
+	}
+	return base
+}
+
+// busDirBase is BusDirBase reporting an unresolvable home as an error, for
+// callers that drop what they cannot resolve rather than fail.
+func busDirBase() (string, error) {
+	if busDirOverride != "" {
+		return busDirOverride, nil
+	}
+	if v := os.Getenv(BusDirBaseEnv); filepath.IsAbs(v) {
+		return v, nil
+	}
+	dir, err := stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bus"), nil
+}
+
+// BusDir returns the bus directory for a session. On the default base the
+// first resolution in a process moves a pre-MUX-208 /tmp directory into place
+// (migrateLegacyBusDirOnce), so a process started from a new binary never
+// creates an empty bus beside a session's real state.
 func BusDir(session string) string {
-	return filepath.Join(BusDirBase(), "muxcode-bus-"+session)
+	dir := filepath.Join(BusDirBase(), "muxcode-bus-"+session)
+	migrateLegacyBusDirOnce(session)
+	return dir
 }
 
 // InboxPath returns the inbox file path for a role in a session.

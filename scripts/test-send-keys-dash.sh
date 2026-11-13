@@ -22,6 +22,8 @@ command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit
 SOCK="skdash-$$"
 SESSION="skdash-test-$$"
 export BUS_SESSION="$SESSION"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUSDIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/skdash-XXXXXX)
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 # Pin the run role to the Claude injection path (notify.go), the site the
@@ -38,7 +40,7 @@ export BUS_ROLE=edit
 cleanup() {
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   tmux kill-session -t "$SESSION" 2>/dev/null || true
-  rm -rf "/tmp/muxcode-bus-$SESSION" "$WORK"
+  rm -rf "$BUSDIR" "$WORK"
 }
 trap cleanup EXIT
 

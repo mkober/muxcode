@@ -60,7 +60,8 @@ fi
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SESSION="xcode-compat-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+BUSDIR="" # resolved once the scratch HOME is exported
 WORK=$(mktemp -d /tmp/xcode-compat-XXXXXX)
 REAL_HOME=$HOME
 # The user's own config and install tree, captured before the scratch setup
@@ -75,7 +76,7 @@ if [ -z "$REAL_INSTALL_DIR" ]; then
   esac
 fi
 
-cleanup() { rm -rf "$BUSDIR" "$WORK"; }
+cleanup() { rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK"; }
 trap cleanup EXIT
 
 if [ -n "${MUXCODE_XCODE_COMPAT_BIN:-}" ]; then
@@ -95,6 +96,7 @@ lok()  { LIVE_PASS=$((LIVE_PASS + 1)); echo "  ok (live): $1"; }
 mkdir -p "$WORK/home" "$WORK/config" "$WORK/lifecycle"
 export HOME="$WORK/home"
 export BUS_SESSION="$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 export MUXCODE_CONFIG_DIR="$WORK/config"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 export MUXCODE_DEDUP_WINDOW=0

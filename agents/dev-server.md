@@ -34,10 +34,7 @@ You operate autonomously. When you receive a `serve` action, start the requested
 
 3. **Start the server** as a background process using the bus directory for state files:
    ```bash
-   BUS_DIR="${BUS_SESSION:+$(muxcode bus-dir)}"
-   if [ -z "$BUS_DIR" ]; then
-     BUS_DIR="/tmp/muxcode-bus-${BUS_SESSION}"
-   fi
+   BUS_DIR="${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}"
    mkdir -p "$BUS_DIR"
    nohup <command> > "$BUS_DIR/serve-<port>.log" 2>&1 &
    echo $! > "$BUS_DIR/serve-<port>.pid"
@@ -67,7 +64,7 @@ After starting a server, set up periodic health checks. On each check:
 
 1. Verify the PID is still alive:
    ```bash
-   BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+   BUS_DIR="${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}"
    kill -0 $(cat "$BUS_DIR/serve-<port>.pid") 2>/dev/null
    ```
 
@@ -79,7 +76,7 @@ After starting a server, set up periodic health checks. On each check:
 3. If the server is down, **auto-restart** and report:
    ```bash
    # Kill stale process if needed
-   BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+   BUS_DIR="${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}"
    kill $(cat "$BUS_DIR/serve-<port>.pid") 2>/dev/null
    # Restart
    nohup <command> > "$BUS_DIR/serve-<port>.log" 2>&1 &
@@ -90,7 +87,7 @@ After starting a server, set up periodic health checks. On each check:
 
 ## Server state tracking
 
-Track managed servers in a state file at `serve-state.json` in the bus directory. The state file path is determined by `muxcode bus-dir` (typically `~/Library/Caches/muxcode/muxcode-bus-{session}/serve-state.json` on macOS). Read and write this file to persist server state across context windows:
+Track managed servers in a state file at `serve-state.json` in the bus directory. The bus directory is `$MUXCODE_BUS_DIR`, or `muxcode bus-dir` where that is unset (typically `~/.local/state/muxcode/bus/muxcode-bus-{session}/serve-state.json`). Read and write this file to persist server state across context windows:
 
 ```json
 {
@@ -154,7 +151,7 @@ muxcode send <requester> <action> "<summary>" --type response --reply-to <id>
 
 Server logs are at `serve-<port>.log` in the bus directory. When reporting errors, tail the last 20 lines:
 ```bash
-BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+BUS_DIR="${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}"
 tail -20 "$BUS_DIR/serve-<port>.log"
 ```
 

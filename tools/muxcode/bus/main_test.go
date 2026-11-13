@@ -17,6 +17,10 @@ import (
 // CODEX_HOME is redirected for the same reason: a Codex launch path records
 // its working directory as trusted in $CODEX_HOME/config.toml
 // (EnsureCodexProjectTrust), which must never be the user's real one.
+//
+// XDG_STATE_HOME is redirected so a test that resolves a bus directory without
+// SetBusDirBase lands in this temp root, never the real ~/.local/state/muxcode
+// (MUX-208) — the same leak MUX-137 found against /tmp.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "muxcode-lifecycle-test-")
 	if err != nil {
@@ -24,6 +28,7 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", dir)
 	os.Setenv("CODEX_HOME", filepath.Join(dir, "codex-home"))
+	os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 
 	code := m.Run()
 

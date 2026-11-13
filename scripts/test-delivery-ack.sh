@@ -29,6 +29,9 @@
 # Usage: bash scripts/test-delivery-ack.sh
 set -euo pipefail
 
+# Resolved before the cd below: BASH_SOURCE is relative when run as
+# `bash scripts/test-delivery-ack.sh`, so a later dirname would miss.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)/tools/muxcode"
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[0;33m'; NC=$'\033[0m'
@@ -123,10 +126,11 @@ SESSION="${BUS_SESSION:-}"
 if [ -z "$SESSION" ]; then
   skip_live "live session checks — no BUS_SESSION (run inside a muxcode session)"
 else
-  # Documented bus path (bus/config.go BusDir): /tmp/muxcode-bus-<session>.
+  # Bus path comes from `muxcode bus-dir` (bus/config.go BusDir), not a literal.
   # Treat a base-path miss as a skip, not a failure, so the runner stays robust
   # if the bus root ever moves.
-  busdir="/tmp/muxcode-bus-${SESSION}"
+  . "$SCRIPT_DIR/lib/muxcode-bus-dir.sh"
+  busdir="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
   if [ -d "${busdir}/delivery" ]; then
     n="$(find "${busdir}/delivery" -name '*.status' 2>/dev/null | wc -l | tr -d ' ')"
     pass_live "receipt store active in session ${SESSION} (${n} status file(s))"

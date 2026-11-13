@@ -1368,6 +1368,40 @@ const launchResumeID = "8a744341-11bf-440f-b5d2-49248447a9c0"
 // MUX-126 Phase 2, end to end: a resumed Claude launch execs with --resume
 // <id> AND the permission mode and bound definition pair — the pair a bare
 // `claude --resume` loses.
+// MUX-208 Phase 3: an agent relaunched in a pane whose shell predates the
+// install inherits no MUXCODE_BUS_DIR, or the legacy /tmp one; the launch must
+// hand the agent and its hooks the directory the binary actually resolves.
+func TestRunAgentLaunch_ExportsResolvedBusDir(t *testing.T) {
+	session := "test-launch-busdir"
+	home, _ := launchSandbox(t, session)
+	writeFile(t, filepath.Join(home, ".config", "muxcode", "agents", "planner.md"),
+		"---\ndescription: Docs\n---\nMaintain docs.\n")
+	fakeClaudeOnPath(t)
+	t.Setenv(BusDirEnv, filepath.Join(LegacyBusDirBase, "muxcode-bus-"+session))
+
+	var env []string
+	stub := execSyscall
+	execSyscall = func(_ string, _ []string, e []string) error {
+		env = e
+		return nil
+	}
+	t.Cleanup(func() { execSyscall = stub })
+
+	if err := RunAgentLaunch("plan"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := BusDirEnv + "=" + BusDir(session)
+	var got []string
+	for _, e := range env {
+		if strings.HasPrefix(e, BusDirEnv+"=") {
+			got = append(got, e)
+		}
+	}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("exec env %s entries = %v, want exactly [%s]", BusDirEnv, got, want)
+	}
+}
+
 func TestRunAgentLaunchResume_CarriesResumeAndFullFlags(t *testing.T) {
 	session := "test-launch-resume"
 	home, argv := launchSandbox(t, session)

@@ -55,6 +55,7 @@ fi
 command -v tmux >/dev/null 2>&1 || { echo "  FAIL  tmux not available"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "  FAIL  python3 required"; exit 1; }
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-148 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
@@ -69,7 +70,6 @@ as_approver() { AGENT_ROLE=test-approver "$MUX" "$@"; }
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="node-outcome-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/node-outcome-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO"
@@ -85,6 +85,7 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 
 DPID=""
 cleanup() {
@@ -398,7 +399,8 @@ decline_case "success words in the prose" \
 
 # --- 5. The mirror: a genuine pass must not be recorded as failure ---------
 # pnpm test fails, the re-run passes under a command the classifier does not
-# recognise (node_modules/.bin/jest — no runner prefix, no head match), and the
+# recognise (`node <path>/jest.js` — no pattern head, and a bare `node_modules/.bin/jest`
+# is recognised by its basename since MUX-207's scriptPathMatches), and the
 # agent reports EXIT=0. The recognised failure is the only attributable row, so
 # it contradicts the token: unknown and a hold, never failure.
 MIR_RID="$(start_run "$WORK/mirror.json")"
@@ -409,7 +411,7 @@ wait_dispatch test \
   || bad "mirror suite node never dispatched"
 
 mint_row test "suite failed" 1 "pnpm test"
-mint_row test "suite passed on re-run" 0 "node_modules/.bin/jest --runInBand"
+mint_row test "suite passed on re-run" 0 "node node_modules/jest/bin/jest.js --runInBand"
 answer_as test "$(printf 'The first invocation was a typo; the suite passes — 2998 pass, 0 fail.\nEXIT=0')" \
   && ok "agent reported the passing re-run with its verdict token" \
   || bad "could not answer the mirror dispatch"

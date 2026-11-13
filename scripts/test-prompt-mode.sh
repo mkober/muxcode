@@ -43,8 +43,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 
+. "$SCRIPT_DIR/lib/muxcode-bus-dir.sh"
 SESSION="promptmode-$$"
 export BUS_SESSION="$SESSION"
+BUSDIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/promptmode-XXXXXX)
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 export AGENT_ROLE=edit
@@ -61,11 +63,11 @@ DPID=""
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null || true
   # The daemon may have started a headless harness — stop it via its marker.
-  if [ -f "/tmp/muxcode-bus-$SESSION/harness-prompt.pid" ]; then
-    kill "$(cat "/tmp/muxcode-bus-$SESSION/harness-prompt.pid")" 2>/dev/null || true
+  if [ -f "$BUSDIR/harness-prompt.pid" ]; then
+    kill "$(cat "$BUSDIR/harness-prompt.pid")" 2>/dev/null || true
   fi
   tmux kill-session -t "$SESSION" 2>/dev/null || true
-  rm -rf "/tmp/muxcode-bus-$SESSION" "$WORK"
+  rm -rf "$BUSDIR" "$WORK"
 }
 trap cleanup EXIT
 
@@ -94,7 +96,7 @@ summary_verdict() {
 # harness log shows whether a tool call was emitted late or never.
 live_diag() {
   echo "  [diag] prompt-agent log tail:"
-  tail -12 "/tmp/muxcode-bus-$SESSION/prompt-agent.log" 2>/dev/null | sed 's/^/    | /' || echo "    | (no log)"
+  tail -12 "$BUSDIR/prompt-agent.log" 2>/dev/null | sed 's/^/    | /' || echo "    | (no log)"
   echo "  [diag] daemon log tail:"
   tail -6 "$WORK/daemon.log" 2>/dev/null | sed 's/^/    | /' || true
 }
@@ -377,7 +379,7 @@ else
   unset MUXCODE_PROMPT_AGENT_DISABLE
   muxcode watch "$SESSION" --poll 2 >"$WORK/daemon.log" 2>&1 &
   DPID=$!
-  marker="/tmp/muxcode-bus-$SESSION/harness-prompt.pid"
+  marker="$BUSDIR/harness-prompt.pid"
   for _ in $(seq 1 45); do [ -f "$marker" ] && break; sleep 2; done
   if [ -f "$marker" ] && kill -0 "$(cat "$marker")" 2>/dev/null; then
     ok "daemon launched the headless prompt-agent (marker + live pid)"

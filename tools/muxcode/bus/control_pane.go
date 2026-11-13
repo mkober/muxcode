@@ -92,7 +92,7 @@ func ControlPaneEnabledFor(win string) bool {
 func CreateControlPane(session, win string) error {
 	target := session + ":" + win
 	out, err := tmuxOutputRunner("split-window", "-vf", "-d", "-l", strconv.Itoa(ControlPaneHeight()),
-		"-e", "BUS_SESSION="+session, "-P", "-F", "#{pane_id}",
+		"-e", "BUS_SESSION="+session, "-e", BusDirEnv+"="+BusDir(session), "-P", "-F", "#{pane_id}",
 		"-t", target, controlPaneCommand())
 	if err != nil {
 		return err

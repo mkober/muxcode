@@ -18,13 +18,14 @@ ESC=$(printf '\033')
 command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$(command -v muxcode)" v0.1.0 MUX-031 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="graph-tui-test-$$"
 export BUS_SESSION="$SESSION"
 WORK=$(mktemp -d /tmp/graph-tui-fixtures-XXXXXX)
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$(command -v muxcode)" "$SESSION")" || exit 1
 
 cleanup() { rm -rf "$BUSDIR" "$WORK"; }
 trap cleanup EXIT

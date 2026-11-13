@@ -30,7 +30,7 @@ var builtinGraphJSON = map[string]string{
 
 	"50-spec-to-pr": `{
   "name": "50-spec-to-pr",
-  "description": "Walk the active spec phase by phase in one run: implement, build/test, review (findings route to fix), update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; then close out the spec (Complete, completed/, backlog.md) before a final gate covers push and PR",
+  "description": "Walk the active spec phase by phase in one run: implement, build/test, review (findings route to fix), update the spec, gated per-phase commit, loop; stuck phases gate-and-ask; then close out the spec (Complete, completed/, backlog.md) — a refused close-out sends a worker after the open items and retries — before a final gate covers push and PR",
   "requires_spec": true,
   "start": "branch-check",
   "nodes": [
@@ -49,9 +49,13 @@ var builtinGraphJSON = map[string]string{
     {"id": "loop-check", "type": "condition", "conditions": {"spec_phases_remaining": true}},
     {"id": "stuck-gate", "type": "wait_human", "message": "The current phase did not complete this iteration — its commit was not attempted; approve retrying the phase, or cancel the run to stop"},
     {"id": "close-spec", "type": "send", "role": "plan", "action": "close-spec", "guard": "spec-complete", "message": "Every phase is complete — close out the active requirements doc ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/ (a plain file move, not git mv — push-pr stages it), update its row in docs/requirements/backlog/backlog.md and every cross-reference to the old path, clear the active spec, and report the new path. Any item still open = refuse and report the open items"},
-    {"id": "close-stuck-gate", "type": "wait_human", "message": "The spec close-out was refused — items are still open (see the close-spec report). Resolve them, then approve retrying the close-out, or cancel the run"},
-    {"id": "final-gate", "type": "wait_human", "message": "All phases complete and the spec closed out (status Complete, moved to completed/, backlog.md updated) — approve committing the close-out, pushing the branch and creating the PR"},
-    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update), then push the branch and create a PR titled exactly \"${spec_title}\" covering every phase of the spec. If the closed-out spec has a **Tracking:** line naming a GitHub issue, put Closes #<that issue number> on its own line in the PR body so the issue links to the PR and closes on merge"}
+    {"id": "criteria", "type": "spawn", "role": "edit", "message": "Every phase of the active spec (run: ${spec}) is done, but its close-out was refused — these items are still open: ${output:close-spec}. Satisfy each one: write the code or test it needs, or run the verification it names through the run agent (muxcode send run run \"bash scripts/test-<x>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and task id. Commit nothing — the final gate commits your work with the close-out — and never tick a box yourself: plan checks the spec after review. If an item cannot be met, say exactly why. If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}"},
+    {"id": "close-build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
+    {"id": "close-test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
+    {"id": "close-review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
+    {"id": "close-verify", "type": "send", "role": "plan", "action": "verify-spec", "message": "The active spec's close-out was refused and an acceptance worker has worked the open items. Check off every acceptance criterion and phase step its report below shows met, naming every item that stays open — the close-out is retried next. If the report names a handoff or decision file, read that file and record what it carries. ACCEPTANCE WORKER REPORT: ${output:criteria}"},
+    {"id": "final-gate", "type": "wait_human", "message": "All phases complete and the spec closed out (status Complete, moved to completed/, backlog.md updated) — approve committing the close-out with any acceptance work it needed, pushing the branch and creating the PR"},
+    {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update) together with any uncommitted work the close-out's acceptance worker left, then push the branch and create a PR titled exactly \"${spec_title}\" covering every phase of the spec. If the closed-out spec has a **Tracking:** line naming a GitHub issue, put Closes #<that issue number> on its own line in the PR body so the issue links to the PR and closes on merge"}
   ],
   "edges": [
     {"from": "branch-check", "to": "implement"},
@@ -76,8 +80,17 @@ var builtinGraphJSON = map[string]string{
     {"from": "loop-check", "to": "implement", "max_iterations_from_spec": true, "resets_iterations": ["fix->build"]},
     {"from": "loop-check", "to": "close-spec", "outcome": "failure"},
     {"from": "close-spec", "to": "final-gate"},
-    {"from": "close-spec", "to": "close-stuck-gate", "outcome": "failure"},
-    {"from": "close-stuck-gate", "to": "close-spec", "max_iterations": 3},
+    {"from": "close-spec", "to": "criteria", "outcome": "failure", "max_iterations": 2},
+    {"from": "criteria", "to": "close-build"},
+    {"from": "close-build", "to": "close-test"},
+    {"from": "close-build", "to": "criteria", "outcome": "failure", "max_iterations": 2},
+    {"from": "close-test", "to": "close-review"},
+    {"from": "close-test", "to": "criteria", "outcome": "failure", "max_iterations": 2},
+    {"from": "close-review", "to": "close-verify"},
+    {"from": "close-review", "to": "criteria", "outcome": "failure", "max_iterations": 2},
+    {"from": "close-verify", "to": "close-spec"},
+    {"from": "close-verify", "to": "close-spec", "outcome": "failure"},
+    {"from": "close-verify", "to": "close-spec", "outcome": "unknown"},
     {"from": "final-gate", "to": "push-pr"}
   ]
 }`,
@@ -99,12 +112,10 @@ var builtinGraphJSON = map[string]string{
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} of the active defect spec. A review failure means every must-fix and should-fix it lists — read its findings file when it names one. Commit nothing. Verify the fix the way the reviewer will: run the phase's integration script through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id in your report. THE FAILURE TO FIX: ${failure_report}"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
-    {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off the completed criteria and steps of ${current_phase}. The worker's report for this phase follows; if it names a handoff or decision file, read that file and record what it carries. Then, if every item of that phase is now checked — or every phase of the spec already was — your reply MUST contain the literal token PHASE-COMPLETE; if any item stays open it must not, and name the open items. A completed verification exits zero either way. WORKER REPORT: ${output:implement}"},
-    {"id": "phase-done", "type": "condition", "conditions": {"output_contains": "PHASE-COMPLETE"}},
+    {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off the completed criteria and steps of the phase the worker's report below covers — not whichever phase is open now, since the worker may already have had its phase ticked — and any acceptance criterion the acceptance worker's report shows met, naming every item that stays open. If a report names a handoff or decision file, read that file and record what it carries. PHASE WORKER REPORT: ${output:implement} ACCEPTANCE WORKER REPORT (empty until close-out is first refused): ${output:criteria}"},
     {"id": "phases-left", "type": "condition", "conditions": {"spec_phases_remaining": true}},
-    {"id": "stuck-gate", "type": "wait_human", "message": "The defect's current phase did not complete this iteration — the spec verification reported: ${output:update-spec} — approve retrying the phase, or cancel the run to stop the loop"},
     {"id": "close-spec", "type": "send", "role": "plan", "action": "close-spec", "guard": "spec-complete", "message": "Every phase of the active defect spec is complete — close it out ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/ (a plain file move, not git mv — the ship step stages it), take its row out of the Defects table and the In progress table of docs/requirements/backlog/backlog.md, renumber the remaining defect ranks, add it to the completed id registry, update every cross-reference to the old path, then point the active spec at the new path (muxcode spec set <new path>) — the ship step names the branch and PR from it. Report its id, title and new path. Any item still open = refuse and report the open items"},
-    {"id": "close-stuck-gate", "type": "wait_human", "message": "The defect spec close-out was refused — items are still open: ${output:close-spec} — resolve them, then approve retrying the close-out, or cancel the run"},
+    {"id": "criteria", "type": "spawn", "role": "edit", "message": "Every phase of the active defect spec is done, but its close-out was refused — these items are still open: ${output:close-spec}. Satisfy each one: write the code or test it needs, or run the verification it names through the run agent (muxcode send run run \"bash scripts/test-<x>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and task id. Commit nothing, and never tick a box yourself: plan checks the spec after review. If an item cannot be met, say exactly why. If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}"},
     {"id": "ship-gate", "type": "wait_human", "message": "Defect fixed, reviewed, green and closed out on the working tree: ${output:close-spec} — approve shipping it unattended: create its branch, commit, rebase onto origin/main, push and open the PR; fix, push and reply to any CI failure or review comment; then, once CI is green with no unresolved comments, merge the PR, delete the branch, update main and move on to the next defect"},
     {"id": "ship", "type": "send", "role": "commit", "action": "commit", "message": "Ship the closed-out defect the active spec names (muxcode spec get): create and switch to a branch named after the spec's filename without .md (its <id>-<slug>), carrying every uncommitted change — if that branch already exists, switch to it. Stage and commit everything uncommitted, the fix and the spec close-out together, with a subject of the spec's id and title (nothing uncommitted = skip the commit). Fetch origin and rebase the branch onto origin/main; on a conflict run git rebase --abort, report the conflicting files and exit non-zero — never resolve a conflict yourself. Push the branch and create a PR titled exactly '<id> <spec title>' — if the spec has a **Tracking:** line naming a GitHub issue, put Closes #<that issue number> on its own line in the PR body. If a PR already exists for the branch, report it instead of creating another. Report the branch, commit sha, PR number and URL"},
     {"id": "ship-stuck-gate", "type": "wait_human", "message": "Shipping the defect failed: ${output:ship} — resolve it (a rebase conflict, a push or PR failure), then approve retrying the commit, rebase, push and PR, or cancel the run"},
@@ -136,15 +147,14 @@ var builtinGraphJSON = map[string]string{
     {"from": "fix", "to": "build", "max_iterations": 10},
     {"from": "review", "to": "update-spec"},
     {"from": "review", "to": "fix", "outcome": "failure"},
-    {"from": "update-spec", "to": "phase-done"},
-    {"from": "phase-done", "to": "phases-left"},
-    {"from": "phase-done", "to": "stuck-gate", "outcome": "failure"},
+    {"from": "update-spec", "to": "phases-left"},
+    {"from": "update-spec", "to": "phases-left", "outcome": "failure"},
+    {"from": "update-spec", "to": "phases-left", "outcome": "unknown"},
     {"from": "phases-left", "to": "implement", "max_iterations_from_active_spec": true},
     {"from": "phases-left", "to": "close-spec", "outcome": "failure"},
-    {"from": "stuck-gate", "to": "implement", "max_iterations": 3},
     {"from": "close-spec", "to": "ship-gate"},
-    {"from": "close-spec", "to": "close-stuck-gate", "outcome": "failure"},
-    {"from": "close-stuck-gate", "to": "close-spec", "max_iterations": 3},
+    {"from": "close-spec", "to": "criteria", "outcome": "failure", "max_iterations": 2},
+    {"from": "criteria", "to": "build"},
     {"from": "ship-gate", "to": "ship"},
     {"from": "ship", "to": "ci-watch"},
     {"from": "ship", "to": "ship-stuck-gate", "outcome": "failure"},
@@ -164,7 +174,7 @@ var builtinGraphJSON = map[string]string{
     {"from": "pr-review", "to": "pr-fix", "outcome": "failure"},
     {"from": "pr-push", "to": "pr-reply"},
     {"from": "pr-reply", "to": "ci-watch", "max_iterations": 3},
-    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->implement", "stuck-gate->implement", "close-stuck-gate->close-spec", "ship-stuck-gate->ship", "pr-fix->pr-build", "pr-reply->ci-watch"]}
+    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->implement", "close-spec->criteria", "ship-stuck-gate->ship", "pr-fix->pr-build", "pr-reply->ci-watch"]}
   ]
 }`,
 

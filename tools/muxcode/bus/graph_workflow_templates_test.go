@@ -263,7 +263,10 @@ func TestPRMergeTemplate(t *testing.T) {
 // The defect loop runs dry into a terminal success, ships each defect only
 // through its gate and a green, comment-free PR, and gives every defect the
 // full budget of every inner loop. Its spec changes each pass, so no node may
-// name the run's launch-time text.
+// name the run's launch-time text. A phase's completion is read from the spec
+// file: on 2026-11-13 plan answered verify-spec in its own format without the
+// PHASE-COMPLETE token the loop then branched on, and a finished Phase 1
+// parked at a stuck gate.
 func TestDefectBacklogLoopTemplate(t *testing.T) {
 	g := mustTemplate(t, "55-defect-backlog-loop")
 
@@ -274,6 +277,16 @@ func TestDefectBacklogLoopTemplate(t *testing.T) {
 		}
 	}
 
+	for _, e := range g.Edges {
+		if e.From == "update-spec" && e.To != "phases-left" {
+			t.Errorf("update-spec routes to %s — a phase's completion is read from the spec, never from the reply", e.To)
+		}
+	}
+	if c := g.node("phases-left"); c == nil || c.Conditions["spec_phases_remaining"] != true {
+		t.Error("phases-left must branch on the spec file (spec_phases_remaining)")
+	}
+
+	onlyReachedFrom(t, g, "criteria", "close-spec", OutcomeFailure)
 	onlyReachedFrom(t, g, "ship-gate", "close-spec", OutcomeSuccess)
 	onlyReachedFrom(t, g, "merge", "no-comments", OutcomeSuccess)
 	for _, e := range g.Edges {
@@ -377,6 +390,197 @@ func TestDefectBacklogLoopEndsOnlyWhenTheBacklogRunsDry(t *testing.T) {
 				t.Errorf("run %q, want %q", r.State, c.wantRun)
 			}
 		})
+	}
+}
+
+// Driven through the executor with the real template: whatever plan's spec
+// check says — a reply without a completion token, a failure verdict, no
+// verdict at all — the loop reads the next phase from the spec and returns to
+// implement, never parking at a gate or failing the run. Run 1794591418
+// (2026-11-13) stopped at a stuck gate after every finished phase because
+// plan's reply decided the routing.
+func TestDefectBacklogLoopPhaseRoutingIgnoresTheVerdict(t *testing.T) {
+	for _, c := range []struct{ name, reply string }{
+		{"no completion token", "Phase 1 verified, 1/1. Phase 2 NOT complete: 0/1\nEXIT=0"},
+		{"failure verdict", "Phase 2 NOT complete: 0/1\nEXIT=1"},
+		{"no verdict", "Phase 1 verified, 1/1 checked."},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g, run := driveDefectLoopToSpecCheck(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n", c.reply)
+			assertDefectLoopFired(t, g, run, "phases-left", "implement", OutcomeSuccess)
+		})
+	}
+}
+
+// With every phase done but an acceptance criterion open, the refused
+// close-out sends a worker after the open items rather than parking at a
+// gate: run 1794598296 (2026-11-13) parked on close-stuck-gate with three
+// open criteria no phase step covered.
+func TestDefectBacklogLoopRefusedCloseOutGoesToAWorker(t *testing.T) {
+	spec := "### Phase 1: A\n- [x] a\n\n## Acceptance criteria\n\n- [ ] every script passes\n"
+	g, run := driveDefectLoopToSpecCheck(t, spec, "Phase 1 verified, 1/1.\nEXIT=0")
+	assertDefectLoopFired(t, g, run, "close-spec", "criteria", OutcomeFailure)
+	if st := nodeState(t, runTestSession, run.ID, "criteria"); st == GraphNodePending {
+		t.Errorf("criteria worker %q — the open acceptance item must be worked", st)
+	}
+}
+
+// closeOutFixture is 50-spec-to-pr from close-spec on: the template's own
+// close-out nodes and edges, with close-spec and the criteria worker as plain
+// sends — close-spec unguarded — so a test's reply alone decides each.
+func closeOutFixture(t *testing.T) *Graph {
+	t.Helper()
+	tmpl := mustTemplate(t, "50-spec-to-pr")
+	g := &Graph{Name: "close-out", Start: "close-spec", Nodes: []Node{
+		{ID: "close-spec", Type: NodeSend, Role: "plan", Action: "update-docs", Message: "close out"},
+		{ID: "criteria", Type: NodeSend, Role: "edit", Action: "criteria", Message: "work the open items"},
+	}}
+	for _, id := range []string{"close-build", "close-test", "close-review", "close-verify", "final-gate"} {
+		n := tmpl.node(id)
+		if n == nil {
+			t.Fatalf("50-spec-to-pr has no %s node", id)
+		}
+		g.Nodes = append(g.Nodes, *n)
+	}
+	for _, e := range tmpl.Edges {
+		if g.node(e.From) != nil && g.node(e.To) != nil {
+			g.Edges = append(g.Edges, e)
+		}
+	}
+	return g
+}
+
+// answerCloseOut completes a running close-out node: build and test by
+// history row, the rest by the verdict in their reply.
+func answerCloseOut(t *testing.T, runID, nodeID, reply string) {
+	t.Helper()
+	switch nodeID {
+	case "close-build", "close-test":
+		completeSendNode(t, runTestSession, runID, nodeID, OutcomeSuccess)
+	default:
+		completeSendNodeSentinel(t, runTestSession, runID, nodeID, reply)
+	}
+	step(t, runTestSession, runID)
+	step(t, runTestSession, runID)
+}
+
+func workRefusedCloseOut(t *testing.T, runID string) {
+	t.Helper()
+	answerCloseOut(t, runID, "close-spec", "REFUSED: 1 acceptance criterion open. EXIT=1")
+	if s := nodeState(t, runTestSession, runID, "criteria"); s != GraphNodeRunning {
+		t.Fatalf("criteria %q after a refused close-out, want running", s)
+	}
+	answerCloseOut(t, runID, "criteria", "Ran scripts/test-x.sh: 12 passed. EXIT=0")
+	answerCloseOut(t, runID, "close-build", "")
+	answerCloseOut(t, runID, "close-test", "")
+	answerCloseOut(t, runID, "close-review", reviewClean)
+	answerCloseOut(t, runID, "close-verify", "Ticked 1 criterion. EXIT=0")
+}
+
+// 50-spec-to-pr carried the close-stuck-gate that parked run 1794598296
+// (2026-11-13) twice: a refused close-out is now worked, rebuilt, retested,
+// reviewed and re-verified, and a retry that succeeds reaches final-gate with
+// no human asked on the way.
+func TestSpecToPRRefusedCloseOutIsWorkedNotGated(t *testing.T) {
+	run := createTestRun(t, closeOutFixture(t))
+	step(t, runTestSession, run.ID)
+
+	workRefusedCloseOut(t, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "final-gate"); s != GraphNodePending {
+		t.Fatalf("final-gate %q before the retried close-out answered, want pending", s)
+	}
+	answerCloseOut(t, run.ID, "close-spec", "Closed out. EXIT=0")
+	if s := nodeState(t, runTestSession, run.ID, "final-gate"); s != GraphNodeWaiting {
+		t.Errorf("final-gate %q after a successful retry, want waiting", s)
+	}
+}
+
+// Past the cap the run fails rather than parking or looping: two refusals are
+// worked, a third has no live edge.
+func TestSpecToPRCloseOutWorkerIsCapped(t *testing.T) {
+	run := createTestRun(t, closeOutFixture(t))
+	step(t, runTestSession, run.ID)
+
+	workRefusedCloseOut(t, run.ID)
+	workRefusedCloseOut(t, run.ID)
+	answerCloseOut(t, run.ID, "close-spec", "REFUSED: still open. EXIT=1")
+	if !runFailed(t, run.ID) {
+		t.Errorf("run not failed after a third refusal; criteria state %q", nodeState(t, runTestSession, run.ID, "criteria"))
+	}
+	if s := nodeState(t, runTestSession, run.ID, "final-gate"); s == GraphNodeWaiting {
+		t.Error("a refused close-out past the cap must never reach final-gate")
+	}
+}
+
+// driveDefectLoopToSpecCheck runs the real 55-defect-backlog-loop through one
+// pass of a defect whose active spec is specBody — preflight, select, a fake
+// implement worker, build, test, review — and answers the spec check with
+// reply, so callers can assert where the loop goes next.
+func driveDefectLoopToSpecCheck(t *testing.T, specBody, reply string) (*Graph, *GraphRun) {
+	t.Helper()
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	backlog := filepath.Join(repo, BacklogIndexPath)
+	if err := os.MkdirAll(filepath.Dir(backlog), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(backlog, []byte("### Defects — prioritized\n\n| # | ID |\n|---|----|\n| 1 | MUX-001 |\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ParseGraph([]byte(builtinGraphJSON["55-defect-backlog-loop"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := createTestRun(t, g)
+	spec := filepath.Join(repo, "MUX-001-x.md")
+	if err := os.WriteFile(spec, []byte(specBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(runTestSession, spec); err != nil {
+		t.Fatal(err)
+	}
+	fakeSpawns(t, runTestSession)
+	settle := func() {
+		for i := 0; i < 6; i++ {
+			step(t, runTestSession, run.ID)
+		}
+	}
+
+	settle()
+	completeSendNodeSentinel(t, runTestSession, run.ID, "preflight", "Branch main. ON-MAIN\nEXIT=0")
+	settle()
+	completeSendNodeSentinel(t, runTestSession, run.ID, "select", "DEFECT-ACTIVATED MUX-001 x "+spec+"\nEXIT=0")
+	settle()
+	completeSendNode(t, runTestSession, run.ID, "build", OutcomeSuccess)
+	settle()
+	completeSendNode(t, runTestSession, run.ID, "test", OutcomeSuccess)
+	settle()
+	completeSendNodeWithReply(t, runTestSession, run.ID, "review", "review", "0 must-fix, 0 should-fix, 0 nits. Approved.")
+	settle()
+	completeSendNodeWithReply(t, runTestSession, run.ID, "update-spec", "plan", reply)
+	settle()
+	return g, run
+}
+
+// assertDefectLoopFired asserts the run is still going, fired from->to once
+// on outcome, and has no gate waiting.
+func assertDefectLoopFired(t *testing.T, g *Graph, run *GraphRun, from, to, outcome string) {
+	t.Helper()
+	r, _ := ReadGraphRun(runTestSession, run.ID)
+	if r.State != GraphRunRunning {
+		t.Fatalf("run %q, want running", r.State)
+	}
+	if fires := r.EdgeFires[EdgeFireKey(Edge{From: from, To: to, Outcome: outcome})]; fires != 1 {
+		var where []string
+		for _, id := range []string{"implement", "build", "test", "review", "update-spec", "phases-left", "close-spec"} {
+			where = append(where, id+"="+nodeState(t, runTestSession, run.ID, id))
+		}
+		t.Errorf("%s->%s fired %d times, want 1; nodes %v, fires %v", from, to, fires, where, r.EdgeFires)
+	}
+	for _, n := range g.Nodes {
+		if n.Type == NodeWaitHuman && nodeState(t, runTestSession, run.ID, n.ID) == GraphNodeWaiting {
+			t.Errorf("gate %s is waiting — the loop must not ask a human here", n.ID)
+		}
 	}
 }
 

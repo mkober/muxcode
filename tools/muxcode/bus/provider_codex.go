@@ -274,14 +274,17 @@ func buildInstallRoots() []string {
 
 // muxcodeStateRoots returns the muxcode state outside the repo that an agent's
 // own `muxcode` calls write, whatever its role: the lifecycle log
-// (LifecycleLogDir) and global memory (GlobalMemoryDir). Without them a Codex
-// agent's lifecycle rows are dropped silently and `memory write --global`
-// fails; per-role memory lives in the repo's .muxcode/memory and needs no grant.
+// (LifecycleLogDir), global memory (GlobalMemoryDir) and the bus base
+// (BusDirBase). Without them a Codex agent's lifecycle rows are dropped
+// silently, `memory write --global` fails, and — since MUX-208 moved the bus
+// out of the sandbox-writable /tmp — `muxcode send` cannot write an inbox;
+// per-role memory lives in the repo's .muxcode/memory and needs no grant.
 // A path that is not absolute (no resolvable home) is dropped rather than
 // granted relative to the repo.
 func muxcodeStateRoots() []string {
 	var roots []string
-	for _, dir := range []string{LifecycleLogDir(), GlobalMemoryDir()} {
+	busBase, _ := busDirBase()
+	for _, dir := range []string{LifecycleLogDir(), GlobalMemoryDir(), busBase} {
 		if filepath.IsAbs(dir) {
 			roots = append(roots, dir)
 		}

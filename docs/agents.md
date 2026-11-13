@@ -199,7 +199,7 @@ The serve agent:
 - Checks for port conflicts before starting
 - Monitors server health via PID liveness and HTTP probes
 - Auto-restarts crashed servers (up to 5 consecutive failures)
-- Tracks state in `/tmp/muxcode-bus-{session}/serve-state.json`
+- Tracks state in `$MUXCODE_BUS_DIR/serve-state.json`
 
 Tool profile: `bus`, `readonly`, `common`, plus process management (`kill`, `nohup`), HTTP tools (`curl`, `wget`), network inspection (`lsof`, `ss`), framework CLIs (`node`, `pnpm`, `npx`, `python`, `flask`, `go run`, `docker`), and temp file I/O.
 
@@ -258,7 +258,7 @@ The autonomous agent operates a complete Jira story lifecycle without user inter
 
 **Console viewer**: The left pane shows a Dracula-themed activity log (`muxcode console agent`) with a status header displaying: current story, phase, stories done, uptime, and last heartbeat. Query status programmatically via `muxcode agent status`.
 
-**State files** (ephemeral, in `/tmp/muxcode-bus-{session}/`):
+**State files** (per-session, in `$MUXCODE_BUS_DIR/`):
 
 | File | Purpose |
 |------|---------|
@@ -706,7 +706,7 @@ When reloading, configuration is resolved in this order (first non-empty wins):
 
 | Priority | Source | Scope |
 |----------|--------|-------|
-| 1 | Runtime override (`/tmp/muxcode-bus-{session}/config/{role}.env`) | Per-role, session-scoped |
+| 1 | Runtime override (`$MUXCODE_BUS_DIR/config/{role}.env`) | Per-role, session-scoped |
 | 2 | `MUXCODE_{ROLE}_CLI` / `MUXCODE_{ROLE}_MODEL` env var | Per-role, shell-scoped |
 | 3 | `MUXCODE_AGENT_CLI` env var | Session-wide |
 | 4 | Config file (`~/.config/muxcode/config`) | Persistent |

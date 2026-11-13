@@ -189,8 +189,8 @@ func TestCodexBuildExecArgs_OptOutNamesPolicyWithNoGrants(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	codexTestHome(t)
 	t.Setenv("HOME", filepath.Join(file, "home"))
-	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
 	args := strings.Join(p.argsFor(t, "review"), " ")
 	if !strings.Contains(args, "-s workspace-write") {
 		t.Errorf("review on the opt-out must name workspace-write with no grants: %s", args)
@@ -367,8 +367,8 @@ func TestCodexBuildExecArgs_EveryRoleGetsMuxcodeState(t *testing.T) {
 // would create .config/muxcode inside the repo. Negative control for the test
 // above: the grant follows a real home, it is not unconditional.
 func TestCodexMuxcodeStateRoots_DropsRelativePaths(t *testing.T) {
+	codexTestHome(t)
 	t.Setenv("HOME", "")
-	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
 	if got := muxcodeStateRoots(); len(got) != 0 {
 		t.Errorf("relative state paths must be dropped, got %v", got)
 	}
@@ -611,13 +611,19 @@ func (p *CodexProvider) argsFor(t *testing.T, role string) []string {
 	return args
 }
 
-// codexTestHome points HOME at a temp dir with the lifecycle-log override
-// cleared, so the state roots resolve under it and no real home is touched.
+// codexTestHome points HOME at a temp dir with the lifecycle-log, XDG state and
+// bus-base overrides cleared, so the state roots resolve under it and no real
+// home is touched.
 func codexTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv(BusDirBaseEnv, "")
+	saved := busDirOverride
+	ResetBusDirBase()
+	t.Cleanup(func() { busDirOverride = saved })
 	return home
 }
 
@@ -625,6 +631,7 @@ func codexStateDirs(home string) []string {
 	return []string{
 		filepath.Join(home, ".config", "muxcode", "logs"),
 		filepath.Join(home, ".config", "muxcode", "memory"),
+		filepath.Join(home, ".local", "state", "muxcode", "bus"),
 	}
 }
 

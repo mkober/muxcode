@@ -40,6 +40,7 @@ if [ ! -x "$MUX" ]; then
   exit 1
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-187 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
@@ -62,12 +63,12 @@ dump_diag() {
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="prmerge-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/prmerge-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO"
 export HOME="$WORK/home"
 mkdir -p "$HOME/.config/muxcode"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 git -C "$REPO" init -q
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 LOG="$MUXCODE_LIFECYCLE_LOG_DIR/${BUS_SESSION}.log"

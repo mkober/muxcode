@@ -33,7 +33,8 @@ TARGET="${1:-deploy}"
 BLOCK_DURATION="${2:-20}"
 MSG_COUNT=10
 MSG_INTERVAL=1
-BUS_DIR="/tmp/muxcode-bus-${SESSION}"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 MARKER="stuck-agent-test-$$"
 
 # ============================================================

@@ -12,7 +12,7 @@ import (
 
 // CleanupResult tracks what was found and removed during cleanup.
 type CleanupResult struct {
-	BusDirs      []string // /tmp/muxcode-bus-{session}/
+	BusDirs      []string // BusDir(session), or a pre-MUX-208 /tmp copy
 	PreviewFiles []string // /tmp/muxcode-preview-{session}.tmp
 	TriggerFiles []string // /tmp/muxcode-analyze-{session}.trigger
 	SpawnDirs    []string // /tmp/muxcode-spawn-{session}/
@@ -49,15 +49,29 @@ func Cleanup(session string) error {
 // When includeActive is true, artifacts from the current session are included.
 func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupResult, error) {
 	result := &CleanupResult{}
-	tmpDir := BusDirBase()
-	entries, err := os.ReadDir(tmpDir)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", tmpDir, err)
+	type scanned struct {
+		dir string
+		e   os.DirEntry
 	}
+	var found []scanned
+	for _, dir := range cleanupScanRoots() {
+		entries, err := os.ReadDir(dir)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", dir, err)
+		}
+		for _, e := range entries {
+			found = append(found, scanned{dir, e})
+		}
+	}
+	result.SpawnDirs = append(result.SpawnDirs, staleSpawnDirs(currentSession, includeActive)...)
 
-	for _, e := range entries {
+	for _, s := range found {
+		e := s.e
 		name := e.Name()
-		full := filepath.Join(tmpDir, name)
+		full := filepath.Join(s.dir, name)
 
 		switch {
 		case strings.HasPrefix(name, "muxcode-bus-") && e.IsDir():
@@ -184,6 +198,37 @@ func shouldClean(session, currentSession string, includeActive bool) bool {
 		return false
 	}
 	return !isTmuxSessionAlive(session)
+}
+
+// cleanupScanRoots lists the directories CleanupStale reads: the bus base, plus
+// /tmp on the default base — preview and analyze-trigger files stay there, as
+// do pre-MUX-208 bus and spawn directories of sessions never migrated.
+func cleanupScanRoots() []string {
+	if busDirBaseOverridden() {
+		return []string{BusDirBase()}
+	}
+	return []string{BusDirBase(), LegacyBusDirBase}
+}
+
+// staleSpawnDirs returns the stale sessions' worktree bases in the
+// StateDir()/spawn/{session} layout. With an overridden base the worktrees sit
+// beside the bus as muxcode-spawn-{session} and the root scan finds them.
+func staleSpawnDirs(currentSession string, includeActive bool) []string {
+	if busDirBaseOverridden() {
+		return nil
+	}
+	root := filepath.Join(StateDir(), "spawn")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() && shouldClean(e.Name(), currentSession, includeActive) {
+			dirs = append(dirs, filepath.Join(root, e.Name()))
+		}
+	}
+	return dirs
 }
 
 // tmuxSessionNames asks the server to enumerate its sessions. A non-nil
@@ -437,23 +482,31 @@ func TmpFreeBytes() (int64, error) {
 	return int64(stat.Bavail) * int64(stat.Bsize), nil
 }
 
-// MuxcodeTmpFootprint returns the total bytes muxcode occupies under /tmp —
-// the only part of the disk its own cleanup can actually free.
+// MuxcodeTmpFootprint returns the total bytes muxcode's cleanup can actually
+// free: its muxcode-* directories under /tmp (caches, legacy buses) and, since
+// MUX-208, the bus directories under the state base plus the whole
+// StateDir()/spawn tree — the worktrees staleSpawnDirs removes, which counted
+// here as /tmp/muxcode-spawn-* before they moved. Its session children carry no
+// muxcode- prefix, so the tree is sized whole.
 func MuxcodeTmpFootprint() int64 {
-	tmpDir := "/tmp"
-	if busDirOverride != "" {
-		tmpDir = busDirOverride
-	}
-	entries, err := os.ReadDir(tmpDir)
-	if err != nil {
-		return 0
-	}
+	roots := []string{legacyBusDirRoot}
 	var total int64
-	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "muxcode-") {
+	if busDirOverride != "" {
+		roots = []string{busDirOverride}
+	} else if !busDirBaseOverridden() {
+		roots = append(roots, BusDirBase())
+		total += dirSize(filepath.Join(StateDir(), "spawn"))
+	}
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
 			continue
 		}
-		total += dirSize(filepath.Join(tmpDir, e.Name()))
+		for _, e := range entries {
+			if e.IsDir() && strings.HasPrefix(e.Name(), "muxcode-") {
+				total += dirSize(filepath.Join(root, e.Name()))
+			}
+		}
 	}
 	return total
 }

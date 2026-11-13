@@ -19,12 +19,16 @@ type RemoteSession struct {
 	DaemonVersion string `json:"daemon_version"` // recorded by the daemon at startup; "" when never stamped
 }
 
-// DiscoverSessions finds all muxcode bus directories in /tmp and checks
-// whether each has a live tmux session. Returns sessions sorted by name,
-// excluding the current session if excludeSelf is true.
+// DiscoverSessions finds all muxcode bus directories under BusDirBase and
+// checks whether each has a live tmux session. Returns sessions sorted by
+// name, excluding the current session if excludeSelf is true. A base that does
+// not exist yet (no session since the MUX-208 move) holds no sessions.
 func DiscoverSessions(currentSession string, excludeSelf bool) ([]RemoteSession, error) {
 	tmpDir := BusDirBase()
 	entries, err := os.ReadDir(tmpDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", tmpDir, err)
 	}

@@ -183,6 +183,10 @@ func SetupPath() {
 func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	// Set BUS_SESSION for all bus operations
 	os.Setenv("BUS_SESSION", session)
+	if err := ReportLegacyBusDirConflict(session); err != nil {
+		return fmt.Errorf("bus directory: %w", err)
+	}
+	os.Setenv(BusDirEnv, BusDir(session))
 
 	// Log session start
 	LogLifecycle(session, "info", "launcher", "session-start",
@@ -271,6 +275,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		return fmt.Errorf("new session: %w", err)
 	}
 	TmuxSetEnv(session, "BUS_SESSION", session)
+	TmuxSetEnv(session, BusDirEnv, BusDir(session))
 	TmuxSetEnv(session, "MUXCODE", "1")
 
 	LogLifecycle(session, "info", "launcher", "session-create",

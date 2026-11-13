@@ -27,7 +27,25 @@ Initialize the message bus directory structure for a session.
 muxcode init [--memory-dir PATH]
 ```
 
-Creates the ephemeral bus directory at `/tmp/muxcode-bus-{SESSION}/` with `inbox/`, `lock/`, and `log.jsonl`. Optionally initializes the persistent memory directory.
+Creates the per-session bus directory at `~/.local/state/muxcode/bus/muxcode-bus-{SESSION}/` (`$MUXCODE_BUS_DIR`; print it with `muxcode bus-dir` — see [Bus directory location](architecture.md#bus-directory-location)) with `inbox/`, `lock/`, and `log.jsonl`. Optionally initializes the persistent memory directory.
+
+### `muxcode bus-dir`
+
+Print a session's resolved bus directory, for scripts and anything not launched by muxcode.
+
+```bash
+muxcode bus-dir [session]
+```
+
+| Case | Result |
+|------|--------|
+| Session given, or `$BUS_SESSION` set | Prints the absolute directory, exit 0 |
+| Neither | Exit 2 |
+
+Inside a pane, hook or daemon muxcode launched, `$MUXCODE_BUS_DIR` already holds the same answer:
+`${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}`. Integration scripts use `scripts/lib/muxcode-bus-dir.sh`
+(`muxcode_bus_dir <bin> <session>`). Nothing computes the path itself — see
+[Bus directory location](architecture.md#bus-directory-location).
 
 ### `muxcode send`
 
@@ -396,7 +414,7 @@ Remove the ephemeral bus directory and trigger files.
 muxcode cleanup [session]
 ```
 
-Removes `/tmp/muxcode-bus-{SESSION}/` and `/tmp/muxcode-analyze-{SESSION}.trigger`. Called automatically by the tmux session-closed hook.
+Removes `$MUXCODE_BUS_DIR/` and `/tmp/muxcode-analyze-{SESSION}.trigger`. Called automatically by the tmux session-closed hook.
 
 ### `muxcode notify`
 
@@ -519,8 +537,8 @@ $ muxcode cron history --limit 10
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `cron.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron.jsonl` | Cron entry definitions |
-| `cron-history.jsonl` | `/tmp/muxcode-bus-{SESSION}/cron-history.jsonl` | Execution history log |
+| `cron.jsonl` | `$MUXCODE_BUS_DIR/cron.jsonl` | Cron entry definitions |
+| `cron-history.jsonl` | `$MUXCODE_BUS_DIR/cron-history.jsonl` | Execution history log |
 
 ### `muxcode status`
 
@@ -577,8 +595,8 @@ Workflow state reset to idle
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `workflow-state.json` | `/tmp/muxcode-bus-{SESSION}/workflow-state.json` | Current workflow state |
-| `workflow.lock` | `/tmp/muxcode-bus-{SESSION}/lock/workflow.lock` | Flock for atomic transitions |
+| `workflow-state.json` | `$MUXCODE_BUS_DIR/workflow-state.json` | Current workflow state |
+| `workflow.lock` | `$MUXCODE_BUS_DIR/lock/workflow.lock` | Flock for atomic transitions |
 
 See [Architecture](architecture.md#workflow-state-machine) for state definitions, transition sources, and the regression rule.
 
@@ -708,7 +726,7 @@ $ muxcode proc start "./build.sh"
 Started process: 1740000000-proc-a1b2c3d4
   PID: 12345  Owner: build
   Command: ./build.sh
-  Log: /tmp/muxcode-bus-mysession/proc/1740000000-proc-a1b2c3d4.log
+  Log: /home/me/.local/state/muxcode/bus/muxcode-bus-mysession/proc/1740000000-proc-a1b2c3d4.log
 
 # Check running processes
 $ muxcode proc list
@@ -733,8 +751,8 @@ Cleaned 2 finished process(es).
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `proc.jsonl` | `/tmp/muxcode-bus-{SESSION}/proc.jsonl` | Process entry definitions |
-| `{id}.log` | `/tmp/muxcode-bus-{SESSION}/proc/{id}.log` | Per-process stdout/stderr output |
+| `proc.jsonl` | `$MUXCODE_BUS_DIR/proc.jsonl` | Process entry definitions |
+| `{id}.log` | `$MUXCODE_BUS_DIR/proc/{id}.log` | Per-process stdout/stderr output |
 
 ### `muxcode spawn`
 
@@ -808,7 +826,7 @@ Cleaned 1 finished spawn(s).
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `spawn.jsonl` | `/tmp/muxcode-bus-{SESSION}/spawn.jsonl` | Spawn entry definitions |
+| `spawn.jsonl` | `$MUXCODE_BUS_DIR/spawn.jsonl` | Spawn entry definitions |
 
 ### `muxcode demo`
 
@@ -966,7 +984,7 @@ Error (4xx/5xx):
 
 **Message identity:** All webhook-originated messages use `From: "webhook"`. The `webhook` role is excluded from pre-commit checks (passive bridge, not a working agent).
 
-**PID tracking:** PID file at `/tmp/muxcode-bus-{SESSION}/webhook.pid` with format `port:pid`. Read by `stop` and `status`. Removed on graceful shutdown, `stop`, and session re-init.
+**PID tracking:** PID file at `$MUXCODE_BUS_DIR/webhook.pid` with format `port:pid`. Read by `stop` and `status`. Removed on graceful shutdown, `stop`, and session re-init.
 
 **Startup verification:** The `start` command polls `/health` up to 3 seconds after launching the background process to confirm the server is listening before reporting success.
 
@@ -1009,7 +1027,7 @@ Webhook server stopped
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `webhook.pid` | `/tmp/muxcode-bus-{SESSION}/webhook.pid` | PID file (`port:pid` format) |
+| `webhook.pid` | `$MUXCODE_BUS_DIR/webhook.pid` | PID file (`port:pid` format) |
 
 ### `muxcode context`
 
@@ -1236,7 +1254,7 @@ build	3f9c…e21a
 test	a7d0…44b9
 review	9c12…07de
 
-$ cat /tmp/muxcode-bus-<session>/launchsandbox-build.hash
+$ cat "$(muxcode bus-dir <session>)/launchsandbox-build.hash"
 3f9c…e21a      # matches — the running build agent has the installed sandbox
 ```
 
@@ -1400,7 +1418,7 @@ $ muxcode subscribe list
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `subscriptions.jsonl` | `/tmp/muxcode-bus-{SESSION}/subscriptions.jsonl` | Subscription definitions |
+| `subscriptions.jsonl` | `$MUXCODE_BUS_DIR/subscriptions.jsonl` | Subscription definitions |
 
 ### `muxcode agent-health`
 
@@ -1422,8 +1440,8 @@ The daemon probes agent panes every 30 seconds. Three consecutive failures trigg
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `{role}.stopped` | `/tmp/muxcode-bus-{session}/lock/` | Marker suppressing auto-restart |
-| `watcher.keepalive` | `/tmp/muxcode-bus-{session}/` | Unix timestamp updated each daemon poll loop |
+| `{role}.stopped` | `$MUXCODE_BUS_DIR/lock/` | Marker suppressing auto-restart |
+| `watcher.keepalive` | `$MUXCODE_BUS_DIR/` | Unix timestamp updated each daemon poll loop |
 
 ### `muxcode lifecycle`
 
@@ -1508,7 +1526,7 @@ muxcode lifecycle purge [--days N]
 # Show recent events for current session
 $ muxcode lifecycle show
 2026-03-12 08:30:01  info   launcher       session-start           Project: ~/Repos/mkober/muxcode
-2026-03-12 08:30:01  info   init           init                    Creating bus directory: /tmp/muxcode-bus-muxcode
+2026-03-12 08:30:01  info   init           init                    Creating bus directory: /home/me/.local/state/muxcode/bus/muxcode-bus-muxcode
 2026-03-12 08:30:01  info   launcher       watcher-start           PID: 12345
 2026-03-12 08:30:15  info   auto-accept    agent-ready             edit
 2026-03-12 08:30:16  info   daemon         startup-notify          edit
@@ -1757,8 +1775,14 @@ the reviewer's reply (`<n> must-fix, <n> should-fix, <n> nits`): any must-fix or
 `fix`, which receives the report through `${failure_report}`; a reply without the counts line holds.
 **Tail**: `loop-check` → `close-spec` (plan `close-spec`, `spec-complete` guard: status `Complete`,
 move to `completed/`, `backlog.md`, cross-refs, pointer cleared) → `final-gate` → `push-pr` (commits
-the close-out, pushes, opens the PR titled exactly `${spec_title}`); a refused close-out parks at
-`close-stuck-gate` (retry ≤ 3, or cancel).
+the close-out together with any uncommitted work the acceptance worker left, pushes, opens the PR
+titled exactly `${spec_title}`). A refused close-out goes to no gate: `close-spec → criteria` (spawn,
+cap 2) hands the open items plan reported (`${output:close-spec}`) to the run's worker — it writes
+what they need or runs the verification they name through the run agent, commits nothing and ticks
+no box — then `close-build` → `close-test` → `close-review` → `close-verify` (plan `verify-spec`,
+given the worker's report as `${output:criteria}`) → `close-spec` again, on any `close-verify`
+outcome. A `close-build`, `close-test` or `close-review` failure routes back to `criteria` (each
+edge cap 2, `${failure_report}`); past a cap the run fails.
 
 **Message placeholders.** A node message is expanded at dispatch (`bus/graph_exec.go`):
 
@@ -1983,8 +2007,8 @@ gate per defect.
 | Preflight | `preflight` (commit, `pr-read`) → `on-main` | `ON-MAIN` goes to `select`; otherwise `main-gate` → `to-main` (switch to `main`, pull) → `select` |
 | Select | `select` (plan, `defect-select`) → `activated` | Resumes an `In Progress` defect spec already in `drafts/`; else takes the best-ranked row whose spec is in `backlog/`, not Parked, dependencies done — moves it to `drafts/`, sets `In Progress`, `muxcode spec set`. Replies `DEFECT-ACTIVATED` or `NO-DEFECTS-REMAINING` |
 | Finish | `finish` (plan, `defect-loop-done`) | Reached when nothing was activated: `NO-DEFECTS-REMAINING` confirmed exits zero and the run completes; any other report exits non-zero and the run fails |
-| Phase loop | `implement` (spawn) → `build` → `test` → `review` → `update-spec` (plan `verify-spec`, `PHASE-COMPLETE`) → `phase-done` → `phases-left` | Nothing is committed. Failures route to `fix` → `build` (cap 10 per defect); `phases-left` → `implement` (`max_iterations_from_active_spec` — the active defect spec's phase count, read as the edge fires); a phase that did not complete parks at `stuck-gate` (retry, cap 3) |
-| Close-out | `close-spec` (plan, `spec-complete` guard) | Status `Complete`, move to `completed/`, remove the Defects and In progress rows, renumber ranks, re-point the active spec; a refusal parks at `close-stuck-gate` (retry, cap 3) |
+| Phase loop | `implement` (spawn) → `build` → `test` → `review` → `update-spec` (plan `verify-spec`) → `phases-left` | Nothing is committed. Failures route to `fix` → `build` (cap 10 per defect); `update-spec` verifies the phase the worker's report covers, not whichever phase is open, and reaches `phases-left` on success, failure **and** unknown — plan's verdict never decides phase routing; `phases-left` (`spec_phases_remaining`, read from the spec file — no reply token) → `implement` (`max_iterations_from_active_spec` — the active defect spec's phase count, read as the edge fires). There is no per-phase gate: a phase that never completes repeats until that cap is exhausted, then the run fails |
+| Close-out | `close-spec` (plan, `spec-complete` guard) | Status `Complete`, move to `completed/`, remove the Defects and In progress rows, renumber ranks, re-point the active spec. A refusal goes to no gate: `close-spec → criteria` (spawn, cap 2 per defect) hands the open items plan reported (`${output:close-spec}`) to the run's worker, which writes what they need or runs the verification they name through the run agent — committing nothing and ticking no box — then `criteria → build` → `test` → `review` → `update-spec` → `phases-left` → `close-spec` again. A refusal past the cap fails the run |
 | Ship | `ship-gate` → `ship` (commit) | The one gate per defect. Branch `<id>-<slug>` carrying the tree, commit, rebase onto `origin/main` (a conflict aborts, never self-resolved), push, PR titled `<id> <spec title>` with `Closes #<issue>` from the spec's Tracking line; a failure parks at `ship-stuck-gate` (retry, cap 2) |
 | PR | `ci-watch` → `ci-green` → `read-comments` → `no-comments` | `ci-watch` is shared with `110-pr-merge` (`ciWatchNodeJSON`), the review read with `80-pr-review-fix`. Red CI or an actionable comment goes to `pr-fix` (spawn) → `pr-build` → `pr-test` → `pr-review` → `pr-push` → `pr-reply` → `ci-watch` (caps 4 and 3) |
 | Merge | `merge` (commit) → `select` | `gh pr merge`, branch deleted, `main` pulled, then the next defect |
@@ -2013,7 +2037,7 @@ reaching a gate when there is no PR or no actionable comment — the pattern `co
 `pr-precheck` introduced on 2026-09-16, before that template was removed (2026-09-24); the design is under
 [Graph orchestration](architecture.md#graph-orchestration-control-plane).
 
-**Run state** lives under `/tmp/muxcode-bus-{session}/graphs/<run-id>/` — `run.json`,
+**Run state** lives under `$MUXCODE_BUS_DIR/graphs/<run-id>/` — `run.json`,
 `graph.json`, and `nodes/<id>.json` per node, written atomically. Because every transition
 is persisted, a daemon restart resumes in-flight runs with no separate recovery step.
 
@@ -2250,7 +2274,7 @@ muxcode reload --all [--provider <cli>] --resume
 | `--provider <cli>` | Filter `--all` to only agents currently on the specified CLI (requires `--all`) |
 | `--resume` | With `--all`: the **operator restart** (`bus.RestartAgents`, `bus/restart_agents.go`) rather than a config reload — see below. Requires `--all`; refuses `--cli`/`--model` (a restart never changes provider or model) and `--compact` |
 
-**Single agent**: writes runtime override to `/tmp/muxcode-bus-{session}/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle.
+**Single agent**: writes runtime override to `$MUXCODE_BUS_DIR/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle.
 
 **Multi-role**: accepts multiple positional role arguments. Reloads agents sequentially via `ReloadBatch()` with a 3s gap between each. Per-agent results are printed as each completes, with a summary line at the end. Failure of one agent does not abort the batch.
 
@@ -2335,7 +2359,7 @@ muxcode remote diagnose <session> --all         # Diagnose all agents in a sessi
 | Subcommand | Description |
 |------------|-------------|
 | _(no args)_ | Launch the interactive session browser TUI. Three views: session list → session detail (agent table) → content view (capture/inbox/diagnose). Also accessible via `r` hotkey from the dashboard. Auto-refreshes every 10s. See keyboard shortcuts below. |
-| `list` (alias: `ls`) | Discover all sessions via `/tmp/muxcode-bus-*` dirs. Shows session name, tmux liveness, agent count, log size, and project directory. Current session marked with `*`. |
+| `list` (alias: `ls`) | Discover all sessions via `muxcode-bus-*` dirs under the bus base (default `~/.local/state/muxcode/bus`). Shows session name, tmux liveness, agent count, log size, and project directory. Current session marked with `*`. |
 | `status` | Combined agent table (role, provider, state, health, inbox count, last activity) plus pending inbox summaries. Reuses `GetAllAgentStatus()` with the remote session name. |
 | `capture` (alias: `cap`) | Captures the last N lines from a remote agent's tmux pane. Requires a live tmux session. Reports whether the agent is idle (shows `❯` prompt) or active. |
 | `inbox` | Peeks at inbox messages without consuming them. If role is omitted, shows all roles with non-empty inboxes. Each message shows ID, sender, type, action, age, and payload preview (truncated to 80 chars). |

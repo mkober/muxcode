@@ -226,17 +226,15 @@ func TestFormatOllamaAlert_Restarting(t *testing.T) {
 }
 
 func TestOllamaFailSentinel(t *testing.T) {
-	tmpDir := t.TempDir()
+	useTempBusDir(t)
 	session := "test-sentinel"
-	busDir := "/tmp/muxcode-bus-" + session
+	busDir := BusDir(session)
 	lockDir := filepath.Join(busDir, "lock")
 
 	// Create lock dir
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(busDir)
-	_ = tmpDir
 
 	// No sentinel initially
 	if HasOllamaFailSentinel(session) {
@@ -320,8 +318,9 @@ func TestCheckOllamaInference_ZeroTimeout(t *testing.T) {
 }
 
 func TestOllamaFailSentinelPath(t *testing.T) {
+	useTempBusDir(t)
 	path := OllamaFailSentinelPath("mysession", "commit")
-	expected := "/tmp/muxcode-bus-mysession/lock/commit.ollama-fail"
+	expected := filepath.Join(BusDirBase(), "muxcode-bus-mysession", "lock", "commit.ollama-fail")
 	if path != expected {
 		t.Errorf("expected %q, got %q", expected, path)
 	}

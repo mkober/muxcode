@@ -58,6 +58,7 @@ for tool in tmux jq; do
 done
 JQ="$(command -v jq)"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-195 || { echo "  FAIL  binary precondition not met"; exit 1; }
 if ! grep -aq 'Reused your idle spawn' "$MUX"; then
   echo "  FAIL  installed muxcode predates MUX-195 Phase 4 (no agent-road reuse) — run ./build.sh"
@@ -72,7 +73,6 @@ check() { local msg="$1"; shift; if "$@"; then ok "$msg"; else bad "$msg"; fi; }
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="worker-reuse-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/worker-reuse-work-$$"
 REPO="$WORK/repo"
 CTL="$WORK/ctl"
@@ -96,6 +96,7 @@ export MUXCODE_STUCK_RELOAD_DISABLE=1
 export MUXCODE_PERMBLOCK_WATCHDOG_DISABLE=1
 export MUXCODE_FORCE_RESPOND_DISABLE=1
 unset MUXCODE_SPAWN_MAX_WORKERS MUXCODE_SPAWN_IDLE_SECS AGENT_ROLE BUS_ROLE
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/${BUS_SESSION}.log"
 
 # set_config <max-workers> <idle-secs> — the daemon re-reads it on every use.

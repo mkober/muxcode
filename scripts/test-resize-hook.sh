@@ -39,7 +39,8 @@ log_pass() { ((pass++)); ((total++)); echo -e "  ${GREEN}PASS${NC} $1"; }
 log_fail() { ((fail++)); ((total++)); echo -e "  ${RED}FAIL${NC} $1: $2"; }
 log_skip() { ((skip++)); echo -e "  ${YELLOW}SKIP${NC} $1: $2"; }
 
-BUS_DIR="/tmp/muxcode-bus-${SESSION}"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 
 # Temp session created in Phase 3b — tracked here so the EXIT trap can reap it
 # even if the test aborts midway.

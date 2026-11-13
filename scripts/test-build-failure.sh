@@ -32,9 +32,14 @@ ok()   { echo "  PASS: $1"; pass_count=$((pass_count + 1)); }
 bad()  { echo "  FAIL: $1" >&2; fail_count=$((fail_count + 1)); }
 
 # Install into throwaway dirs so the test never touches the real install.
+# The build stamp is pinned once: the Makefile's DATE has one-second
+# resolution, so two installs straddling a second differ in the binary alone
+# and the idempotency check below fails on the clock, not on the install.
+STAMP_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 hermetic_install() {
   local dest="$1"
   make -C "$REPO_DIR" install \
+    VERSION=v0.0.0-idem COMMIT=idem DATE="$STAMP_DATE" \
     PREFIX="$dest/prefix" \
     CONFIGDIR="$dest/config" \
     NVIM_CONFIGDIR="$dest/config/nvim" \

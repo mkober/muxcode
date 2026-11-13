@@ -412,13 +412,6 @@ func TestFormatSpawnIdle(t *testing.T) {
 	}
 }
 
-func TestSpawnWorktreeBase(t *testing.T) {
-	base := SpawnWorktreeBase("test-session")
-	if !strings.Contains(base, "muxcode-spawn-test-session") {
-		t.Errorf("SpawnWorktreeBase: expected path containing muxcode-spawn-test-session, got %s", base)
-	}
-}
-
 func TestSpawnEntryWorktreeFields_BackwardCompat(t *testing.T) {
 	// Verify that SpawnEntry without worktree fields still unmarshals correctly
 	// (backward compatibility with pre-worktree spawn entries)

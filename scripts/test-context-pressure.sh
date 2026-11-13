@@ -29,7 +29,8 @@ log_pass() { ((pass++)); ((total++)); echo -e "  ${GREEN}PASS${NC} $1"; }
 log_fail() { ((fail++)); ((total++)); echo -e "  ${RED}FAIL${NC} $1: $2"; }
 log_info() { echo -e "  ${YELLOW}INFO${NC} $1"; }
 
-BUS_DIR="/tmp/muxcode-bus-${SESSION}"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 export BUS_SESSION="$SESSION"
 
 echo "=== Edit Context Pressure Integration Test ==="
@@ -135,13 +136,15 @@ echo ""
 echo "--- Test 3: Message dedup ---"
 
 # Send identical request twice — second should be suppressed
-FIRST=$(muxcode send watch browser-check "Context pressure dedup test" 2>&1)
-SECOND=$(muxcode send watch browser-check "Context pressure dedup test" 2>&1)
+# Fire-and-forget, so the in-flight task guard (requests default to --track)
+# cannot stop the repeat first and stand in for the dedup under test.
+FIRST=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Context pressure dedup test" 2>&1)
+SECOND=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Context pressure dedup test" 2>&1)
 
 if echo "$FIRST" | grep -q "Sent"; then
   log_pass "First message delivered"
 else
-  log_pass "First message handled"
+  log_fail "First message" "not sent: $FIRST"
 fi
 
 if echo "$SECOND" | grep -qi "Suppressed\|duplicate"; then

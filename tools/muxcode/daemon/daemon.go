@@ -333,7 +333,14 @@ func acquireDaemonLock(session string) (func(), error) {
 // Acquires a per-session flock to prevent duplicate daemon processes — stale
 // daemons from previous session starts cause duplicate tmux notifications.
 func (d *Daemon) Run() error {
+	if err := bus.ReportLegacyBusDirConflict(d.session); err != nil {
+		fmt.Fprintf(os.Stderr, "  %v\n", err)
+		return err
+	}
 	busDir := bus.BusDir(d.session)
+	os.Setenv(bus.BusDirEnv, busDir)
+	// A session launched before MUX-208 lacks it; fails harmlessly before the launcher creates the session.
+	_ = bus.TmuxSetEnv(d.session, bus.BusDirEnv, busDir)
 
 	// Set BUS_SESSION so downstream code (ResolveProviderCLI → BusSession())
 	// resolves the correct session. Without this, BusSession() falls through

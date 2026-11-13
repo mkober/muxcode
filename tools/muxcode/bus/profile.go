@@ -715,6 +715,12 @@ var (
 	}
 )
 
+// busDirReadRule grants Read on every bus directory under the resolved base,
+// narrowed by suffix, in Claude's //-prefixed absolute-path form.
+func busDirReadRule(suffix string) string {
+	return "Read(/" + filepath.Join(BusDirBase(), "muxcode-bus-*") + suffix + ")"
+}
+
 // DefaultConfig returns compiled-in defaults matching current bash/Go behavior.
 //
 // A chain message may state only what its trigger establishes: a command's
@@ -933,7 +939,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(sleep *)", "Bash(echo *)", "Bash(printf *)", "Bash(date *)",
 					"Bash(find *)", "Bash(ls *)", "Bash(diff *)", "Bash(env *)",
 					"Bash(touch *)", "Bash(cp *)", "Bash(mv *)",
-					"Read(/tmp/muxcode-bus-*)", "Read(/private/tmp/muxcode-bus-*)",
+					busDirReadRule(""),
 				},
 			},
 			"analyze": {
@@ -988,8 +994,7 @@ func DefaultConfig() *MuxcodeConfig {
 					// Browser monitoring (Playwright)
 					"Bash(npx playwright*)",
 					"Bash(curl *)",
-					"Read(/tmp/muxcode-bus-*/serve-state.json)",
-					"Read(/private/tmp/muxcode-bus-*/serve-state.json)",
+					busDirReadRule("/serve-state.json"),
 				}, appleLogTools...),
 			},
 			"pr-read": {
@@ -1043,7 +1048,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(find *)", "Bash(ls *)", "Bash(env *)",
 					"Bash(mkdir *)", "Bash(rm *)", "Bash(touch *)",
 					"Bash(source *)", "Bash(export *)",
-					"Read(/tmp/muxcode-bus-*)", "Read(/private/tmp/muxcode-bus-*)",
+					busDirReadRule(""),
 				}, appleServeTools...),
 			},
 			"auto": {

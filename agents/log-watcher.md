@@ -92,8 +92,7 @@ The script outputs a JSON report with:
 
 **Serve state file:** The serve agent tracks running servers in the `serve-state.json` file in the bus directory (resolved via `muxcode bus-dir`). You can read this file to discover running dev server URLs for browser checks:
 ```bash
-BUS_DIR="${BUS_DIR:-$(muxcode bus-dir 2>/dev/null)}"
-BUS_DIR="${BUS_DIR:-/tmp/muxcode-bus-${BUS_SESSION}}"
+BUS_DIR="${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}"
 cat "$BUS_DIR/serve-state.json" | jq '.servers[] | select(.status == "running")'
 ```
 
