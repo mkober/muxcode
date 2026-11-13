@@ -704,6 +704,24 @@ func ClearActiveSpec(session string) error {
 	return err
 }
 
+// LogSpecPointerChange writes a `spec-set` or `spec-clear` lifecycle row
+// naming the actor (BusActor: the agent role, or "user") and the path, plus
+// `via=<road>` for any writer other than the `muxcode spec` command (via ""),
+// so the pointer's whole history reads from `lifecycle show` (MUX-168). Every
+// writer of the pointer calls it, except ReconcileActiveSpec's close-out
+// repoint, which the daemon logs as `spec-repoint`. An empty path is recorded
+// as "none".
+func LogSpecPointerChange(session, event, path, via string) {
+	if path == "" {
+		path = "none"
+	}
+	detail := fmt.Sprintf("actor=%s path=%s", BusActor(), path)
+	if via != "" {
+		detail += " via=" + via
+	}
+	LogLifecycle(session, "info", "spec", event, detail)
+}
+
 // AgentHeartbeatInterval returns the configured heartbeat interval in seconds.
 // Uses MUXCODE_AGENT_HEARTBEAT env var, defaulting to 1800 (30 minutes).
 // Returns 0 if heartbeat is disabled.

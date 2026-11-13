@@ -142,6 +142,17 @@ The plan agent then does two things in one pass:
 1. **Verify progress** — reads the spec and the changed code, checks off satisfied acceptance criteria and phase steps (`- [ ]` → `- [x]`), and updates the status field.
 2. **Record branch active time** — reads the ledger via `muxcode branch-time show --branch <b> --json` (a fresh branch returns `seconds: 0`, never an error) and upserts a `## Time Tracking` row in the active spec: keyed by branch, replaced in place, **absolute totals from the ledger, never deltas** — which is what makes re-recording idempotent. **Never-regress reconciliation**: if the ledger reads lower than the doc row (lost or reset store), the doc's larger value is kept and the ledger is re-seeded from it via `muxcode branch-time seed` — a floor that only ever raises (`--add` is never used for this; it double-counts on a non-zero ledger). The write is then watermarked via `muxcode branch-time record --secs <n>`.
 
+**The pointer's lifetime.** The active-spec pointer survives a session re-init (see [Session re-init](#session-re-init)); it is removed only by `muxcode spec clear`, or by a failed graph launch rolling back the pointer that launch itself wrote (`UnpointSpecForLaunch`, `bus/intent.go` — it clears only a pointer still holding the value it set). The daemon's `checkActiveSpec` keeps it honest each poll through `ReconcileActiveSpec`:
+
+| Outcome | What the daemon does |
+|---------|----------------------|
+| The spec moved from `drafts/` to `completed/` | Follows it and logs `spec-repoint` |
+| The file is gone with no `completed/` counterpart | Leaves the pointer, logs `spec-dangling` and tells edit — never silently cleared |
+| No pointer is set, and a running graph run's **frozen** template has `requires_spec` | Logs a `spec-unset-live-run` warn row (detail: the run id) and sends edit one `event` naming the run, at most once per run per 300 s (`alertSpecUnsetLiveRun`, `shouldSendEvent`). The run cannot notice this itself: `spec_phases_remaining` reads "no spec" as "nothing remaining" |
+| No pointer is set and no such run exists | Nothing — an unset pointer is normal |
+
+So a deliberate `spec clear` under a live run is announced rather than absorbed ([MUX-168](requirements/completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md)).
+
 Branches with no active spec, and repos without a `docs/requirements/` structure, **degrade quietly**: time accumulates in the ledger but nothing is written to docs. Integration coverage: `scripts/test-branch-time-recording.sh` (JSON shape, idempotent upsert, never-regress reconciliation, no-active-spec degrade).
 
 ### Deploy-Run-Watch Chain
@@ -1547,6 +1558,7 @@ When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` d
 - **Truncated files** (path preserved for writers): inboxes, `log.jsonl`, `cron.jsonl`, `proc.jsonl`, `spawn.jsonl`, `subscriptions.jsonl`, `{role}-history.jsonl`, `cron-history.jsonl`
 - **Removed files** (recreated on demand): session meta (`session/*.json`), lock files (`lock/*.lock`, `lock/*.stopped`), proc logs (`proc/*.log`), orphaned spawn inboxes (`inbox/spawn-*.jsonl`), trigger file, delivery status files (`delivery/*.status`)
 - **Preserved**: memory files (`.muxcode/memory/`, `~/.config/muxcode/memory/`) — persistent learnings survive re-init
+- **Kept in the bus directory**: the graph run store (`graphs/`) and the `active-spec` pointer. Re-init has never touched `graphs/` — a run resumes on the daemon's first tick — and since [MUX-168](requirements/completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md) it leaves the pointer beside it, writing one lifecycle row from source `init`: `spec-kept <path> live-runs=N` (N = graph runs still in flight) or `spec-none` when no pointer is set (`logActiveSpecKept`). Before that, re-init removed the pointer while the runs survived, so a resumed `spec-to-pr` run had no spec and its `loop-check` read that as "no phases remaining" (2026-09-09, 2026-09-10, 2026-11-13). Re-init preserves a pointer and never invents one: a pointer cleared before the restart stays cleared. The MUX-007 gate markers (the reviewed transition and verify movement) are still purged — a re-init resets the chain, not the spec
 - **Daemon grace period**: `lastLoopCheck` and `lastCompactCheck` initialized to `time.Now()` in `New()`, so loop detection (60s) and compaction checks (120s) skip the first interval
 
 Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `daemon/daemon.go` (`New()`)

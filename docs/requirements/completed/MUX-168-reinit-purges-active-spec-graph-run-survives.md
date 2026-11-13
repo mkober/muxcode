@@ -27,7 +27,7 @@ next to a `[running]` run.
 | 15:37 | plan re-sets the pointer by hand (`muxcode spec set docs/requirements/drafts/MUX-163-…`) — a repair, not the fix | this session |
 
 The window was invisible at first: `lifecycle show --since 30m` returned nothing before 15:34 until
-`--limit 3000` was added ([MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)).
+`--limit 3000` was added ([MUX-124](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md)).
 
 ### Second occurrence (same run, 2026-09-10)
 
@@ -106,13 +106,13 @@ the chain, not the spec).
 
 ### Acceptance criteria
 
-- [ ] A session re-init (`bus.Init` over an existing bus dir) leaves the `active-spec` marker in place: after `muxcode init` over a bus dir holding a pointer, `muxcode spec get` prints the same path
-- [ ] The re-init writes a `spec-kept` lifecycle row naming the path and the count of live runs under `graphs/`, so the pointer's survival is readable from `lifecycle show` without a code read
-- [ ] `muxcode spec set` and `muxcode spec clear` write `spec-set` / `spec-clear` lifecycle rows carrying the actor (`BUS_ROLE`, or `user` when unset) and the path — every change to the pointer has a row
-- [ ] A `spec-to-pr` run resumed across a re-init evaluates `loop-check` against the spec it started with: with a phase still open, `spec_phases_remaining: true` passes and the run re-enters `implement`, never `final-gate`
-- [ ] An unset pointer while a run whose template `RequiresSpec` is `running` or `waiting` raises a `spec-unset-live-run` warn row and a one-time `event` to edit naming the run (cooldown via `shouldSendEvent`), so a deliberate `spec clear` under a live run is announced rather than absorbed
-- [ ] A deliberate `muxcode spec clear` still clears (the negative control): re-init preserves, it never resurrects — a pointer cleared before the relaunch stays cleared after it, and a bus dir that never held one gains none
-- [ ] Docs: `docs/architecture.md` session re-init and spec-verification sections, `docs/agent-bus.md` `muxcode spec` reference, `CLAUDE.md` spec-verification constraint
+- [x] A session re-init (`bus.Init` over an existing bus dir) leaves the `active-spec` marker in place: after `muxcode init` over a bus dir holding a pointer, `muxcode spec get` prints the same path — pinned at `bus.Init` by `TestInit_ReInit_PurgesStaleData`; the CLI form is Phase 4's script
+- [x] The re-init writes a `spec-kept` lifecycle row naming the path and the count of live runs under `graphs/`, so the pointer's survival is readable from `lifecycle show` without a code read — `TestInit_ReInit_CountsLiveRunsBesideKeptSpec`
+- [x] `muxcode spec set` and `muxcode spec clear` write `spec-set` / `spec-clear` lifecycle rows carrying the actor (`BUS_ROLE`, or `user` when unset) and the path — every change to the pointer has a row — the two commands in Phase 1; every other writer tagged ` via=<road>` by the run's `criteria` node — see [Findings for Phase 1](#findings-for-phase-1). `bus/intent_test.go` asserts the `graph-launch`, `launch-rollback` and `branch` rows with their actor, and that a no-op launch, rollback or branch call logs nothing; the graph picker's row (`via=graph-picker`) has **no test** — the picker reads interactive stdin. `./test.sh` and review passed; the integration script re-ran 29 passed, 0 failed
+- [x] A `spec-to-pr` run resumed across a re-init evaluates `loop-check` against the spec it started with: with a phase still open, `spec_phases_remaining: true` passes and the run re-enters `implement`, never `final-gate` — `TestSpecToPRLoopCheckSurvivesReInit`
+- [x] An unset pointer while a run whose template `RequiresSpec` is `running` or `waiting` raises a `spec-unset-live-run` warn row and a one-time `event` to edit naming the run (cooldown via `shouldSendEvent`), so a deliberate `spec clear` under a live run is announced rather than absorbed — `TestCheckActiveSpec_UnsetUnderLiveRunAlertedOnce` and its negative controls
+- [x] A deliberate `muxcode spec clear` still clears (the negative control): re-init preserves, it never resurrects — a pointer cleared before the relaunch stays cleared after it, and a bus dir that never held one gains none — `TestInit_ReInit_HonoursClearBeforeIt`, `TestInit_ReInit_NoPointerStaysUnset`
+- [x] Docs: `docs/architecture.md` session re-init and spec-verification sections, `docs/agent-bus.md` `muxcode spec` reference, `CLAUDE.md` spec-verification constraint — Phase 3
 
 ### Technical approach
 
@@ -135,7 +135,7 @@ the outcome depend on timing: a run that completed a second before the relaunch 
 **Rejected — make the run carry its own spec path.** Sound for `spec_phases_remaining` alone, but
 `plan-verify`, `phase-check` (`phaseCommitReady`) and the close-out guard all read the pointer; a
 second copy inside `run.json` is two sources that can disagree
-([MUX-143](./MUX-143-run-carries-two-phase-identities.md)'s class). The pointer stays the single
+([MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)'s class). The pointer stays the single
 record; the fix is that it survives.
 
 ### Key files
@@ -156,28 +156,43 @@ record; the fix is that it survives.
 
 ### Phase 1: Keep the pointer, log its changes
 
-- [ ] `setup.go` `purgeStaleFiles`: drop the removal at 261–262; write `spec-kept <path> live-runs=N` (or `spec-none`) in its place, with a comment naming this incident
-- [ ] `setup_test.go`: `TestInit_ReInit_PurgesStaleData` asserts the pointer survives; siblings assert a bus dir with no pointer stays without one (re-init never invents a pointer) and that a clear before re-init is honoured after it
-- [ ] `cmd/spec.go` `set` / `clear`: `spec-set` / `spec-clear` rows with actor and path
-- [ ] Unit test for the rows: actor from `BUS_ROLE`; `user` when unset
+- [x] `setup.go` `purgeStaleFiles`: drop the removal at 261–262; write `spec-kept <path> live-runs=N` (or `spec-none`) in its place, with a comment naming this incident — `logActiveSpecKept`; live runs counted by `ScanInFlightGraphRuns`
+- [x] `setup_test.go`: `TestInit_ReInit_PurgesStaleData` asserts the pointer survives; siblings assert a bus dir with no pointer stays without one (re-init never invents a pointer) and that a clear before re-init is honoured after it — plus `TestInit_ReInit_CountsLiveRunsBesideKeptSpec` (one live run, one complete → `live-runs=1`), `TestInit_ReInit_NoPointerStaysUnset`, `TestInit_ReInit_HonoursClearBeforeIt`
+- [x] `cmd/spec.go` `set` / `clear`: `spec-set` / `spec-clear` rows with actor and path — `bus.LogSpecPointerChange`, called from both cases; `clear` records the path it cleared
+- [x] Unit test for the rows: actor from `BUS_ROLE`; `user` when unset — `TestLogSpecPointerChange_Actor` pins the helper; `TestSpecSetClearWriteLifecycleRows` (`cmd/spec_test.go`) drives the real `Spec` handlers — `set` as `plan`, `clear` with no role → `actor=user`, naming the path it removed — and fails if either call is dropped. Added after the first review's must-fix (the helper-only test stayed green with the feature disconnected); the second review passed with no findings
+
+### Findings for Phase 1
+
+Recorded 2026-11-13 from the Phase 1 implement and fix nodes of run
+`1794608375-55-defect-backlog-loop`; `./test.sh` passed, review clean on the second pass.
+
+| Finding | Detail |
+|---------|--------|
+| **Other writers of the pointer logged nothing — fixed by the run's `criteria` node** | After Phase 1 the rows came only from `muxcode spec set` / `clear`, while the third acceptance criterion ends "every change to the pointer has a row" and no phase step covered the rest. The acceptance worker gave `LogSpecPointerChange` a `via` argument and called it from every other writer: `PointSpecForLaunch` (`via=graph-launch`), `UnpointSpecForLaunch` (`via=launch-rollback`, only when it actually clears), `LaunchIntentFromBranch` (`via=branch`) and the `cmd/graph.go` picker (`via=graph-picker`). The two commands write no `via`. `ReconcileActiveSpec`'s close-out repoint keeps its own `spec-repoint` row. Plan checked the call sites: all seven non-test callers of `WriteActiveSpec` / `ClearActiveSpec` are covered. No user decision was recorded — the worker widened the code rather than narrowing the criterion |
+| "`spec clear` is the only way it goes" is not quite true (Phase 3 review) | `UnpointSpecForLaunch` (`bus/intent.go`) also clears the pointer, when a graph launch that wrote it fails to start — only if the pointer still holds the value that launch set. The docs say "removed only by `spec clear` or a failed-launch rollback"; this spec's own wording of that clause is looser than the code |
+| Actor source | The row's actor is `BusActor()` (the agent role, else `user`), not a direct `BUS_ROLE` read as the spec's wording has it; the tests set `BUS_ROLE` and clear `AGENT_ROLE` |
 
 ### Phase 2: The daemon notices an unset pointer under a live run
 
-- [ ] `daemon.go` `checkActiveSpec`: on `SpecPointerUnset`, scan the run store for a `running`/`waiting` run whose template `RequiresSpec`; `spec-unset-live-run` warn row + `event` to edit naming the run, gated by `shouldSendEvent`
-- [ ] Test: unset pointer + live spec-requiring run → one row and one event, the next poll silent; unset pointer with no run, or with a run whose template does not require a spec → nothing (negative control)
-- [ ] Resume test: a run store with an open-phase spec, `bus.Init` called twice on the same bus dir, then `loop-check` evaluated → `spec_phases_remaining: true` passes; the same with the pointer explicitly cleared → fails (the MUX-121 termination, still intact)
+- [x] `daemon.go` `checkActiveSpec`: on `SpecPointerUnset`, scan the run store for a `running`/`waiting` run whose template `RequiresSpec`; `spec-unset-live-run` warn row + `event` to edit naming the run, gated by `shouldSendEvent` — `alertSpecUnsetLiveRun` / `liveRunRequiringSpec` (the oldest in-flight run whose **frozen** graph `RequiresSpec`, via `ScanInFlightGraphRuns`), keyed per run; the action is in `isSystemAction` (`bus/guard.go`)
+- [x] Test: unset pointer + live spec-requiring run → one row and one event, the next poll silent; unset pointer with no run, or with a run whose template does not require a spec → nothing (negative control) — `TestCheckActiveSpec_UnsetUnderLiveRunAlertedOnce`, `TestCheckActiveSpec_UnsetSilentWithoutSpecRun` (also a completed run → nothing), `daemon/provenance_gate_test.go`
+- [x] Resume test: a run store with an open-phase spec, `bus.Init` called twice on the same bus dir, then `loop-check` evaluated → `spec_phases_remaining: true` passes; the same with the pointer explicitly cleared → fails (the MUX-121 termination, still intact) — `TestSpecToPRLoopCheckSurvivesReInit` (`bus/graph_exec_test.go`), on a real `50-spec-to-pr` run's frozen `loop-check`
 
 ### Phase 3: Docs
 
-- [ ] `docs/architecture.md`: the session re-init list — what is purged and what is kept, the pointer named beside `graphs/`; the spec-verification paragraph. `docs/agent-bus.md` `muxcode spec`: the rows
-- [ ] `CLAUDE.md` spec-verification constraint: one clause — the pointer survives re-init; `spec clear` is the only way it goes
+- [x] `docs/architecture.md`: the session re-init list — what is purged and what is kept, the pointer named beside `graphs/`; the spec-verification paragraph. `docs/agent-bus.md` `muxcode spec`: the rows — Session re-init gains a "Kept in the bus directory" bullet; the verify-spec section gains a pointer-lifetime table with the `spec-unset-live-run` arm (at most once per run per 300 s — a cooldown, not strictly one-time); `docs/agent-bus.md` gains a `muxcode spec` reference section (there was none) and five lifecycle-table rows
+- [x] `CLAUDE.md` spec-verification constraint: one clause — the pointer survives re-init; `spec clear` is the only way it goes — added by edit, with the rows and the unset alert
 
 ### Phase 4: Integration test
 
-- [ ] `scripts/test-reinit-active-spec.sh` (hermetic: scratch `BUS_SESSION`, scratch repo with a one-open-phase spec, `muxcode init` as the re-init): `spec set` → `muxcode init` again → `spec get` prints the path and `lifecycle show` carries `spec-kept`
-- [ ] Negative control: `spec clear` → `muxcode init` → `spec get` still empty; a fresh bus dir → no pointer after init
-- [ ] `spec-set` and `spec-clear` rows present with the actor
-- [ ] Run the script and record the counts in this spec
+- [x] `scripts/test-reinit-active-spec.sh` (hermetic: scratch `BUS_SESSION`, scratch repo with a one-open-phase spec, `muxcode init` as the re-init): `spec set` → `muxcode init` again → `spec get` prints the path and `lifecycle show` carries `spec-kept` — tree-built binary, scratch HOME and lifecycle dir; two re-inits, each keeping the path and writing one `spec-kept … live-runs=0`
+- [x] Negative control: `spec clear` → `muxcode init` → `spec get` still empty; a fresh bus dir → no pointer after init — also `spec-none` after the clear with no further `spec-kept`, and a never-pointed session gaining no marker across two re-inits
+- [x] `spec-set` and `spec-clear` rows present with the actor — `actor=plan` on set, `actor=user` and the cleared path on clear
+- [x] Run the script and record the counts in this spec
+
+Run through the run agent on 2026-11-13 17:37 (task `1794609465-spawn-2f5b5fbd-55b0c1ca`, log
+`/tmp/test-reinit-active-spec.log`): **29 passed, 0 failed, coverage floor 28 met, exit 0.** The
+script is not executable in the tree (`-rw-r--r--`) and was run as `bash scripts/…`.
 
 ## Notes
 
@@ -194,11 +209,18 @@ record; the fix is that it survives.
 - Related: [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) (Phase 3 —
   `ReconcileActiveSpec`, the pointer-honesty principle this extends one layer down);
   [MUX-121](../completed/MUX-121-multi-phase-sequential-graph.md) (the termination
-  semantics that make a vanished pointer look like a finished spec); [MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)
-  (why the window was invisible at first); [MUX-143](./MUX-143-run-carries-two-phase-identities.md)
+  semantics that make a vanished pointer look like a finished spec); [MUX-124](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md)
+  (why the window was invisible at first); [MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)
   (why the run must not carry a second copy); [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)
   (the fail-closed `phase-check` path a vanished pointer would take).
 
 ## Status
 
-**Backlog** — 0/20. Filed 2026-09-09 15:41.
+Complete
+
+Closed out 2026-11-13 by `55-defect-backlog-loop` run `1794608375`, which activated it the same day.
+All four phases and seven acceptance criteria are checked. The third criterion was met by the run's
+acceptance worker widening the audit rows to every writer of the pointer; the graph picker's row is
+the one call site with no test. Filed 2026-09-09 15:41. Last seen 2026-11-13 15:06: a session
+re-init cleared the pointer while a defect-loop run was at its `close-spec` node, and plan re-set it
+by hand.

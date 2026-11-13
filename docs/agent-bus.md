@@ -1496,6 +1496,11 @@ muxcode lifecycle purge [--days N]
 | auto-accept | complete | info | All agents past prompts |
 | init | init | info | Fresh bus directory created |
 | init | re-init | info | Stale data purged from previous session |
+| init | spec-kept | info | Re-init left the active-spec pointer in place: `<path> live-runs=N` |
+| init | spec-none | info | Re-init found no active-spec pointer to keep |
+| spec | spec-set | info | The active-spec pointer was set: `actor=<role\|user> path=<path>`, plus ` via=graph-launch\|branch\|graph-picker` when the writer was not `muxcode spec set` |
+| spec | spec-clear | info | The pointer was cleared: `actor=<role\|user> path=<path cleared, or none>`, plus ` via=launch-rollback` when a failed graph launch rolled it back |
+| daemon | spec-unset-live-run | warn | No active spec while a running graph run requires one (detail: the run id) |
 | agent | launch | info | Agent process exec'd (role + CLI) |
 | daemon | started | info | Daemon `Run()` begins (with PID) |
 | daemon | lock-failed | error | Another daemon already running |
@@ -2160,6 +2165,51 @@ Reads the delivery status file for the given message ID and prints its lifecycle
 Status values: `sent`, `delivered`, `responded`, `expired`.
 
 Core code: `cmd/track.go`, `bus/delivery.go`.
+
+### `muxcode spec`
+
+The active requirements spec for the session: the pointer the review chain's `verify-spec`, the
+graph's spec-phase conditions and the close-out guard all read.
+
+```bash
+muxcode spec                      # same as get
+muxcode spec get                  # print the active spec, or "No active spec set"
+muxcode spec set <path|id>        # set it
+muxcode spec clear                # remove it
+```
+
+`set` takes a path, a tracking id in any spelling (`144`, `mux-144`, `MUX-144`) or a slug fragment,
+resolved by `ResolveSpecQuery`. An absolute path is stored relative to the working directory. A spec
+outside `docs/requirements/drafts/` is accepted with a warning that verification may not trigger.
+
+Every change to the pointer leaves a lifecycle row ([MUX-168](requirements/completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md)).
+Sets and clears come from source `spec`; the daemon's close-out repoint is logged from source
+`daemon` as `spec-repoint`, so `muxcode lifecycle show --source spec` alone omits it — read the full
+history by event (`--event spec-set`, `--event spec-clear`, `--event spec-repoint`). For the sets and
+clears the detail is `actor=<role|user> path=<path>`, with ` via=<road>` appended when the writer is not
+this command (`LogSpecPointerChange`, `bus/config.go`):
+
+| Writer | Row | `via` |
+|--------|-----|-------|
+| `muxcode spec set` | `spec-set` | — (none) |
+| `muxcode spec clear` | `spec-clear`, naming the path it cleared, or `none` | — (none) |
+| A graph launch that names a spec while none is active (`PointSpecForLaunch`) | `spec-set` | `graph-launch` |
+| That launch failing to start and rolling its pointer back (`UnpointSpecForLaunch`) — only when it actually clears | `spec-clear` | `launch-rollback` |
+| An intent derived from the branch (`LaunchIntentFromBranch`) | `spec-set` | `branch` |
+| The `muxcode graph` spec picker (`cmd/graph.go`) | `spec-set` | `graph-picker` |
+
+The actor is `BusActor`: `AGENT_ROLE`, then `BUS_ROLE`, else `user`. The one change that is not a
+`spec-set` is the daemon following a close-out move from `drafts/` to `completed/`, which it logs as
+`spec-repoint`.
+
+The pointer survives a session re-init. It is removed only by `spec clear`, or by a failed graph
+launch rolling back the pointer that launch itself wrote (`UnpointSpecForLaunch`) — and the
+daemon reports an unset pointer under a running graph run that requires one. See
+[Architecture → Spec verification](architecture.md#spec-verification-and-branch-time-recording-verify-spec)
+and [Session re-init](architecture.md#session-re-init).
+
+Core code: `cmd/spec.go`, `bus/config.go` (`WriteActiveSpec`, `ClearActiveSpec`,
+`LogSpecPointerChange`), `bus/spec_pointer.go` (`ReconcileActiveSpec`).
 
 ### `muxcode branch-time`
 

@@ -396,7 +396,7 @@ func isSystemAction(action string) bool {
 		"ollama-down", "ollama-recovered", "ollama-restarting",
 		"agent-down", "agent-restarting", "agent-recovered", "agent-definitionless",
 		"mass-agent-exit", "disk-pressure", "long-active", "agent-stuck", "permission-blocked",
-		"delivery-gap", "spec-dangling":
+		"delivery-gap", "spec-dangling", "spec-unset-live-run":
 		return true
 	}
 	return false

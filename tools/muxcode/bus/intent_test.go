@@ -206,13 +206,22 @@ func TestLaunchIntentFromBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := filepath.Join("docs", "requirements", "drafts", "MUX-9-live.md")
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("BUS_ROLE", "")
+	before := specRowCount(t, session, "spec-set")
 
 	spec, set, err := LaunchIntentFromBranch(session)
 	if err != nil || !set || spec.Path != want || ReadActiveSpec(session) != want {
 		t.Fatalf("unset pointer must be set to the branch spec: %+v set=%v err=%v pointer=%q", spec, set, err, ReadActiveSpec(session))
 	}
+	if d, _ := lastLifecycleDetail(t, session, "spec-set"); d != "actor=user path="+want+" via=branch" {
+		t.Errorf("branch write must log spec-set via=branch, got %q (MUX-168)", d)
+	}
 	if _, set, err = LaunchIntentFromBranch(session); err != nil || set {
 		t.Fatalf("matching pointer must be left alone: set=%v err=%v", set, err)
+	}
+	if n := specRowCount(t, session, "spec-set") - before; n != 1 {
+		t.Errorf("spec-set rows written = %d, want 1 — a no-op call must log nothing", n)
 	}
 
 	other := filepath.Join("docs", "requirements", "drafts", "MUX-2-b.md")
@@ -357,6 +366,8 @@ func launchSpecRepo(t *testing.T) string {
 func TestPointSpecForLaunchSetsPointerAndIntent(t *testing.T) {
 	session := launchSpecRepo(t)
 	g := &Graph{RequiresSpec: true}
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("BUS_ROLE", "plan")
 
 	pick, err := PointSpecForLaunch(session, g, "mux-144")
 	if err != nil {
@@ -364,6 +375,9 @@ func TestPointSpecForLaunchSetsPointerAndIntent(t *testing.T) {
 	}
 	if got := ReadActiveSpec(session); got != pick.Path {
 		t.Errorf("pointer = %q, want %q", got, pick.Path)
+	}
+	if d, _ := lastLifecycleDetail(t, session, "spec-set"); d != "actor=plan path="+pick.Path+" via=graph-launch" {
+		t.Errorf("launch write must log spec-set via=graph-launch, got %q (MUX-168)", d)
 	}
 	if !strings.Contains(pick.Intent, "MUX-144") || !strings.Contains(pick.Intent, "Phase 1") {
 		t.Errorf("intent %q must carry key and open phase, not the raw id", pick.Intent)
@@ -391,6 +405,9 @@ func TestPointSpecForLaunchLeavesPointerAlone(t *testing.T) {
 	if got := ReadActiveSpec(session); got != "docs/requirements/drafts/other.md" {
 		t.Errorf("existing pointer was overwritten: %q", got)
 	}
+	if n := specRowCount(t, session, "spec-set"); n != 0 {
+		t.Errorf("a launch that wrote nothing logged %d spec-set rows", n)
+	}
 }
 
 // A launch that writes the pointer and then fails to start must leave the
@@ -401,9 +418,14 @@ func TestUnpointSpecForLaunchRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("AGENT_ROLE", "")
+	t.Setenv("BUS_ROLE", "")
 	UnpointSpecForLaunch(session, pick)
 	if got := ReadActiveSpec(session); got != "" {
 		t.Errorf("failed launch left the pointer at %q", got)
+	}
+	if d, _ := lastLifecycleDetail(t, session, "spec-clear"); d != "actor=user path="+pick.Path+" via=launch-rollback" {
+		t.Errorf("rollback must log spec-clear via=launch-rollback, got %q (MUX-168)", d)
 	}
 }
 
@@ -427,6 +449,25 @@ func TestUnpointSpecForLaunchPreservesConcurrentChange(t *testing.T) {
 	if got := ReadActiveSpec(session); got != "docs/requirements/drafts/elsewhere.md" {
 		t.Errorf("empty rollback cleared the pointer: %q", got)
 	}
+	if n := specRowCount(t, session, "spec-clear"); n != 0 {
+		t.Errorf("a rollback that cleared nothing logged %d spec-clear rows", n)
+	}
+}
+
+// specRowCount counts the session's lifecycle rows carrying event.
+func specRowCount(t *testing.T, session, event string) int {
+	t.Helper()
+	entries, err := ReadLifecycleLog(session)
+	if err != nil {
+		t.Fatalf("read lifecycle: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Event == event {
+			n++
+		}
+	}
+	return n
 }
 
 // A bare number matches across prefixes, so two trackers sharing a number
