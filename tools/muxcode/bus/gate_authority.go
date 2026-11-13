@@ -79,7 +79,47 @@ var (
 	gateSealMu          sync.RWMutex
 	sealedGateRoles     []string
 	gateAuthoritySealed bool
+	sealedSelfApproval  []string
 )
+
+// GateSelfApprovalKey names the roles that may approve gates on runs they
+// launched themselves — the opt-in that makes an agent-launched loop such as
+// 55-defect-backlog-loop autonomous (user decision, 2026-11-13). Read and
+// sealed exactly like the gate authority: config file only, frozen at daemon
+// start, narrowable but never widenable mid-session. A role still needs the gate
+// authority itself; this lifts only the self-approval refusal.
+const GateSelfApprovalKey = "MUXCODE_GATE_SELF_APPROVAL_ROLES"
+
+func selfApprovalGranted(actor string) bool {
+	for _, r := range GateSelfApprovalRoles() {
+		if NormalizeBusRole(r) == actor {
+			return true
+		}
+	}
+	return false
+}
+
+func configuredSelfApproval() []string {
+	for _, path := range gateAuthorityConfigPaths() {
+		if v, ok := readGateConfigKey(path, GateSelfApprovalKey); ok {
+			return splitTrimmed(v)
+		}
+	}
+	return nil
+}
+
+// GateSelfApprovalRoles is the self-approval opt-in as this process may honour
+// it: configured, intersected with the seal in a sealed process.
+func GateSelfApprovalRoles() []string {
+	current := configuredSelfApproval()
+	gateSealMu.RLock()
+	sealed, isSealed := sealedSelfApproval, gateAuthoritySealed
+	gateSealMu.RUnlock()
+	if !isSealed {
+		return current
+	}
+	return intersectRoles(sealed, current)
+}
 
 // SealGateAuthority freezes the gate authority for this process's lifetime and
 // returns what it sealed. The daemon calls it once at startup, before its poll
@@ -96,8 +136,9 @@ var (
 // supply, and gateApprovalHolds decides the release on that.
 func SealGateAuthority() []string {
 	roles := configuredGateAuthority()
+	self := configuredSelfApproval()
 	gateSealMu.Lock()
-	sealedGateRoles, gateAuthoritySealed = roles, true
+	sealedGateRoles, gateAuthoritySealed, sealedSelfApproval = roles, true, self
 	gateSealMu.Unlock()
 	return append([]string(nil), roles...)
 }
@@ -157,6 +198,12 @@ func defaultGateAuthorityConfigPaths() []string {
 }
 
 func readGateAuthorityFile(path string) (string, bool) {
+	return readGateConfigKey(path, "MUXCODE_GATE_AUTHORITY_ROLES")
+}
+
+// readGateConfigKey reads one key from a config file, never the environment —
+// the same rule GateAuthorityConfigured documents, shared by every gate key.
+func readGateConfigKey(path, want string) (string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
@@ -167,7 +214,7 @@ func readGateAuthorityFile(path string) (string, bool) {
 			continue
 		}
 		key, val, found := strings.Cut(line, "=")
-		if !found || strings.TrimSpace(key) != "MUXCODE_GATE_AUTHORITY_ROLES" {
+		if !found || strings.TrimSpace(key) != want {
 			continue
 		}
 		return StripQuotes(strings.TrimSpace(val)), true
@@ -183,7 +230,8 @@ func readGateAuthorityFile(path string) (string, bool) {
 // Self-approval is the shape the incident took — the same autonomous process on
 // both ends — so opting an agent into the authority must not also opt it into
 // rubber-stamping its own work. A person approving their own run is the normal
-// path and is never refused.
+// path and is never refused. The one exception is the user's own opt-in,
+// GateSelfApprovalKey, which lifts the second rule for the roles it names.
 //
 // ActorUnknown is refused whatever the list says. It means the ancestry probe
 // failed, and BusActorVerified fails closed to it precisely so that callers
@@ -219,7 +267,7 @@ func CheckGateApprovalAuthority(actor string, run *GraphRun) string {
 				"Report that the gate is waiting and let the user release it.",
 			actor, who)
 	}
-	if run != nil && actor != ActorUser && actor == NormalizeBusRole(run.CreatedBy) {
+	if run != nil && actor != ActorUser && actor == NormalizeBusRole(run.CreatedBy) && !selfApprovalGranted(actor) {
 		return fmt.Sprintf(
 			"%s created run %s and may not approve its own gate: a run that raises a gate and releases it "+
 				"has no human in the loop. Report that the gate is waiting and let the user release it.",

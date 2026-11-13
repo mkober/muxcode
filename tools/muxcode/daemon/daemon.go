@@ -606,8 +606,9 @@ func (d *Daemon) notifyPlanOnReview() {
 // the close-out move to completed/ is followed automatically, and a pointer
 // whose file is simply gone is reported to edit instead of surfacing later
 // as a failed close-spec guard or a verify-spec against a nonexistent path.
-// shouldSendEvent's per-key cooldown keeps a persistently dangling pointer
-// from alerting every poll.
+// An unset pointer under a live spec-requiring run is reported too
+// (alertSpecUnsetLiveRun, MUX-168). shouldSendEvent's per-key cooldown keeps
+// a persistent condition from alerting every poll.
 func (d *Daemon) checkActiveSpec() {
 	res := bus.ReconcileActiveSpec(d.session, bus.SessionRepoDir(d.session))
 	switch res.Outcome {
@@ -627,7 +628,48 @@ func (d *Daemon) checkActiveSpec() {
 				}
 			}
 		}
+	case bus.SpecPointerUnset:
+		d.alertSpecUnsetLiveRun()
 	}
+}
+
+// alertSpecUnsetLiveRun reports an unset pointer while a running graph run
+// whose template RequiresSpec still reads it: a `spec-unset-live-run` warn
+// row and an event to edit naming the run, once per run per
+// shouldSendEvent cooldown. An unset pointer with no such run is normal and
+// stays silent.
+//
+// Unset is the one outcome ReconcileActiveSpec cannot repair, and the run
+// does not notice it either — spec_phases_remaining reads "no spec" as
+// "nothing remaining" and routes a spec-to-pr loop to final-gate with phases
+// open. Before MUX-168 a session re-init removed the pointer under a live
+// run and nothing looked; a deliberate `spec clear` mid-run is announced
+// here for the same reason.
+func (d *Daemon) alertSpecUnsetLiveRun() {
+	runID := liveRunRequiringSpec(d.session)
+	if runID == "" || !d.shouldSendEvent("spec-unset-live-run", runID) {
+		return
+	}
+	bus.LogLifecycle(d.session, "warn", "daemon", "spec-unset-live-run", runID)
+	if !d.shouldNotifyEdit("event") {
+		return
+	}
+	msg := bus.NewMessage("daemon", "edit", "event", "spec-unset-live-run",
+		fmt.Sprintf("No active spec is set, but graph run %s requires one and is still running — its spec-phase conditions now read as no phases remaining. Re-point it with 'muxcode spec set <path>', or cancel the run.", runID), "")
+	if err := bus.Send(d.session, msg); err == nil {
+		d.refreshInboxSizes()
+	}
+}
+
+// liveRunRequiringSpec returns the oldest running graph run whose frozen
+// template RequiresSpec, or "" when there is none.
+func liveRunRequiringSpec(session string) string {
+	for _, run := range bus.ScanInFlightGraphRuns(session) {
+		if g, err := bus.ReadGraphRunGraph(session, run.ID); err == nil && g.RequiresSpec {
+			return run.ID
+		}
+	}
+	return ""
 }
 
 // checkTrigger monitors the trigger file for file-edit events with debouncing.

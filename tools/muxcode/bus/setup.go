@@ -258,8 +258,7 @@ func purgeStaleFiles(session string) error {
 	// Remove modal PID files
 	cleanupModalPids(session)
 
-	// Remove active spec marker
-	_ = os.Remove(ActiveSpecPath(session))
+	logActiveSpecKept(session)
 
 	// Remove MUX-007 gate markers (reviewed transition, verify movement)
 	_ = os.Remove(ReviewedMarkerPath(session))
@@ -272,6 +271,27 @@ func purgeStaleFiles(session string) error {
 	// Already handled by the lock dir cleanup above, but explicit for clarity
 
 	return nil
+}
+
+// logActiveSpecKept records, in place of purging it, that a re-init leaves
+// the active-spec pointer alone: `spec-kept <path> live-runs=N`, or
+// `spec-none` when no pointer is set.
+//
+// The pointer is durable session state, like the run store under graphs/,
+// which re-init has never touched. Purging it while graph runs survive
+// resumed a spec-to-pr run with the pointer it reads gone — loop-check then
+// counts "no spec" as "no phases remaining" and routes to final-gate. Seen on
+// 2026-09-09, 2026-09-10 and 2026-11-13 (MUX-168). Staleness is
+// ReconcileActiveSpec's job; it is removed only by `muxcode spec clear` or a
+// failed graph launch rolling back its own pointer (UnpointSpecForLaunch).
+func logActiveSpecKept(session string) {
+	spec := ReadActiveSpec(session)
+	if spec == "" {
+		LogLifecycle(session, "info", "init", "spec-none", "No active spec to keep")
+		return
+	}
+	live := len(ScanInFlightGraphRuns(session))
+	LogLifecycle(session, "info", "init", "spec-kept", fmt.Sprintf("%s live-runs=%d", spec, live))
 }
 
 // cleanModeCycleState removes mode cycle state files on re-init.

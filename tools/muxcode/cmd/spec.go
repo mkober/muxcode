@@ -81,13 +81,16 @@ func Spec(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		bus.LogSpecPointerChange(session, "spec-set", specPath, "")
 		fmt.Printf("Active spec set: %s\n", specPath)
 
 	case "clear":
+		cleared := bus.ReadActiveSpec(session)
 		if err := bus.ClearActiveSpec(session); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
+		bus.LogSpecPointerChange(session, "spec-clear", cleared, "")
 		fmt.Println("Active spec cleared")
 
 	default:

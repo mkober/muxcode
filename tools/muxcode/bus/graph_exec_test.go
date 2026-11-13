@@ -3269,6 +3269,71 @@ func TestSpecPhasesRemainingCondition(t *testing.T) {
 	}
 }
 
+// TestSpecToPRLoopCheckSurvivesReInit pins MUX-168: a spec-to-pr run resumed
+// across two session re-inits evaluates its own frozen loop-check against the
+// spec it started with, so an open phase re-enters implement rather than
+// routing to final-gate. Clearing the pointer deliberately still terminates
+// the loop — the MUX-121 semantics are untouched.
+func TestSpecToPRLoopCheckSurvivesReInit(t *testing.T) {
+	useTempBusDir(t)
+	session := runTestSession
+	t.Cleanup(func() { _ = Cleanup(session) })
+	if err := Init(session, t.TempDir()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	const spec = "docs/requirements/drafts/MUX-168-example.md"
+	if err := os.MkdirAll(filepath.Join(repo, filepath.Dir(spec)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := "### Phase 1: A\n- [x] done\n\n### Phase 2: B\n- [ ] open\n"
+	if err := os.WriteFile(filepath.Join(repo, spec), []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteActiveSpec(session, spec); err != nil {
+		t.Fatal(err)
+	}
+	g, err := ParseGraph([]byte(builtinGraphJSON["50-spec-to-pr"]))
+	if err != nil {
+		t.Fatalf("parse 50-spec-to-pr: %v", err)
+	}
+	run, err := CreateGraphRun(session, g, "50-spec-to-pr", "intent")
+	if err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := Init(session, t.TempDir()); err != nil {
+			t.Fatalf("re-Init %d: %v", i, err)
+		}
+	}
+
+	if inflight := ScanInFlightGraphRuns(session); len(inflight) != 1 || inflight[0].ID != run.ID {
+		t.Fatalf("run %s must survive re-init in flight, got %+v", run.ID, inflight)
+	}
+	frozen, err := ReadGraphRunGraph(session, run.ID)
+	if err != nil {
+		t.Fatalf("read frozen graph: %v", err)
+	}
+	loopCheck := frozen.node("loop-check")
+	if loopCheck == nil {
+		t.Fatal("50-spec-to-pr has no loop-check node")
+	}
+	ctx := &ChainContext{Session: session}
+
+	if ok, _ := EvaluateConditions(loopCheck.Conditions, ctx); !ok {
+		t.Error("after re-init with phase 2 open, loop-check must pass and re-enter implement, not route to final-gate")
+	}
+
+	if err := ClearActiveSpec(session); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := EvaluateConditions(loopCheck.Conditions, ctx); ok {
+		t.Error("with the pointer cleared, loop-check must fail — a loop terminates when its spec is gone (MUX-121)")
+	}
+}
+
 // TestExecPhaseProgressGuard pins the per-phase commit guard (MUX-121):
 // each commit must ship one newly-completed phase, counted against the
 // guard node's own prior successful fires — fix-loop and retry fires

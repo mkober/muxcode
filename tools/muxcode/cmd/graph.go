@@ -270,6 +270,7 @@ func intentFromSpecChoice(session string) string {
 		fmt.Fprintf(os.Stderr, "Error: cannot set active spec: %v\n", err)
 		os.Exit(1)
 	}
+	bus.LogSpecPointerChange(session, "spec-set", pick.Path, "graph-picker")
 	fmt.Printf("Active spec set: %s\n", pick.Path)
 	fmt.Printf("Intent: %s\n", pick.Intent)
 	return pick.Intent

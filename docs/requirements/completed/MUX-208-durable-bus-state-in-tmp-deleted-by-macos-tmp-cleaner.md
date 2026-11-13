@@ -398,7 +398,7 @@ cancel section and floor 52; re-run 15:08 the same day: **53 passed, 0 failed, f
   same namespace from the other side
 - [MUX-160](../backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md) — the `/tmp` caches the
   disk-pressure sweep counts; what stays in `/tmp` after this spec
-- [MUX-168](../backlog/MUX-168-reinit-purges-active-spec-graph-run-survives.md) — the active-spec pointer
+- [MUX-168](../completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md) — the active-spec pointer
   lost by another road
 - [MUX-002](../completed/MUX-002-disk-pressure-wrong-filesystem.md) — the sweep's filesystem
 - Symptoms recorded here as evidence, each a candidate spec: the graph TUI hides a run whose

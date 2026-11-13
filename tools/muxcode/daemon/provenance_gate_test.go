@@ -316,3 +316,95 @@ func TestCheckActiveSpec_DanglingAlertedOnce(t *testing.T) {
 		t.Error("dangling pointer was cleared instead of reported")
 	}
 }
+
+// startRunThenClearSpec creates a running graph run while the pointer is set
+// — CreateGraphRun refuses a spec-requiring graph without one — then clears
+// the pointer, the MUX-168 state a re-init used to leave behind.
+func startRunThenClearSpec(t *testing.T, session string, requiresSpec bool) string {
+	t.Helper()
+	seedRepoSpec(t, session)
+	g := &bus.Graph{Name: "g", Start: "a", RequiresSpec: requiresSpec,
+		Nodes: []bus.Node{{ID: "a", Type: bus.NodeSend, Role: "build", Action: "build", Message: "go"}}}
+	run, err := bus.CreateGraphRun(session, g, "g", "intent")
+	if err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	if err := bus.ClearActiveSpec(session); err != nil {
+		t.Fatal(err)
+	}
+	return run.ID
+}
+
+// specUnsetAlerts counts spec-unset-live-run messages in edit's inbox and
+// rows in the lifecycle log, returning the message payloads.
+func specUnsetAlerts(t *testing.T, session string) (payloads []string, rows int) {
+	t.Helper()
+	msgs, err := bus.Peek(session, "edit")
+	if err != nil {
+		t.Fatalf("peek edit: %v", err)
+	}
+	for _, m := range msgs {
+		if m.Action == "spec-unset-live-run" {
+			payloads = append(payloads, m.Payload)
+		}
+	}
+	entries, err := bus.ReadLifecycleLog(session)
+	if err != nil {
+		t.Fatalf("read lifecycle: %v", err)
+	}
+	for _, e := range entries {
+		if e.Event == "spec-unset-live-run" {
+			rows++
+		}
+	}
+	return payloads, rows
+}
+
+func TestCheckActiveSpec_UnsetUnderLiveRunAlertedOnce(t *testing.T) {
+	session := testSession(t)
+	runID := startRunThenClearSpec(t, session, true)
+	d := New(session, 5, 2)
+
+	d.checkActiveSpec()
+	d.checkActiveSpec()
+
+	payloads, rows := specUnsetAlerts(t, session)
+	if len(payloads) != 1 || rows != 1 {
+		t.Fatalf("got %d alerts and %d rows, want exactly 1 of each", len(payloads), rows)
+	}
+	if !strings.Contains(payloads[0], runID) {
+		t.Errorf("alert must name run %s, got %q", runID, payloads[0])
+	}
+}
+
+// Negative controls: an unset pointer is normal unless a live run needs it.
+func TestCheckActiveSpec_UnsetSilentWithoutSpecRun(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, session string)
+	}{
+		{"no run", func(t *testing.T, session string) {}},
+		{"run not requiring a spec", func(t *testing.T, session string) {
+			startRunThenClearSpec(t, session, false)
+		}},
+		{"spec-requiring run already complete", func(t *testing.T, session string) {
+			id := startRunThenClearSpec(t, session, true)
+			if err := bus.UpdateGraphRunState(session, id, bus.GraphRunComplete); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := testSession(t)
+			tc.setup(t, session)
+			d := New(session, 5, 2)
+
+			d.checkActiveSpec()
+
+			if payloads, rows := specUnsetAlerts(t, session); len(payloads) != 0 || rows != 0 {
+				t.Errorf("got %d alerts and %d rows, want none", len(payloads), rows)
+			}
+		})
+	}
+}

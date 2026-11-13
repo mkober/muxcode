@@ -111,6 +111,47 @@ func TestApproveGraphGateRefusesSelfApproval(t *testing.T) {
 	}
 }
 
+func pinGateConfigBody(t *testing.T, body string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config")
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	orig := gateAuthorityConfigPaths
+	gateAuthorityConfigPaths = func() []string { return []string{path} }
+	t.Cleanup(func() { gateAuthorityConfigPaths = orig })
+}
+
+// The self-approval opt-in makes an agent-launched loop autonomous: with it an
+// authorized agent releases a gate on its own run; without it the refusal
+// stands; and a seal taken before the opt-in was written cannot be widened.
+func TestGateSelfApprovalOptIn(t *testing.T) {
+	const authority = "MUXCODE_GATE_AUTHORITY_ROLES=user,auto\n"
+	unsealGateAuthority(t)
+
+	pinGateConfigBody(t, authority)
+	pinActor(t, "auto")
+	refused := createTestRun(t, actorGateGraph())
+	if err := ApproveGraphGate(runTestSession, refused.ID, "gate"); err == nil {
+		t.Fatal("auto approved its own run with no self-approval opt-in")
+	}
+	assertNoApproval(t, refused.ID, "gate")
+
+	pinGateConfigBody(t, authority+GateSelfApprovalKey+"=auto\n")
+	own := createTestRun(t, actorGateGraph())
+	if err := ApproveGraphGate(runTestSession, own.ID, "gate"); err != nil {
+		t.Fatalf("opted-in auto was refused its own gate: %v", err)
+	}
+
+	pinGateConfigBody(t, authority)
+	SealGateAuthority()
+	pinGateConfigBody(t, authority+GateSelfApprovalKey+"=auto\n")
+	late := createTestRun(t, actorGateGraph())
+	if err := ApproveGraphGate(runTestSession, late.ID, "gate"); err == nil {
+		t.Error("an opt-in written after the seal widened a sealed process")
+	}
+}
+
 // TestApproveGraphGateAllowsUser is Phase 2's negative control: the human path
 // is unchanged. A person approves, the marker lands with their identity, and
 // approving their own run is not self-approval.
@@ -205,7 +246,7 @@ func unsealGateAuthority(t *testing.T) {
 	t.Helper()
 	clear := func() {
 		gateSealMu.Lock()
-		sealedGateRoles, gateAuthoritySealed = nil, false
+		sealedGateRoles, gateAuthoritySealed, sealedSelfApproval = nil, false, nil
 		gateSealMu.Unlock()
 	}
 	clear()

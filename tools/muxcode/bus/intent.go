@@ -210,6 +210,7 @@ func LaunchIntentFromBranch(session string) (spec BranchSpec, set bool, err erro
 	if err := WriteActiveSpec(session, spec.Path); err != nil {
 		return BranchSpec{}, false, fmt.Errorf("cannot set active spec: %w", err)
 	}
+	LogSpecPointerChange(session, "spec-set", spec.Path, "branch")
 	return spec, true, nil
 }
 
@@ -377,6 +378,7 @@ func PointSpecForLaunch(session string, g *Graph, input string) (SpecChoice, err
 	if err := WriteActiveSpec(session, pick.Path); err != nil {
 		return SpecChoice{}, fmt.Errorf("cannot set active spec %s: %w", pick.Path, err)
 	}
+	LogSpecPointerChange(session, "spec-set", pick.Path, "graph-launch")
 	return pick, nil
 }
 
@@ -391,7 +393,9 @@ func UnpointSpecForLaunch(session string, pick SpecChoice) {
 	if pick.Path == "" || ReadActiveSpec(session) != pick.Path {
 		return
 	}
-	_ = ClearActiveSpec(session)
+	if ClearActiveSpec(session) == nil {
+		LogSpecPointerChange(session, "spec-clear", pick.Path, "launch-rollback")
+	}
 }
 
 // matchSpecByKey collects the choices whose key carries num (leading zeros

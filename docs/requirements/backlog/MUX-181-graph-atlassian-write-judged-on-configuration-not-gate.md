@@ -176,3 +176,8 @@ Phase 2's, recorded in this spec before any code moves.
 ## Status
 
 Backlog — filed 2026-09-13, 0/25. Co-scheduled with MUX-165 (`⇄`).
+
+**Parked 2026-11-13** on the user's decision, relayed by edit. `55-defect-backlog-loop` run
+`1794607423` activated it the same day and no work was done. Phase 2's seam is the user's choice
+and is not recorded, and the spec ships together with MUX-165; returning it to `drafts/` is the
+user's call.

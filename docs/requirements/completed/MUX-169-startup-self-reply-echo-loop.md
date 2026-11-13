@@ -133,7 +133,7 @@ refused where it enters.
   echo — a `type: response` typed as a prompt on the scrape road — closed at its root by the hook
   road; this one is the send-side sibling); [MUX-032](../backlog/MUX-032-loop-detector-granularity.md)
   (the detector's blind spot for one-role echoes); [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)
-  (the same codex test agent); [MUX-168](../backlog/MUX-168-reinit-purges-active-spec-graph-run-survives.md)
+  (the same codex test agent); [MUX-168](../completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md)
   (found in the same relaunch — the re-init that also emptied the test store).
 
 ## Status
