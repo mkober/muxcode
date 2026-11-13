@@ -93,6 +93,48 @@ func TestMuxcodeTmpFootprint(t *testing.T) {
 	}
 }
 
+// withDefaultScratchBase puts the default (non-overridden) base on scratch
+// roots: /tmp via legacyBusDirRoot, the state base via XDG_STATE_HOME.
+func withDefaultScratchBase(t *testing.T) (tmpRoot, stateDir string) {
+	t.Helper()
+	prevOverride, prevLegacy := busDirOverride, legacyBusDirRoot
+	busDirOverride = ""
+	legacyBusDirRoot = t.TempDir()
+	t.Cleanup(func() { busDirOverride, legacyBusDirRoot = prevOverride, prevLegacy })
+	t.Setenv(BusDirBaseEnv, "")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	return legacyBusDirRoot, StateDir()
+}
+
+// TestTmpPressure_SpawnWorktreesCountOnDefaultBase pins the MUX-208 review
+// must-fix: worktrees moved from /tmp/muxcode-spawn-* to StateDir()/spawn
+// stopped counting toward the footprint, so a fat worktree tree could no
+// longer trip footprint-triggered cleanup.
+func TestTmpPressure_SpawnWorktreesCountOnDefaultBase(t *testing.T) {
+	_, state := withDefaultScratchBase(t)
+	t.Setenv("MUXCODE_TMP_FREE_FLOOR", "1")
+	t.Setenv("MUXCODE_TMP_FOOTPRINT_LIMIT", "4096")
+
+	wt := filepath.Join(state, "spawn", "somesession", "implement")
+	if err := os.MkdirAll(wt, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if pressured, _, footprint := TmpPressure(); pressured || footprint != 0 {
+		t.Fatalf("empty spawn tree: TmpPressure() = (%v, footprint %d), want (false, 0)", pressured, footprint)
+	}
+
+	if err := os.WriteFile(filepath.Join(wt, "blob"), make([]byte, 8192), 0644); err != nil {
+		t.Fatal(err)
+	}
+	pressured, _, footprint := TmpPressure()
+	if footprint != 8192 {
+		t.Errorf("MuxcodeTmpFootprint() = %d, want 8192 — StateDir()/spawn worktree bytes must count", footprint)
+	}
+	if !pressured {
+		t.Errorf("TmpPressure() = false with %d spawn bytes over a 4096 limit", footprint)
+	}
+}
+
 func TestTmpPressure_HealthyMachineIsSilent(t *testing.T) {
 	dir := t.TempDir()
 	withTmpOverride(t, dir)

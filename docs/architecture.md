@@ -16,7 +16,7 @@ Muxcode creates a tmux session with multiple windows, each running an independen
 │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘    │
 │       │           │           │           │                     │
 │  ─────┼───────────┼───────────┼───────────┼──────────────────── │
-│       │     Message Bus (/tmp/muxcode-bus-{session}/)           │
+│       │     Message Bus ($MUXCODE_BUS_DIR/)                     │
 │       │     ├── inbox/{role}.jsonl                              │
 │       │     ├── lock/{role}.lock                                │
 │       │     ├── workflow-state.json                             │
@@ -102,7 +102,7 @@ Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bu
 ```
 1. User types in edit window
 2. Edit agent sends: muxcode send build build "Run ./build.sh" --wait
-3. Bus writes to /tmp/muxcode-bus-{s}/inbox/build.jsonl
+3. Bus writes to $MUXCODE_BUS_DIR/inbox/build.jsonl
 4. Bus sends tmux notification to build agent pane
 5. --wait polls edit's inbox every 2s for a response
 6. Build agent reads inbox, runs ./build.sh
@@ -120,7 +120,7 @@ Core code: `cmd/hook.go` (hook gating), `bus/prompt.go` (role-specific manual bu
 ```
 1. Edit agent completes an implementation phase
 2. Edit sends: muxcode send plan update-docs "Phase 1 complete — check off criteria" --wait
-3. Bus delivers to /tmp/muxcode-bus-{s}/inbox/plan.jsonl
+3. Bus delivers to $MUXCODE_BUS_DIR/inbox/plan.jsonl
 4. Plan agent reads inbox, reads the target spec and relevant code/diffs
 5. Plan agent updates docs: checks off acceptance criteria, updates status fields
 6. Plan agent replies: muxcode send edit update-docs "Updated MUX-043-conditional-chains.md..." --type response --reply-to <id>
@@ -589,8 +589,11 @@ loop over the backlog's prioritized defects, `merge → select`, capped by
   on `main` parks at `main-gate` before anything else.
 - **The gates were not removed, they were collapsed.** Every commit-role node still needs an upstream
   `wait_human` and approval is single-use, so each lap of the outer loop asks exactly once, at
-  `ship-gate`, which dominates `ship`, `pr-push`, `pr-reply` and `merge`. The other four gates
-  (`main-gate`, `stuck-gate`, `close-stuck-gate`, `ship-stuck-gate`) are reached only on failure.
+  `ship-gate`, which dominates `ship`, `pr-push`, `pr-reply` and `merge`. The other two gates
+  (`main-gate`, `ship-stuck-gate`) are reached only on failure. A refused close-out has no gate:
+  `close-spec → criteria` (cap 2 per defect, reset by `merge → select`) sends the open items to the
+  run's worker and re-enters the phase loop at `build`, so the items are worked and re-verified
+  before `close-spec` is asked again; a refusal past the cap fails the run.
 - **Loop budgets are per defect, not per phase.** `merge → select` resets every inner loop edge. A
   reset may not name an edge that itself resets others, so the inner loops reset nothing themselves —
   the fix budget (10) spans all of one defect's phases, where `50-spec-to-pr` refreshes it per phase
@@ -600,6 +603,16 @@ The phase loop itself (`phases-left → implement`) is capped by `max_iterations
 not a fixed number: each defect is a different spec, selected mid-run, so the bound is the phase
 count of whichever spec is active when the edge fires — a count frozen at creation would describe a
 spec the run had not chosen yet.
+
+Phase progress is read from the spec file, never from a reply: `update-spec` routes straight to
+`phases-left` (`spec_phases_remaining`), with no completion token and no per-phase stuck gate —
+on a success, failure or unknown outcome alike, so plan's verdict never decides phase routing. Its
+message asks plan to verify the phase the worker's report covers, not `${current_phase}`: a worker
+that has already had its phase ticked would otherwise be verified against the next one. A
+phase that never completes repeats until the active-spec cap is exhausted, and the run then fails
+loudly. The earlier shape asked plan for a literal `PHASE-COMPLETE` token and parked at `stuck-gate`
+without it — on 2026-11-13 a finished Phase 1 parked there, because its steps were ticked before the
+verify node ran, the node was labelled with the next phase, and plan correctly withheld the token.
 
 The run ends through `finish`, not by running out of edges: when `select` activates nothing, plan
 confirms `NO-DEFECTS-REMAINING` and exits zero (run completes), and any other report exits non-zero
@@ -653,8 +666,13 @@ verbatim through `${failure_report}` (`expandFailureReport`, always the latest f
 stale lap's). After the last phase, `loop-check` routes to `close-spec` — plan's `close-spec` action under
 the `spec-complete` guard: status `Complete`, the move to `completed/`, the `backlog.md` row and
 cross-references, the active pointer cleared — then `final-gate` and `push-pr` commit the close-out,
-push and open the PR. A refused close-out goes to `close-stuck-gate` (retry up to three times, or
-cancel), so a spec with open items is never pushed as complete.
+push and open the PR. A refused close-out is worked, not parked: `close-spec → criteria` (cap 2)
+sends the open items plan reported to the run's spawn worker, whose changes then pass `close-build`,
+`close-test` and `close-review` (a failure at any of them returns to `criteria`, each edge cap 2)
+and `close-verify` — plan's `verify-spec` over the worker's report — before `close-spec` is asked
+again. The worker commits nothing and ticks no box; `push-pr` commits its work with the close-out.
+Past a cap the run fails, so a spec with open items is never pushed as complete. Until 2026-11-13
+the refusal parked at a `close-stuck-gate` (retry ≤ 3) instead.
 
 **Look before you ask** is the same rule at the other end of the story. `commit-pr-review-loop`
 (removed 2026-09-24; its arc now lives in `80-pr-review-fix`, which opens the same way — `find-pr`
@@ -820,6 +838,77 @@ set-hook -g client-resized 'run-shell -b "muxcode resize"'
 
 ## Bus Protocol
 
+### Bus directory location
+
+All bus state — inboxes, receipts, role histories, `graphs/`, the spawn registry, agent-definition
+and sandbox hashes, the active-spec pointer, `config/{role}.env` overrides — lives in one
+per-session directory, `BusDirBase()/muxcode-bus-{session}` (`bus/config.go`). The base resolves as
+the test override, else an absolute `MUXCODE_BUS_BASE`, else `StateDir()/bus`, where `StateDir()` is
+an absolute `$XDG_STATE_HOME/muxcode`, else `~/.local/state/muxcode`. There is no `/tmp` fallback:
+an unresolvable home panics.
+
+**Why not `/tmp`** ([MUX-208](requirements/completed/MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md)).
+The bus lived at `/tmp/muxcode-bus-{session}/` until 2026-11-13. macOS runs `tmp_cleaner` daily at
+00:00 and deletes every `/tmp` file whose atime, mtime and ctime are all more than three days old,
+and APFS does not advance atime on reads — so anything written once and then only read is deleted
+after about four days. A `50-spec-to-pr` run parked on a `wait_human` gate lost its frozen
+`graph.json` that way; the daemon then logged `graph-step-error` every 2 s and rotated every other
+row out of the lifecycle log.
+
+**One resolver.** Nothing outside `bus/config.go` computes the path:
+
+| Consumer | Reads |
+|----------|-------|
+| Go code | `bus.BusDir(session)` |
+| Panes, hooks, the daemon | `MUXCODE_BUS_DIR` (`bus.BusDirEnv`), exported by `LaunchSession` (process env and `tmux set-environment`), the control pane (`-e`), the daemon on start (process env **and** tmux session env, so `upgrade-daemons` re-exports it into a session launched before the install) and every `muxcode agent launch` (always overwritten) |
+| Anything not launched by muxcode | `muxcode bus-dir [session]` — session defaults to `$BUS_SESSION`, exit 2 with neither |
+| Agent definitions | `${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}` |
+| Integration scripts | `scripts/lib/muxcode-bus-dir.sh` (`muxcode_bus_dir <bin> <session>`; refuses a non-absolute answer) |
+| `scripts/muxcode-daemon-monitor.sh` | `$MUXCODE_BUS_DIR`, else `muxcode bus-dir`; exits 1 rather than fall back to `/tmp` |
+| The LLM harness (a separate stdlib-only module) | `$MUXCODE_BUS_DIR`, else its own mirror of the base resolution (`resolveBusDir`) |
+
+**Migration** (`MigrateLegacyBusDir`, `bus/busdir_migrate.go`). A `/tmp/muxcode-bus-{session}` with
+no directory yet at the new location is moved under a flock (`<base>/.muxcode-bus-<s>.migrate.lock`),
+logging one `bus-dir-migrated` row. The move is `os.Rename` on one device; across devices it copies
+into a hidden staging directory (`.muxcode-bus-<s>.migrating-<pid>`) and renames that into place, so
+no destination ever exists half-copied. Nothing moves on an overridden base or inside a test binary.
+
+| Road | When | Conflict logged |
+|------|------|-----------------|
+| First resolution | The first `BusDir()` call for a session in each process; concurrent resolutions wait for the move | No — every process would log it |
+| Session launch | `LaunchSession` | Yes (`ReportLegacyBusDirConflict`) |
+| Daemon start | Daemon `Run` | Yes |
+
+The first-resolution road exists because of the install window: `./build.sh` runs `make install`
+and then `upgrade-daemons`, and between the two any new-binary process — a hook, a version read —
+would otherwise create an empty bus at the new location first, turning the daemon-start migration
+into a conflict that abandons the session's real state. When both directories exist the new one
+wins and the legacy one is left for the user (`bus-dir-conflict`). A failed move logs
+`bus-dir-migrate-failed`, is never remembered, and panics in `BusDir` — stopping the launch or the
+daemon — rather than hand back a path a caller would initialize beside the stranded state.
+
+An agent already running at install time keeps its old environment: its inbox listener holds the
+old path until it restarts and the daemon's wake road re-drives it; panes launched earlier lack
+`MUXCODE_BUS_DIR` until the agent's next relaunch, and everything that reads the variable falls back
+to `muxcode bus-dir`.
+
+**What moved with it, and what did not.**
+
+| Path | Location | Why |
+|------|----------|-----|
+| Spawn worktrees | `StateDir()/spawn/{session}` (`muxcode-spawn-{session}` beside the bus on an overridden base); existing worktrees keep the path in their spawn entry | They hold uncommitted work, and macOS sweeps `$TMPDIR` too |
+| Analyze trigger | `/tmp/muxcode-analyze-{session}.trigger` | Rewritten on every edit |
+| Preview temp file | `/tmp/muxcode-preview-{session}.tmp` | Rewritten on every preview |
+| Codex package caches | `/tmp/muxcode-cache-<uid>` | A cache ([MUX-160](requirements/backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)) |
+
+`DiscoverSessions` follows the base (a missing base is no sessions). `CleanupStale` scans the bus
+base, plus `/tmp` on the default base — preview files, triggers and legacy buses not yet migrated —
+and the spawn root. `MuxcodeTmpFootprint` adds the bus base while `/tmp` stays measured for the
+caches. The Codex writable roots (`muxcodeStateRoots`) include `BusDirBase()`, without which a
+sandboxed Codex agent could not `muxcode send`, and Claude permission profiles carry a `Read()` rule
+for the resolved base (`busDirReadRule`). Go tests never reach the real state directory: every
+package `TestMain` pins `XDG_STATE_HOME` to its run's temp root.
+
 ### Message Types
 
 - **request**: Ask an agent to do something. The recipient should reply with a response.
@@ -896,7 +985,7 @@ Timeout is controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default: 600 seconds). If
 
 ### Lock mechanism
 
-Agents indicate busy state via lock files at `/tmp/muxcode-bus-{session}/lock/{role}.lock`. The dashboard TUI reads lock status for display. Commands:
+Agents indicate busy state via lock files at `$MUXCODE_BUS_DIR/lock/{role}.lock`. The dashboard TUI reads lock status for display. Commands:
 
 - `muxcode lock [role]` — create the lock file
 - `muxcode unlock [role]` — remove the lock file
@@ -1516,7 +1605,7 @@ The `muxcode remote` subcommand provides cross-session visibility — inspecting
 
 ### Session discovery
 
-Sessions are discovered by scanning `/tmp/muxcode-bus-*` directories. Each bus directory corresponds to a session, with liveness determined by `tmux has-session`. The `DiscoverSessions()` function returns all sessions with metadata: name, bus directory, tmux liveness, agent count (inbox files), log size, and project directory (from tmux `#{session_path}`).
+Sessions are discovered by scanning `muxcode-bus-*` directories under the bus base (`BusDirBase()`, default `~/.local/state/muxcode/bus` — see [Bus directory location](#bus-directory-location)); a missing base is no sessions. Each bus directory corresponds to a session, with liveness determined by `tmux has-session`. The `DiscoverSessions()` function returns all sessions with metadata: name, bus directory, tmux liveness, agent count (inbox files), log size, and project directory (from tmux `#{session_path}`).
 
 Session names support **prefix matching** — `muxcode remote status mux` resolves to `muxcode` if it's the only session starting with that prefix. Ambiguous prefixes produce an error listing all matches.
 

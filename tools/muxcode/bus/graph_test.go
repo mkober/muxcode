@@ -1001,8 +1001,18 @@ func TestReqCodePRMultiPhaseLoop(t *testing.T) {
 		!strings.Contains(cs.Message, "completed/") || !strings.Contains(cs.Message, "backlog.md") {
 		t.Errorf("close-spec must be spec-complete guarded and move the spec and update backlog.md, got %+v", cs)
 	}
-	if !templateEdge(tpl, "close-spec", "close-stuck-gate") || !templateEdge(tpl, "close-stuck-gate", "close-spec") {
-		t.Error("a refused close-out must gate-and-ask and retry, never reach the PR")
+	for _, hop := range [][2]string{{"close-spec", "criteria"}, {"criteria", "close-build"}, {"close-build", "close-test"},
+		{"close-test", "close-review"}, {"close-review", "close-verify"}, {"close-verify", "close-spec"}} {
+		if !templateEdge(tpl, hop[0], hop[1]) {
+			t.Errorf("a refused close-out must be worked and re-verified before retrying: missing %s->%s", hop[0], hop[1])
+		}
+	}
+	for _, e := range tpl.Edges {
+		if e.From == "close-spec" && edgeOutcome(e) == OutcomeFailure {
+			if n := nodes[e.To]; n == nil || n.Type == NodeWaitHuman {
+				t.Errorf("a refused close-out must not park at a human gate, routes to %q", e.To)
+			}
+		}
 	}
 	// Negative controls: nothing reaches push-pr except through final-gate,
 	// and nothing reaches final-gate except a successful close-out.

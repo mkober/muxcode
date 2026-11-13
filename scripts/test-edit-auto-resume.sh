@@ -43,7 +43,8 @@ done
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(mktemp -d /tmp/edit-resume-XXXXXX)
 SESSION="edit-resume-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+BUSDIR="" # resolved once the scratch muxcode is built
 
 UUID1=1a2b3c4d-0000-4000-8000-00000000e001
 UUID2=1a2b3c4d-0000-4000-8000-00000000e002
@@ -74,7 +75,7 @@ cleanup() {
   pkill -f "watch $SESSION" 2>/dev/null
   tmux kill-server 2>/dev/null
   sleep 1
-  rm -rf "$BUSDIR" "$WORK" 2>/dev/null || { sleep 2; rm -rf "$BUSDIR" "$WORK" 2>/dev/null; }
+  rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK" 2>/dev/null || { sleep 2; rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK" 2>/dev/null; }
   true
 }
 trap cleanup EXIT
@@ -159,6 +160,7 @@ echo "=== MUX-126 edit resume-aware auto-restart integration test ==="
 (cd "$REPO/scripts/fixtures/claude-stub" && go build -buildvcs=false -o "$WORK/bin/claude" .) \
   || { echo "SKIP: go build claude-stub failed"; exit 2; }
 MUX="$WORK/bin/muxcode"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 ok "scratch muxcode and claude-stub built from this tree"
 
 printf -- '---\ndescription: Editor\n---\nEdit code.\n' >"$WORK/install/agents/code-editor.md"

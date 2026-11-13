@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-// TestMain redirects lifecycle logging into a temp dir for the whole package.
-// See the equivalent in package bus for why this is required.
+// TestMain redirects lifecycle logging and the state root (bus directories)
+// into a temp dir for the whole package. See the equivalent in package bus for
+// why this is required.
 //
 // No test here logs today, so nothing currently leaks. The pin is present so
 // that stays true by construction: the leak returns silently the moment a tui
@@ -18,6 +19,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", dir)
+	os.Setenv("XDG_STATE_HOME", dir+"/state")
 
 	code := m.Run()
 

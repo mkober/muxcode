@@ -36,6 +36,7 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-114 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
@@ -52,7 +53,7 @@ approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="close-guard-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
+BD="" # resolved once the scratch HOME is exported
 WORK="/tmp/close-guard-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO/docs/requirements/drafts"
@@ -66,12 +67,13 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 
 DPID=""
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
   tmux kill-session -t "$BUS_SESSION" 2>/dev/null
-  rm -rf "$BD" "$WORK"
+  rm -rf ${BD:+"$BD"} "$WORK"
 }
 trap cleanup EXIT
 
@@ -86,7 +88,8 @@ answer_role() {
   rid="$(printf '%s' "$out" | grep -o -- '--reply-to [A-Za-z0-9-]*' | tail -1 | awk '{print $2}')"
   target="$(printf '%s' "$out" | grep -o 'muxcode send [a-z-]*' | tail -1 | awk '{print $3}')"
   [ -z "$rid" ] && return 1
-  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "done" --type response --reply-to "$rid" >/dev/null 2>&1
+  # The verdict token is the node's only outcome signal — a bare "done" holds it as unknown.
+  AGENT_ROLE="$role" "$MUX" send "${target:-edit}" response "done EXIT=0" --type response --reply-to "$rid" >/dev/null 2>&1
 }
 
 wait_for_request() {
@@ -246,6 +249,8 @@ if wait_for_request commit; then
   answer_role commit || bad "could not answer commit request"
 else
   bad "commit-spec never dispatched on the negative control"
+  echo "    node commit-spec: $(node_state "$RID2" commit-spec); lifecycle for $RID2:"
+  grep -E "commit-authority|graph-" "$LIFELOG" 2>/dev/null | grep -F -- "$RID2" | tail -12 | sed 's/^/      /'
 fi
 
 wait_run_state "$RID2" complete \

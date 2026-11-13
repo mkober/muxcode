@@ -42,6 +42,7 @@ MUX="$(command -v "$MUX" 2>/dev/null || echo "$MUX")"
 [ -x "$MUX" ] || { echo "SKIP: muxcode not installed — set MUXCODE_BIN"; exit 2; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT/scripts/lib/muxcode-version.sh"
+. "$ROOT/scripts/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-134 || { echo "  FAIL  binary precondition not met"; exit 1; }
 CONF="$ROOT/config/tmux.conf"
 [ -f "$CONF" ] || { echo "SKIP: $CONF not found"; exit 2; }
@@ -66,7 +67,7 @@ export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_CONTROL_PANE_DISABLE=1
 export MUXCODE_FORCE_RESPOND_DISABLE=1
 OUTSOCK="fkey-drv-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/$SESSION.log"
 
 DPID=""

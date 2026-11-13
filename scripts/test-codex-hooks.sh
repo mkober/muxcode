@@ -34,6 +34,7 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 command -v shasum >/dev/null 2>&1 || { echo "SKIP: shasum is required"; exit 2; }
 MUX=$(command -v muxcode)
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-159 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -41,9 +42,10 @@ FIX="$REPO/tools/muxcode/bus/testdata/codex-hooks"
 SESSION="codex-hooks-test-$$"
 WORK=$(mktemp -d /tmp/codex-hooks-XXXXXX)
 PROJ="$WORK/project"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 ORIG_PATH="$PATH"
 LSESSION=""
+LBUS=""
 mkdir -p "$PROJ" "$WORK/bin" "$WORK/codex-home" "$WORK/lifecycle"
 
 cleanup() {
@@ -51,10 +53,10 @@ cleanup() {
     tmux send-keys -t "$LSESSION" C-c 2>/dev/null || true
     sleep 1
     tmux kill-session -t "$LSESSION" 2>/dev/null || true
-    rm -rf "/tmp/muxcode-bus-$LSESSION"
+    rm -rf ${LBUS:+"$LBUS"}
     rm -f "$REPO/.codex/hooks.json"
   fi
-  rm -rf "$BUSDIR" "$WORK"
+  rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK"
 }
 trap cleanup EXIT
 
@@ -268,7 +270,8 @@ live_section() {
   fi
 
   LSESSION="codex-hooks-live-$$"
-  local lbus="/tmp/muxcode-bus-$LSESSION"
+  LBUS="$(muxcode_bus_dir "$MUX" "$LSESSION")" || { echo "  FAIL (live): bus dir unresolved"; FAIL=$((FAIL + 1)); return; }
+  local lbus="$LBUS"
   mkdir -p "$lbus/inbox" "$lbus/delivery"
   cd "$REPO"
   (

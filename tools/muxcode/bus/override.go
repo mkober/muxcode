@@ -12,7 +12,7 @@ import (
 // RuntimeOverridePath returns the path to the runtime override file for a role.
 // Override files are shell-sourceable key=value pairs stored at:
 //
-//	/tmp/muxcode-bus-{session}/config/{role}.env
+//	BusDir(session)/config/{role}.env
 func RuntimeOverridePath(session, role string) string {
 	return filepath.Join(RuntimeConfigDir(session), role+".env")
 }

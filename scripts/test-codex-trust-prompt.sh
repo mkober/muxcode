@@ -34,8 +34,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOD="$ROOT/tools/muxcode"
 [ -f "$MOD/go.mod" ] || { echo "SKIP: $MOD/go.mod not found"; exit 2; }
 
+. "$ROOT/scripts/lib/muxcode-bus-dir.sh"
 SESSION="trust-test-$$"
 export BUS_SESSION="$SESSION"
+BUSDIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/trust-test-XXXXXX)
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/$SESSION.log"
@@ -50,7 +52,7 @@ export BUS_ROLE=edit
 
 cleanup() {
   tmux kill-session -t "$SESSION" 2>/dev/null || true
-  rm -rf "/tmp/muxcode-bus-$SESSION" "$WORK"
+  rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK"
 }
 trap cleanup EXIT
 

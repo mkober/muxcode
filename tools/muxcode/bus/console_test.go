@@ -303,11 +303,9 @@ func TestRenderConsoleBuildWithEntries(t *testing.T) {
 	}
 	os.WriteFile(histPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
 
-	// Override BusDir by setting env - use the temp dir structure
-	// Since BusDir uses /tmp/muxcode-bus-{session}, we need to create there
-	realBusDir := "/tmp/muxcode-bus-" + session
+	useTempBusDir(t)
+	realBusDir := BusDir(session)
 	os.MkdirAll(realBusDir, 0755)
-	defer os.RemoveAll(realBusDir)
 
 	realHistPath := filepath.Join(realBusDir, "build-history.jsonl")
 	os.WriteFile(realHistPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)

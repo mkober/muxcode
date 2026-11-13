@@ -18,6 +18,7 @@ command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 MUX=$(command -v muxcode)
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-105 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="force-respond-test-$$"
@@ -29,7 +30,7 @@ export MUXCODE_AGENT_CLI=claude MUXCODE_RUN_CLI=claude MUXCODE_TEST_CLI=claude
 export MUXCODE_FORCE_RESPOND_SECS=3
 export MUXCODE_FORCE_RESPOND_RUNG_SECS=3
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 
 DPID=""
 cleanup() {

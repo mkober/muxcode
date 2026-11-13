@@ -2,9 +2,40 @@ package harness
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestResolveBusDir pins MUX-208 in the harness: the launcher's
+// MUXCODE_BUS_DIR wins, then the binary's base resolution — never /tmp.
+func TestResolveBusDir(t *testing.T) {
+	home, xdg, base, exported := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("MUXCODE_BUS_DIR", "")
+	t.Setenv("MUXCODE_BUS_BASE", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
+	if got, want := resolveBusDir("s"), filepath.Join(home, ".local", "state", "muxcode", "bus", "muxcode-bus-s"); got != want {
+		t.Errorf("default: %q, want %q", got, want)
+	}
+	t.Setenv("XDG_STATE_HOME", xdg)
+	if got, want := resolveBusDir("s"), filepath.Join(xdg, "muxcode", "bus", "muxcode-bus-s"); got != want {
+		t.Errorf("XDG_STATE_HOME: %q, want %q", got, want)
+	}
+	t.Setenv("MUXCODE_BUS_BASE", base)
+	if got, want := resolveBusDir("s"), filepath.Join(base, "muxcode-bus-s"); got != want {
+		t.Errorf("MUXCODE_BUS_BASE: %q, want %q", got, want)
+	}
+	t.Setenv("MUXCODE_BUS_DIR", exported)
+	if got := resolveBusDir("s"); got != exported {
+		t.Errorf("MUXCODE_BUS_DIR: %q, want %q", got, exported)
+	}
+	t.Setenv("MUXCODE_BUS_DIR", "relative")
+	if got, want := resolveBusDir("s"), filepath.Join(base, "muxcode-bus-s"); got != want {
+		t.Errorf("relative MUXCODE_BUS_DIR: %q, want it ignored for %q", got, want)
+	}
+}
 
 // TestNoThink pins the MUX-109 latency lever end to end at the unit
 // level: env opt-in reaches the config, the request marshals an explicit

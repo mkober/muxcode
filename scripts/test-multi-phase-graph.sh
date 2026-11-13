@@ -60,6 +60,7 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-121 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
@@ -93,7 +94,6 @@ dump_diag() {
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="multiphase-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
 WORK="/tmp/multiphase-work-$$"
 REPO="$WORK/repo"
 mkdir -p "$REPO/docs/requirements/drafts"
@@ -115,6 +115,7 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 
 DPID=""
 # cleanup tears down the scratch session and bus dir. Set

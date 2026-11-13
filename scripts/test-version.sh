@@ -37,7 +37,8 @@ export TMUX_TMPDIR="$WORK/tmux"
 mkdir -p "$TMUX_TMPDIR" "$WORK/repo"
 unset TMUX
 export BUS_SESSION="version-test-$$"
-BD="/tmp/muxcode-bus-$BUS_SESSION"
+. "$ROOT/scripts/lib/muxcode-bus-dir.sh"
+BD="" # resolved once the scratch binaries are built
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"
@@ -53,7 +54,7 @@ REAL_LOGS_BEFORE="$(ls -1 "$REAL_LOG_DIR" 2>/dev/null | sort)"
 cleanup() {
   pkill -f "muxcode watch $BUS_SESSION" 2>/dev/null
   tmux kill-server 2>/dev/null
-  rm -rf "$BD" "$WORK"
+  rm -rf ${BD:+"$BD"} "$WORK"
 }
 trap cleanup EXIT
 
@@ -77,6 +78,7 @@ build "$WORK/old"  v0.0.1-test       aaaaaaa "$DATE"
 build "$WORK/new"  v0.0.2-test       bbbbbbb "$DATE"
 REL="$WORK/rel/muxcode"; DESC="$WORK/desc/muxcode"; PRE="$WORK/pre/muxcode"
 DEV="$WORK/dev/muxcode"; OLD="$WORK/old/muxcode"; NEW="$WORK/new/muxcode"
+BD="$(muxcode_bus_dir "$REL" "$BUS_SESSION")" || exit 1
 
 # --- 1. Identity -----------------------------------------------------------
 echo "-- identity"
@@ -103,8 +105,9 @@ for flag in --version -v; do
     || fail "$flag: rc=$rc out='$out'"
 done
 [ -z "$(ls -A "$PROJ")" ] && ok "--version/-v wrote nothing into the cwd" || fail "cwd gained: $(ls -A "$PROJ")"
-[ ! -e "/tmp/muxcode-bus-proj-$$" ] && ok "--version/-v created no bus dir for the cwd" \
-  || fail "bus dir /tmp/muxcode-bus-proj-$$ appeared"
+PROJ_BD="$(muxcode_bus_dir "$REL" "proj-$$")" || exit 1
+[ ! -e "$PROJ_BD" ] && [ ! -e "/tmp/muxcode-bus-proj-$$" ] && ok "--version/-v created no bus dir for the cwd" \
+  || fail "bus dir $PROJ_BD or /tmp/muxcode-bus-proj-$$ appeared"
 if tmux ls >/dev/null 2>&1; then
   fail "--version/-v started a tmux server"
 else

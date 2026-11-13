@@ -18,6 +18,7 @@ command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux is required"; exit 2; }
 command -v muxcode >/dev/null 2>&1 || { echo "SKIP: muxcode not installed"; exit 2; }
 MUX=$(command -v muxcode)
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-108 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="control-pane-test-$$"
@@ -32,7 +33,7 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 # 60s would stall every daemon-restart check below.
 export MUXCODE_CONTROL_PANE_CHECK_SECS=2
 unset MUXCODE_CONTROL_PANE_DISABLE MUXCODE_CONTROL_PANE_EXCLUDE 2>/dev/null || true
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 
 DPID=""
 cleanup() {

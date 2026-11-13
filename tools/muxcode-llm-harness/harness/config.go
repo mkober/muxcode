@@ -17,7 +17,7 @@ type Config struct {
 	HTTPClient  *http.Client  // optional transport override; nil uses the default
 	OllamaModel string        // default qwen3:4b (must support tool calling)
 	MaxTurns    int           // max tool-calling turns per batch (default 10)
-	BusDir      string        // /tmp/muxcode-bus-{session}/
+	BusDir      string        // resolveBusDir(session)
 	BusBin      string        // path to muxcode binary
 	NoThink     bool          // disable the model's thinking phase (MUXCODE_HARNESS_NOTHINK=1)
 	APIKey      string        // bearer key for a hosted OpenAI-compatible endpoint (MUXCODE_HARNESS_API_KEY)
@@ -84,10 +84,32 @@ func DefaultConfig() Config {
 	cfg.TurnTrace = os.Getenv("MUXCODE_HARNESS_TURN_TRACE") == "1"
 	cfg.TurnTraceFile = os.Getenv("MUXCODE_HARNESS_TURN_TRACE_FILE")
 
-	cfg.BusDir = "/tmp/muxcode-bus-" + cfg.Session
+	cfg.BusDir = resolveBusDir(cfg.Session)
 	cfg.BusBin = findBusBin()
 
 	return cfg
+}
+
+// resolveBusDir returns the session's bus directory: $MUXCODE_BUS_DIR, which
+// the launcher exports into every pane, else the muxcode binary's own
+// resolution (bus.BusDirBase) — an absolute MUXCODE_BUS_BASE, an absolute
+// $XDG_STATE_HOME/muxcode/bus, else ~/.local/state/muxcode/bus. Never /tmp,
+// whose macOS sweep deleted idle bus state (MUX-208); moving a pre-MUX-208
+// /tmp directory is the binary's job, done before any pane launches.
+func resolveBusDir(session string) string {
+	if dir := os.Getenv("MUXCODE_BUS_DIR"); filepath.IsAbs(dir) {
+		return dir
+	}
+	base := os.Getenv("MUXCODE_BUS_BASE")
+	if !filepath.IsAbs(base) {
+		if x := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(x) {
+			base = filepath.Join(x, "muxcode", "bus")
+		} else {
+			home, _ := os.UserHomeDir()
+			base = filepath.Join(home, ".local", "state", "muxcode", "bus")
+		}
+	}
+	return filepath.Join(base, "muxcode-bus-"+session)
 }
 
 // RoleModel returns the Ollama model for a specific role, checking

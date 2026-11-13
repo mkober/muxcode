@@ -215,11 +215,18 @@ printf -- '---\ndescription: Docs\n---\nMaintain docs.\n' >"$WORK/install/agents
 printf -- '---\ndescription: Git\n---\nManage git.\n' >"$WORK/install/agents/git-manager.md"
 
 # Each agent pane gets its own role identity and stub session file; the shell
-# prompt ends in "$" so a dead agent reads as a bare shell.
+# prompt ends in "$" so a dead agent reads as a bare shell. PATH is re-pinned
+# in the pane because its login shell runs macOS path_helper, which puts
+# /etc/paths.d entries (/opt/homebrew/bin) ahead of the stub — a Homebrew
+# claude there launched the real CLI into an OAuth prompt.
 pane_env() {
-  echo "export AGENT_ROLE=$1 BUS_ROLE=$1 CLAUDE_STUB_SESSION_FILE=$WORK/$1.sid; PS1='\$ '; clear"
+  echo "export PATH=$WORK/bin:\$PATH AGENT_ROLE=$1 BUS_ROLE=$1 CLAUDE_STUB_SESSION_FILE=$WORK/$1.sid; PS1='\$ '; clear"
 }
 tmux new-session -d -s "$SESSION" -n edit -x 160 -y 40 -c "$WORK/project"
+# Windows muxcode opens itself (section F's spawn worker) are never typed a
+# pane_env, so they get a non-login shell: path_helper never runs and the
+# server's stub-first PATH stands.
+tmux set-option -t "$SESSION" default-command "exec /bin/bash --noprofile --norc"
 tmux split-window -h -t "$SESSION:edit" -c "$WORK/project"
 for w in plan commit; do
   tmux new-window -t "$SESSION" -n "$w" -c "$WORK/project"
@@ -260,7 +267,9 @@ for w in $ROLES; do
   id_var="ID_$(echo "$w" | tr '[:lower:]' '[:upper:]')"
   wait_for 10 "$w: exit banner offers ${!id_var}" pane_has "$w" "claude --resume ${!id_var}"
 done
-wait_for 30 "mass-agent-exit lifecycle row recorded" has_event "mass-agent-exit"
+# The event column, not the detail: agent-down-folded rows end "reported in mass-agent-exit".
+MASS_ROW='[[:space:]]mass-agent-exit[[:space:]]'
+wait_for 30 "mass-agent-exit lifecycle row recorded" has_event "$MASS_ROW"
 for w in $ROLES; do
   id_var="ID_$(echo "$w" | tr '[:lower:]' '[:upper:]')"
   wait_for 30 "$w: resume-scrape-hit names its own id" has_event "resume-scrape-hit.*$w: session ${!id_var}"
@@ -269,9 +278,9 @@ done
 sleep 8 # sweeps past the burst: any second event would land here
 n=$(bus_count mass-agent-exit)
 [ "$n" -eq 1 ] && ok "exactly one mass-agent-exit event sent to edit" || fail "mass-agent-exit events to edit = $n, want 1"
-n=$(event_count "mass-agent-exit")
+n=$(event_count "$MASS_ROW")
 [ "$n" -eq 1 ] && ok "exactly one mass-agent-exit lifecycle row" || fail "mass-agent-exit rows = $n, want 1"
-row=$(events "mass-agent-exit" | tail -1)
+row=$(events "$MASS_ROW" | tail -1)
 for w in $ROLES; do
   case "$row" in *"$w"*) ok "mass-agent-exit names $w" ;; *) fail "mass-agent-exit omits $w: $row" ;; esac
 done

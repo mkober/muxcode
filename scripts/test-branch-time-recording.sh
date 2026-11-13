@@ -46,12 +46,14 @@ WORK="$(mktemp -d /tmp/mux-bt-recording-XXXXXX)"
 export MUXCODE_BRANCH_TIME_FILE="$WORK/branch-time.json"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/logs"
 export BUS_SESSION="bt-recording-test-$$"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 REAL_LOGS_BEFORE="$(ls -1 "$HOME/.config/muxcode/logs" 2>/dev/null | sort)"
 REPO="$WORK/repo"
 SPEC="$REPO/docs/requirements/drafts/MUX-999-scratch.md"
 BRANCH="MUX-999-scratch"
 
-cleanup() { rm -rf "$WORK" "/tmp/muxcode-bus-$BUS_SESSION"; }
+cleanup() { rm -rf "$WORK" ${BD:+"$BD"}; }
 trap cleanup EXIT
 
 mkdir -p "$REPO/docs/requirements/drafts"

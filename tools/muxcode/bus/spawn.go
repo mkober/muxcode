@@ -1238,9 +1238,16 @@ func FormatSpawnStatus(entry SpawnEntry) string {
 	return b.String()
 }
 
-// SpawnWorktreeBase returns the base directory for spawn worktrees.
+// SpawnWorktreeBase returns the base directory for spawn worktrees:
+// StateDir()/spawn/{session}, or beside the bus directories when the bus base
+// is overridden. Never os.TempDir(), whose macOS sweep deletes a worktree's
+// uncommitted work after three idle days (MUX-208). Existing worktrees keep the
+// path recorded in their spawn entry.
 func SpawnWorktreeBase(session string) string {
-	return filepath.Join(os.TempDir(), "muxcode-spawn-"+session)
+	if busDirBaseOverridden() {
+		return filepath.Join(BusDirBase(), "muxcode-spawn-"+session)
+	}
+	return filepath.Join(StateDir(), "spawn", session)
 }
 
 // createSpawnWorktree creates a git worktree for a spawn agent.

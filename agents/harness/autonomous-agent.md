@@ -56,9 +56,9 @@ The daemon sends `heartbeat` messages with a fixed payload listing story, PR and
 **Awaiting the user** (idle after a `Session started —` startup, or stopped at the story list): skip all of those checks. No Jira search, no PR read, no `muxcode send`. Only write the state files, with phase `idle — awaiting user`, and stay idle.
 
 State files:
-- `echo "{KEY}" > /tmp/muxcode-bus-${BUS_SESSION}/agent-current-story`
-- `echo "{phase}" > /tmp/muxcode-bus-${BUS_SESSION}/agent-phase`
-- `echo "{count}" > /tmp/muxcode-bus-${BUS_SESSION}/agent-stories-done`
+- `echo "{KEY}" > "${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}/agent-current-story"`
+- `echo "{phase}" > "${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}/agent-phase"`
+- `echo "{count}" > "${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}/agent-stories-done"`
 
 A heartbeat never starts work.
 

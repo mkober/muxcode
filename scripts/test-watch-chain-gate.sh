@@ -29,10 +29,11 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SESSION="watch-chain-gate-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+BUSDIR="" # resolved once the scratch HOME is exported
 WORK=$(mktemp -d /tmp/watch-chain-gate-XXXXXX)
 
-cleanup() { rm -rf "$BUSDIR" "$WORK"; }
+cleanup() { rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK"; }
 trap cleanup EXIT
 
 if [ -n "${MUXCODE_WATCH_CHAIN_GATE_BIN:-}" ]; then
@@ -51,6 +52,7 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 mkdir -p "$WORK/home" "$WORK/config" "$WORK/lifecycle"
 export HOME="$WORK/home"
 export BUS_SESSION="$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 export MUXCODE_CONFIG_DIR="$WORK/config"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 export MUXCODE_DEDUP_WINDOW=0

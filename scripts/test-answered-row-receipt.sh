@@ -34,6 +34,7 @@
 # Usage: bash scripts/test-answered-row-receipt.sh
 set -euo pipefail
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)/tools/muxcode"
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[0;33m'; NC=$'\033[0m'
@@ -125,7 +126,7 @@ session="${BUS_SESSION:-}"
 if [ -z "$session" ] || ! tmux has-session -t "$session" 2>/dev/null; then
   skip_live "no live muxcode session (BUS_SESSION unset or session gone)"
 else
-  busdir="/tmp/muxcode-bus-${session}"
+  busdir="$(muxcode_bus_dir muxcode "$session")" || exit 1
 
   # 1. Receipt store agrees with the fix: every delivery status recorded as
   #    "responded" must be treated as receipted. A responded status that ReceiptGap

@@ -41,7 +41,7 @@ Each agent has scoped tool permissions — the build agent can't edit files, the
 │                      │ term | agent │                            │
 │                      └──────────────┘                            │
 │                                                                  │
-│  Message Bus: /tmp/muxcode-bus-{session}/                        │
+│  Message Bus: ~/.local/state/muxcode/bus/muxcode-bus-{session}/  │
 │  Memory:      .muxcode/memory/                                   │
 └──────────────────────────────────────────────────────────────────┘
 ```

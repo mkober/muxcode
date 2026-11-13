@@ -5,7 +5,15 @@
 # Usage: muxcode-daemon-monitor.sh <session>
 
 SESSION="${1:?Usage: muxcode-daemon-monitor.sh <session>}"
-KEEPALIVE="/tmp/muxcode-bus-${SESSION}/daemon.keepalive"
+BUS_DIR="${MUXCODE_BUS_DIR:-}"
+[ -n "$BUS_DIR" ] || BUS_DIR="$(muxcode bus-dir "$SESSION" 2>/dev/null)" || BUS_DIR=""
+case "$BUS_DIR" in
+  /*) ;;
+  *)
+    echo "  [monitor] cannot resolve the bus directory for $SESSION (muxcode bus-dir failed, MUXCODE_BUS_DIR unset)" >&2
+    exit 1 ;;
+esac
+KEEPALIVE="$BUS_DIR/daemon.keepalive"
 MAX_AGE=30  # seconds before considering keepalive stale
 
 # Lifecycle logging helper (same as LaunchSession)

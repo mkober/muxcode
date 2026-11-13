@@ -41,13 +41,14 @@ MUX="$(command -v "$MUX" 2>/dev/null || echo "$MUX")"
 command -v tmux >/dev/null 2>&1 || { echo "  FAIL  tmux not available"; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "  FAIL  git not available"; exit 1; }
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-142 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 ok()   { PASS=$((PASS + 1)); echo "  ok: $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
 export BUS_SESSION="cross-tree-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/cross-tree-work-XXXXXX)
 MAIN="$WORK/main"
 WT="$WORK/wt"

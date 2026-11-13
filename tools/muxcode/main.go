@@ -27,7 +27,7 @@ var knownSubcommands = map[string]bool{
 	"simulate": true, "track": true, "remote": true, "spec": true,
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true, "upgrade": true, "upgrade-ui": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
-	"version": true, "approve": true, "resume": true,
+	"version": true, "approve": true, "resume": true, "bus-dir": true,
 }
 
 // route is where argv goes. The order routeFor checks them in is pinned by
@@ -229,6 +229,7 @@ Commands:
   spec          Manage the active requirements spec for plan agent verification (set, get, clear)
   graph         Graph-agent orchestrator (run, validate, list, status, cancel, retry, approve)
   version       Print the binary's version (--json, --at-least vX.Y.Z); also --version / -v
+  bus-dir       Print a session's bus directory (default $BUS_SESSION) for scripts
 `
 
 func main() {
@@ -407,6 +408,8 @@ func main() {
 		cmd.UpgradeUI(args)
 	case "version":
 		cmd.Version(args)
+	case "bus-dir":
+		cmd.BusDir(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

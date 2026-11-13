@@ -75,6 +75,9 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BUS_SESSION` | (auto-detected) | Session name for the bus directory |
+| `MUXCODE_BUS_DIR` | (exported by muxcode) | The session's resolved bus directory (`bus.BusDirEnv`). **Set by muxcode, not by you**: exported by `LaunchSession` (process env and `tmux set-environment`), the control pane, the daemon on start (process env **and** the tmux session env, so `upgrade-daemons` re-exports it into a session launched before the install) and every `muxcode agent launch` (always overwritten, so a pane shell older than the install gets the right value on the agent's next relaunch). Scripts and agent definitions read it, falling back to `muxcode bus-dir` — `${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}` — and never compute the path. See [Bus directory](#bus-directory-per-session) |
+| `MUXCODE_BUS_BASE` | (unset) | Absolute directory that holds the `muxcode-bus-{session}` directories, overriding the default base `$XDG_STATE_HOME/muxcode/bus`. A non-absolute value is ignored. Spawn worktrees then sit beside the bus as `muxcode-spawn-{session}`. No legacy `/tmp` migration runs on an overridden base |
+| `XDG_STATE_HOME` | `~/.local/state` | When absolute, muxcode's state directory is `$XDG_STATE_HOME/muxcode` (`bus.StateDir`): the bus under `bus/`, spawn worktrees under `spawn/`. A home that cannot be resolved panics — there is no `/tmp` fallback |
 | `AGENT_ROLE` | (auto-detected) | Current agent's role name |
 | `BUS_MEMORY_DIR` | `.muxcode/memory/` | Path to persistent memory directory |
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
@@ -161,7 +164,7 @@ Each agent window independently resolves its AI CLI provider. A single session c
 | `MUXCODE_{ROLE}_CLI` | (unset) | Per-role override (e.g. `MUXCODE_BUILD_CLI=opencode`, `MUXCODE_COMMIT_CLI=local`, `MUXCODE_ANALYZE_CLI=codex`) |
 
 Resolution order (first non-empty wins):
-1. Runtime override (`/tmp/muxcode-bus-{session}/config/{role}.env`) — session-scoped, set by `muxcode reload --cli`
+1. Runtime override (`$MUXCODE_BUS_DIR/config/{role}.env`) — session-scoped, set by `muxcode reload --cli`
 2. `MUXCODE_{ROLE}_CLI` — per-agent override
 3. `MUXCODE_AGENT_CLI` — session-wide default
 4. Config file (`~/.config/muxcode/config`) — persistent, set by `muxcode config set`
@@ -297,7 +300,7 @@ When running on OpenCode: delegation enforcement uses `DenyTools` permission den
 
 **Task file** (`TASKS.md`): The autonomous agent reads `.muxcode/agent-tasks.md` (or the path in `MUXCODE_AGENT_TASKS`) for natural-language task configuration. Changes take effect on the next heartbeat cycle — no restart needed. Env vars override task file values when set.
 
-**State files** (ephemeral, in `/tmp/muxcode-bus-{session}/`):
+**State files** (per-session, in `$MUXCODE_BUS_DIR/`):
 
 | File | Purpose |
 |------|---------|
@@ -482,10 +485,10 @@ Add project-specific permissions in `.claude/settings.local.json` (not committed
 
 ## Directory Structure
 
-### Ephemeral (per-session)
+### Bus directory (per-session)
 
 ```
-/tmp/muxcode-bus-{session}/
+~/.local/state/muxcode/bus/muxcode-bus-{session}/     # = $MUXCODE_BUS_DIR
 ├── inbox/{role}.jsonl     # Per-agent message queues
 ├── lock/{role}.lock       # Busy indicators
 ├── lock/{role}.stopped    # Agent health: auto-restart suppression marker
@@ -501,6 +504,60 @@ Add project-specific permissions in `.claude/settings.local.json` (not committed
 ```
 
 Created by `muxcode init`, cleaned up by the tmux session-closed hook.
+
+**Location** ([MUX-208](requirements/completed/MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md)).
+The bus directory is `BusDirBase()/muxcode-bus-{session}` (`bus/config.go`):
+
+| Order | Base | Notes |
+|-------|------|-------|
+| 1 | Test override (`SetBusDirBase`) | Go tests only |
+| 2 | `MUXCODE_BUS_BASE` | Must be absolute |
+| 3 | `$XDG_STATE_HOME/muxcode/bus` | When `XDG_STATE_HOME` is absolute |
+| 4 | `~/.local/state/muxcode/bus` | The default |
+
+It is **never `/tmp`**, and an unresolvable home panics rather than fall back there. macOS runs
+`tmp_cleaner` daily at 00:00 and deletes any `/tmp` file whose atime, mtime and ctime are all more
+than three days old; APFS does not advance atime on reads, so a file written once and only read
+afterwards goes — a graph run parked on a `wait_human` gate lost its `graph.json` that way.
+
+| How to find it | Use |
+|----------------|-----|
+| `$MUXCODE_BUS_DIR` | Inside any pane, hook or daemon muxcode launched |
+| `muxcode bus-dir [session]` | Anywhere else. Prints the resolved directory; the session defaults to `$BUS_SESSION`; exit 2 with neither |
+| `scripts/lib/muxcode-bus-dir.sh` | Integration scripts: `muxcode_bus_dir <bin> <session>`, which refuses a non-absolute answer so an old binary never yields an empty path |
+
+`scripts/muxcode-daemon-monitor.sh` reads `$MUXCODE_BUS_DIR`, else `muxcode bus-dir`, and exits 1
+rather than fall back to `/tmp`.
+
+**Migration from `/tmp`.** A session whose state is still in `/tmp/muxcode-bus-{session}` is moved,
+not abandoned (`MigrateLegacyBusDir`, `bus/busdir_migrate.go`):
+
+| Case | Result |
+|------|--------|
+| Legacy directory exists, new one does not | Moved under a flock — `os.Rename`, or across devices a copy into a hidden staging directory that is then renamed into place, so the destination never exists half-copied. One `bus-dir-migrated` lifecycle row |
+| Both exist | The new one wins; the legacy directory is left for you, with a `bus-dir-conflict` row (session launch and daemon start only) |
+| The move fails | `bus-dir-migrate-failed`, and the launch or daemon stops — no empty replacement bus is created |
+
+It runs on three roads: the first time a process resolves a session's bus directory (default base
+only, never in tests), session launch, and daemon start. An agent already running when the binary is
+installed keeps working: its pane gets `MUXCODE_BUS_DIR` on its next relaunch, and until then
+everything that reads the variable falls back to `muxcode bus-dir`.
+
+**Also under the state directory:** spawn worktrees, at `~/.local/state/muxcode/spawn/{session}`
+(previously `os.TempDir()`).
+
+**Still in `/tmp`, deliberately** — each is rewritten constantly or is a cache:
+
+| Path | What |
+|------|------|
+| `/tmp/muxcode-analyze-{session}.trigger` | Analyze trigger, rewritten on every edit |
+| `/tmp/muxcode-preview-{session}.tmp` | Diff preview temp file |
+| `/tmp/muxcode-cache-<uid>/` | Codex package caches ([MUX-160](requirements/backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)) |
+
+Stale cleanup scans the bus base, plus `/tmp` on the default base (preview files, triggers, legacy
+buses not yet migrated) and the spawn root; the disk-pressure footprint counts the bus base and still
+measures `/tmp` for the caches. The Codex writable roots include the bus base, and Claude permission
+profiles carry a `Read()` rule for the resolved base in place of the old `/tmp` rules.
 
 ### Persistent (per-project)
 

@@ -42,6 +42,7 @@ command -v jq >/dev/null 2>&1 || { echo "SKIP: jq is required"; exit 2; }
 MUX=$(command -v muxcode)
 MUXDIR=$(dirname "$MUX")
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-204 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 LIVE=0
@@ -51,7 +52,7 @@ fi
 
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 SESSION="hook-bash-failure-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/hook-bash-failure-XXXXXX)
 PROJ="$WORK/project"
 mkdir -p "$PROJ" "$WORK/config" "$WORK/lifecycle"

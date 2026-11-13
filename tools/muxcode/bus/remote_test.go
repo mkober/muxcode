@@ -215,7 +215,7 @@ func TestBusDirBaseEnv_IsolatesStorageAndDiscovery(t *testing.T) {
 	}
 
 	t.Setenv(BusDirBaseEnv, "relative/base")
-	if got := BusDir("fixture"); got != "/tmp/muxcode-bus-fixture" {
+	if got := BusDir("fixture"); got != filepath.Join(StateDir(), "bus", "muxcode-bus-fixture") {
 		t.Errorf("relative base honoured: BusDir = %s", got)
 	}
 

@@ -5,9 +5,11 @@
 # Serial on purpose: most scripts start a scratch daemon and tmux session,
 # and two running at once contend for them.
 #
-# Scripts that need a live muxcode session (not a scratch one) are skipped
-# unless MUXCODE_TEST_LIVE=1: test-diff-split, test-hot-reload,
-# test-resize-hook.
+# Scripts that drive the live muxcode session (not a scratch one) are skipped
+# unless MUXCODE_TEST_LIVE=1 — every script resolving its session from
+# `tmux display-message -p '#S'`. Run by default they flooded the live edit
+# inbox, messaged the live watch agent and reloaded live build and test
+# agents onto another provider (2026-11-13).
 #
 # Usage: bash scripts/test-all.sh [name-filter]
 #        MUXCODE_TEST_LIVE=1 bash scripts/test-all.sh
@@ -18,7 +20,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 filter="${1:-}"
-live_only=" test-diff-split test-hot-reload test-resize-hook "
+live_only=" test-browser-monitor-e2e test-context-pressure test-diff-split test-hot-reload test-modal-size test-multi-reload test-notify-flood test-resize-hook test-stuck-agent "
 logdir="${TMPDIR:-/tmp}/muxcode-test-all-$$"
 mkdir -p "$logdir"
 

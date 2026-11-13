@@ -47,7 +47,12 @@ export MUXCODE_LIFECYCLE_LOG_DIR="$(mktemp -d /tmp/disk-pressure-lifecycle-XXXXX
 REAL_LOG_DIR="$HOME/.config/muxcode/logs"
 leaked_logs() { ls -1 "$REAL_LOG_DIR" 2>/dev/null | grep -E '^test-(disk-pressure|lifecycle)' | sort; }
 LEAKED_BEFORE="$(leaked_logs)"
-TMP_SNAPSHOT_BEFORE="$(ls -1d /tmp/muxcode-bus-* 2>/dev/null | sort)"
+. "$REPO/scripts/lib/muxcode-bus-dir.sh"
+PROBE_DIR="$(muxcode_bus_dir "$MUX" disk-pressure-probe)" || exit 1
+BUS_BASE="$(dirname "$PROBE_DIR")"
+# Both the legacy /tmp location and the resolved bus base must spare live buses.
+bus_snapshot() { ls -1d /tmp/muxcode-bus-* "$BUS_BASE"/muxcode-bus-* 2>/dev/null | sort -u; }
+TMP_SNAPSHOT_BEFORE="$(bus_snapshot)"
 cleanup() { rm -rf "$MUXCODE_LIFECYCLE_LOG_DIR"; }
 trap cleanup EXIT
 
@@ -126,11 +131,11 @@ echo ""
 echo "-- cleanup --dry-run is non-destructive --"
 
 "$MUX" cleanup --dry-run >/dev/null 2>&1
-if [ "$TMP_SNAPSHOT_BEFORE" = "$(ls -1d /tmp/muxcode-bus-* 2>/dev/null | sort)" ]; then
+if [ "$TMP_SNAPSHOT_BEFORE" = "$(bus_snapshot)" ]; then
   ok "cleanup --dry-run removed no session directories"
 else
   bad "cleanup --dry-run DELETED session directories"
-  diff <(printf '%s\n' "$TMP_SNAPSHOT_BEFORE") <(ls -1d /tmp/muxcode-bus-* 2>/dev/null | sort) | head -10 | sed 's/^/        /'
+  diff <(printf '%s\n' "$TMP_SNAPSHOT_BEFORE") <(bus_snapshot) | head -10 | sed 's/^/        /'
 fi
 
 # --- 5. Isolation ----------------------------------------------------------

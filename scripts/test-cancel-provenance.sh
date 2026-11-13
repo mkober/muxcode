@@ -57,6 +57,7 @@ if ! command -v tmux >/dev/null 2>&1; then
   exit 1
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-182 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
@@ -67,7 +68,7 @@ check() { local msg="$1"; shift; if "$@"; then ok "$msg"; else bad "$msg"; fi; }
 
 # --- Isolation -------------------------------------------------------------
 export BUS_SESSION="cancel-prov-test-$$"
-BD="/tmp/muxcode-bus-${BUS_SESSION}"
+BD="" # resolved once the scratch HOME is exported
 WORK="/tmp/cancel-prov-work-$$"
 REPO="$WORK/repo"
 BEATS="$REPO/beats"
@@ -93,6 +94,7 @@ export MUXCODE_STUCK_RELOAD_DISABLE=1
 export MUXCODE_PERMBLOCK_WATCHDOG_DISABLE=1
 export MUXCODE_FORCE_RESPOND_DISABLE=1
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/${BUS_SESSION}.log"
+BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 
 cat > "$WORK/stub-agent" <<STUB
 #!/usr/bin/env bash
@@ -116,9 +118,9 @@ cleanup() {
   cd / 2>/dev/null
   if [ "${MUXCODE_TEST_KEEP:-0}" = "1" ]; then
     echo "  (kept for diagnosis: $WORK)"
-    rm -rf "$BD"
+    rm -rf ${BD:+"$BD"}
   else
-    rm -rf "$BD" "$WORK"
+    rm -rf ${BD:+"$BD"} "$WORK"
   fi
 }
 trap cleanup EXIT

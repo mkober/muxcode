@@ -225,9 +225,9 @@ The daemon sends a `heartbeat` action to your inbox at a configurable interval (
 2. Check PR status on any open PRs (not just the one you're actively waiting on)
 3. Check if any delegated tasks have been waiting too long without response
 4. Write current status to state files for the console viewer:
-   - `echo "{KEY}" > /tmp/muxcode-bus-${BUS_SESSION}/agent-current-story`
-   - `echo "{phase}" > /tmp/muxcode-bus-${BUS_SESSION}/agent-phase`
-   - `echo "{count}" > /tmp/muxcode-bus-${BUS_SESSION}/agent-stories-done`
+   - `echo "{KEY}" > "${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}/agent-current-story"`
+   - `echo "{phase}" > "${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}/agent-phase"`
+   - `echo "{count}" > "${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}/agent-stories-done"`
 
 If a higher-priority story appears, finish the current phase before switching (don't abandon mid-implementation).
 

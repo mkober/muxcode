@@ -1118,6 +1118,8 @@ func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 	if os.Getenv("AGENT_ROLE") == "" {
 		os.Setenv("AGENT_ROLE", NormalizeBusRole(role))
 	}
+	// Always overwritten: a pane shell older than MUX-208 carries none, or a stale one.
+	os.Setenv(BusDirEnv, BusDir(session))
 
 	// Clear terminal for clean agent startup
 	fmt.Print("\033[2J\033[H")

@@ -54,6 +54,7 @@ MUX=$(command -v muxcode)
 MUXDIR=$(dirname "$MUX")
 NODE=$(command -v node)
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-203 || { echo "  FAIL  binary precondition not met"; exit 1; }
 hook_usage=$("$MUX" hook 2>&1 || true)
 if ! grep -q 'scrub' <<<"$hook_usage"; then
@@ -64,7 +65,7 @@ fi
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FIX="$REPO/tools/muxcode/bus/testdata/codex-hooks"
 SESSION="pii-conv-$$"
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 WORK=$(mktemp -d /tmp/pii-conv-XXXXXX)
 PROJ="$WORK/project"
 mkdir -p "$PROJ" "$WORK/bin" "$WORK/codex-home" "$WORK/lifecycle"

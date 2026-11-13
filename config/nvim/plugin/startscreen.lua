@@ -48,7 +48,11 @@ end
 
 -- Read lock files to determine which agents are busy.
 local function get_agents(session)
-  local lock_dir = "/tmp/muxcode-bus-" .. session .. "/lock"
+  local bus_dir = vim.env.MUXCODE_BUS_DIR
+  if not bus_dir or bus_dir == "" then
+    bus_dir = vim.fn.system({ "muxcode", "bus-dir", session }):gsub("\n", "")
+  end
+  local lock_dir = bus_dir .. "/lock"
   local roles    = {
     "plan", "edit", "build", "test", "review",
     "deploy", "run", "watch", "commit",

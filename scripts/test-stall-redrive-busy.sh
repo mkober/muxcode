@@ -38,6 +38,7 @@ MUX=$(command -v muxcode)
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_BEFORE=$(ls -A "$REPO")
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-171 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 SESSION="stall-busy-test-$$"
@@ -54,7 +55,7 @@ export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 export MUXCODE_AGENT_CLI=claude MUXCODE_RUN_CLI=claude MUXCODE_TEST_CLI=claude MUXCODE_REVIEW_CLI=claude
 export MUXCODE_TASK_STALL_SECS=5
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
-BUSDIR="/tmp/muxcode-bus-$SESSION"
+BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 
 DPID=""
 cleanup() {

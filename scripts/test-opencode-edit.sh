@@ -50,6 +50,10 @@ echo ""
 # Generate the config via the Go binary
 export MUXCODE_EDIT_CLI=opencode
 export MUXCODE_EDIT_MODEL=""  # use default
+# An empty env value falls through to the config file; name an empty one so the
+# user's ~/.config/muxcode/config cannot supply MUXCODE_EDIT_MODEL.
+: >"$WORK_DIR/muxcode.config"
+export MUXCODE_CONFIG="$WORK_DIR/muxcode.config"
 
 # Use writeOpenCodeAgentConfig via the agent config subcommand
 if ! muxcode agent config edit 2>/dev/null; then

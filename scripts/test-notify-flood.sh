@@ -28,7 +28,8 @@ log_fail() { ((fail++)); ((total++)); echo -e "  ${RED}FAIL${NC} $1: $2"; }
 
 TARGET="${1:-build}"
 COUNT=20
-BUS_DIR="/tmp/muxcode-bus-${SESSION}"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 MARKER="notify-flood-test-$$"
 # Use a test inbox separate from the main one to avoid agent consumption
 TEST_INBOX="${BUS_DIR}/inbox/${TARGET}.jsonl"
