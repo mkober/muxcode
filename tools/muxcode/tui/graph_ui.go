@@ -1669,9 +1669,7 @@ func (ui *GraphUI) Run() {
 
 	screen := newFrameWriter()
 	for {
-		// Clamp to the pane height: printing past the last row scrolls
-		// the popup, shifting the tab bar up — the header must be static.
-		screen.draw(clampLines(ui.render(), termHeight()-1))
+		screen.draw(ui.render())
 
 		select {
 		case <-sigCh:
@@ -1720,18 +1718,6 @@ func (ui *GraphUI) checkGateSwitch() {
 		ui.refresh()
 		ui.shareSurface() // every pane follows the gate
 	}
-}
-
-// clampLines truncates a frame to at most h lines.
-func clampLines(s string, h int) string {
-	if h < 1 {
-		return ""
-	}
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > h {
-		lines = lines[:h]
-	}
-	return strings.Join(lines, "\n") + "\n"
 }
 
 // padLines truncates or blank-pads a frame to exactly h lines. Fixing

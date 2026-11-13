@@ -881,7 +881,9 @@ func fitWidth(line string, width int) string {
 // shares: all surfaces named, the active one highlighted, then the cycle
 // hint. Width-clamped like every other frame line — at four surfaces the
 // bar outgrows a narrow pane, and an unclamped bar wraps and shifts the
-// whole frame down a row.
+// whole frame down a row. The blank row above the bar is breathing room under
+// the popup border; frameWriter never prints past the pane, so it cannot be
+// scrolled away.
 func renderSurfaceTabs(active string, width int) string {
 	names := []string{"Prompt", "Launch Graph", "Graph Runs", "Pending Gates"}
 	parts := make([]string, 0, len(names))
@@ -892,9 +894,6 @@ func renderSurfaceTabs(active string, width int) string {
 			parts = append(parts, Comment+n+RST)
 		}
 	}
-	// One blank row above the bar for breathing room under the popup
-	// border. Safe against the scroll-shift bug: clampLines guarantees a
-	// frame never prints past the pane, so this row cannot be eaten.
 	bar := "  " + strings.Join(parts, Comment+" / "+RST) + Comment + "   ⇥ Tab: next surface" + RST
 	return "\n" + fitWidth(bar, width) + "\n"
 }
