@@ -146,7 +146,7 @@ Key differences from the Claude Code edit agent:
 | Workflow state transitions | PostToolUse hooks | Daemon-side `checkNonHookEdits()` via `git diff --stat` polling |
 | Compact | `/compact` slash command | OpenCode auto-compaction + `muxcode session compact` |
 | Startup context | Self-addressed inbox message | Memory context appended to SharedPrompt |
-| Model | `claude-fable-5-1` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
+| Model | `claude-fable-5-2` | `opencode-go/deepseek-v4-pro` (configurable via `MUXCODE_EDIT_MODEL`) |
 
 All delegation rules, bus messaging, and agent coordination remain identical — only the enforcement mechanism changes.
 
@@ -657,7 +657,7 @@ Mode-cycled windows resolve to the active role (e.g., research on F1, auto on F2
 The Agents section lists all active agents with their current CLI, abbreviated model, and F-key:
 
 ```
-[x] Build     claude / sonnet-5 F3
+[x] Build     claude / sonnet-5-5 F3
 [ ] Test      opencode / minimax  F4
 [ ] Review    claude / opus-5-5 F6
 ```

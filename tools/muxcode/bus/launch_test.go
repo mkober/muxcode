@@ -107,22 +107,22 @@ func TestRoleClaudeModelDefault(t *testing.T) {
 		role string
 		want string
 	}{
-		{"edit", "claude-fable-5-1"},
-		{"auto", "claude-fable-5-1"},
+		{"edit", "claude-fable-5-2"},
+		{"auto", "claude-fable-5-2"},
 		{"plan", "claude-opus-5-5"},
 		{"planner", "claude-opus-5-5"},
 		{"review", "claude-opus-5-5"},
 		{"analyze", "claude-opus-5-5"},
 		{"analyst", "claude-opus-5-5"},
-		{"build", "claude-sonnet-5"},
-		{"test", "claude-sonnet-5"},
-		{"commit", "claude-sonnet-5"},
-		{"git", "claude-sonnet-5"},
-		{"deploy", "claude-sonnet-5"},
-		{"api", "claude-sonnet-5"},
-		{"run", "claude-sonnet-5"},
-		{"runner", "claude-sonnet-5"},
-		{"watch", "claude-sonnet-5"},
+		{"build", "claude-sonnet-5-5"},
+		{"test", "claude-sonnet-5-5"},
+		{"commit", "claude-sonnet-5-5"},
+		{"git", "claude-sonnet-5-5"},
+		{"deploy", "claude-sonnet-5-5"},
+		{"api", "claude-sonnet-5-5"},
+		{"run", "claude-sonnet-5-5"},
+		{"runner", "claude-sonnet-5-5"},
+		{"watch", "claude-sonnet-5-5"},
 		{"custom", ""},
 	}
 
@@ -530,8 +530,8 @@ func TestResolveLaunchConfig_EditRole(t *testing.T) {
 	cfg := ResolveLaunchConfig("edit")
 
 	// Edit should default to the fable model
-	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-fable-5-1" {
-		t.Errorf("ModelFlags = %v, want [--model claude-fable-5-1]", cfg.ModelFlags)
+	if len(cfg.ModelFlags) != 2 || cfg.ModelFlags[1] != "claude-fable-5-2" {
+		t.Errorf("ModelFlags = %v, want [--model claude-fable-5-2]", cfg.ModelFlags)
 	}
 
 	// Edit should have --dangerously-skip-permissions (all roles use bypass)

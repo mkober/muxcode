@@ -36,8 +36,8 @@ var providerOrder = []string{"claude", "opencode", "codex", "local"}
 // first request — the phantom-model failure with no test to catch it.
 var hardcodedFallbackModels = map[string]ProviderModels{
 	"claude": {
-		Default: "claude-sonnet-5",
-		Models:  []string{"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"},
+		Default: "claude-sonnet-5-5",
+		Models:  []string{"claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"},
 	},
 	"opencode": {
 		// Latest version of each opencode-go family, verified against
