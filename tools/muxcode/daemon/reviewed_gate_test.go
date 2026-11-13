@@ -67,7 +67,7 @@ func TestCheckInboxes_VerifySpecOncePerReviewCompletion(t *testing.T) {
 	seedRepoSpec(t, session)
 	d := New(session, 5, 2)
 
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 
 	if got := countVerifySpec(t, session); got != 1 {
@@ -94,7 +94,7 @@ func TestCheckInboxes_VerifySpecOncePerReviewCompletion(t *testing.T) {
 	}
 
 	// A genuine second completion (new review→edit message ID) fires again.
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM round 2", "req-4"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM round 2", "req-4"))
 	d.checkInboxes()
 
 	if got := countVerifySpec(t, session); got != 1 {
@@ -140,7 +140,7 @@ func TestCheckInboxes_MarkerWriteFailureWithholdsTransition(t *testing.T) {
 		t.Fatalf("mkdir marker path: %v", err)
 	}
 
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 
 	if got := countVerifySpec(t, session); got != 0 {
@@ -170,7 +170,7 @@ func TestCheckInboxes_ReviewedMarkerSurvivesDaemonRestart(t *testing.T) {
 	seedRepoSpec(t, session)
 
 	d := New(session, 5, 2)
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 1 {
 		t.Fatalf("expected 1 verify-spec before restart, got %d", got)

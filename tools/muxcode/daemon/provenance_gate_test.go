@@ -95,7 +95,7 @@ func TestNotifyPlan_OutOfRepoPathsNeverPresented(t *testing.T) {
 	bus.TransitionWorkflow(session, bus.StateEditing, "test:seed",
 		bus.WithFiles([]string{credentials, spawnCopy, repoCopy}))
 
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 
 	contents := planVerifyContents(t, session)
@@ -134,7 +134,7 @@ func TestNotifyPlan_MovementGate(t *testing.T) {
 
 	d := New(session, 5, 2)
 
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 1 {
 		t.Fatalf("first fire with movement evidence: got %d verify-spec, want 1", got)
@@ -145,7 +145,7 @@ func TestNotifyPlan_MovementGate(t *testing.T) {
 
 	// Nothing moved → suppressed.
 	drainPlanInbox(t, session)
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM again", "req-2"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM again", "req-2"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 0 {
 		t.Errorf("completion with nothing moved fired %d verify-spec, want 0", got)
@@ -155,7 +155,7 @@ func TestNotifyPlan_MovementGate(t *testing.T) {
 	if err := os.WriteFile(specFile, []byte("# Test Spec\n\n- [x] item\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 3", "req-3"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM 3", "req-3"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 0 {
 		t.Errorf("spec-only edit fired %d verify-spec, want 0", got)
@@ -166,7 +166,7 @@ func TestNotifyPlan_MovementGate(t *testing.T) {
 	if err := os.WriteFile(specFile, []byte("# Test Spec\n\n- [x] item\n- [ ] more\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 4", "req-4"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM 4", "req-4"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 1 {
 		t.Errorf("run-state transition fired %d verify-spec, want 1 — a tree-only fingerprint suppresses fire 11", got)
@@ -180,7 +180,7 @@ func TestNotifyPlan_MovementGate(t *testing.T) {
 	if err := os.WriteFile(specFile, []byte("# Test Spec\n\n- [x] item\n- [x] more\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 5", "req-5"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM 5", "req-5"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 1 {
 		t.Errorf("source+spec completion fired %d verify-spec, want 1 — gate keys on 'spec touched', not movement", got)
@@ -196,7 +196,7 @@ func TestNotifyPlan_DanglingSpecWithholdsFire(t *testing.T) {
 	}
 	d := New(session, 5, 2)
 
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 
 	if got := countVerifySpec(t, session); got != 0 {
@@ -232,7 +232,7 @@ func TestNotifyPlan_ExternalSpecPointerWithheld(t *testing.T) {
 
 	// The reported escape: repoDir unavailable, pointer absolute external.
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", "")
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM", "req-1"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM", "req-1"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 0 {
 		t.Errorf("repoDir unavailable: external pointer fired %d verify-spec, want 0", got)
@@ -248,7 +248,7 @@ func TestNotifyPlan_ExternalSpecPointerWithheld(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 2", "req-2"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM 2", "req-2"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 0 {
 		t.Errorf("repoDir known: external pointer fired %d verify-spec, want 0", got)
@@ -258,7 +258,7 @@ func TestNotifyPlan_ExternalSpecPointerWithheld(t *testing.T) {
 	if err := bus.WriteActiveSpec(session, specRel); err != nil {
 		t.Fatal(err)
 	}
-	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "LGTM 3", "req-3"))
+	seedEditInbox(t, session, bus.NewMessage("review", "edit", "response", "review", "EXIT=0 LGTM 3", "req-3"))
 	d.checkInboxes()
 	if got := countVerifySpec(t, session); got != 1 {
 		t.Errorf("in-repo pointer fired %d verify-spec, want 1 — the refusal cases may be vacuous", got)

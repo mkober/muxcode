@@ -462,16 +462,17 @@ func (d *Daemon) checkInboxes() {
 		if size > prev && size > 0 {
 			// Reviewed transition: once per review completion (MUX-007) — see WriteReviewedMarker
 			if role == "edit" {
-				if id := bus.NewestMessageIDFrom(d.session, "edit", "review"); id != "" && id != bus.ReadReviewedMarker(d.session) {
-					if err := bus.WriteReviewedMarker(d.session, id); err != nil {
+				prev := bus.ReadReviewedMarker(d.session)
+				if reply, ok := bus.NewestMessageFrom(d.session, "edit", "review"); ok && reply.ID != "" && reply.ID != prev {
+					if err := bus.WriteReviewedMarker(d.session, reply.ID); err != nil {
 						// fail closed — see WriteReviewedMarker
 						fmt.Fprintf(os.Stderr, "  [daemon] reviewed marker write failed — transition withheld: %v\n", err)
 					} else {
 						bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
 							bus.WithOutcome("review", "complete"))
 
-						// Notify plan agent to verify progress against active spec
-						d.notifyPlanOnReview()
+						outcome, evidence := bus.ReviewReplyOutcome(reply)
+						d.notifyPlanOnReview(reply.ID, outcome, evidence)
 					}
 				}
 			}
@@ -500,9 +501,18 @@ func (d *Daemon) checkInboxes() {
 
 // notifyPlanOnReview sends a verification request to the plan agent after
 // review completion, if an active spec is set and the review chain is
-// configured to notify plan (NotifyPlanOn).
+// configured to notify plan (NotifyPlanOn) on this review's outcome.
 //
-// Three Phase 3 controls gate the send (MUX-007):
+// The outcome is the review's own verdict, read from the reply's EXIT
+// sentinel by bus.ReviewReplyOutcome; "" means none could be established. An unknown
+// verdict, or one NotifyPlanOn does not list, withholds the send with a
+// `plan-verify-withheld <outcome> <review-id> (<evidence>)` row and leaves the
+// movement marker unwritten, so a later passing review still fires. Before
+// MUX-172 the gate was asked about a literal "success", so `["success"]` and
+// `["*"]` behaved alike and plan was sent to verify against reviews that had
+// returned must-fix findings — four times on 2026-09-09.
+//
+// Three Phase 3 controls then gate the send (MUX-007):
 //
 //   - The spec pointer is presented only when it provably resolves inside
 //     the repo. The pointer is agent-written data like the changed-files
@@ -531,8 +541,15 @@ func (d *Daemon) checkInboxes() {
 // and when the session directory cannot be resolved — falling back to the
 // daemon's cwd there would name a foreign repo's branch and have plan record
 // time against the wrong one.
-func (d *Daemon) notifyPlanOnReview() {
-	if !bus.ChainShouldNotifyPlan("review", "success") {
+func (d *Daemon) notifyPlanOnReview(reviewID, outcome, evidence string) {
+	if outcome == "" {
+		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-withheld",
+			fmt.Sprintf("unknown %s (%s)", reviewID, evidence))
+		return
+	}
+	if !bus.ChainShouldNotifyPlan("review", outcome) {
+		bus.LogLifecycle(d.session, "info", "daemon", "plan-verify-withheld",
+			fmt.Sprintf("%s %s (%s)", outcome, reviewID, evidence))
 		return
 	}
 

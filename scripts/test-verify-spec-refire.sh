@@ -32,6 +32,11 @@
 # plan-verify rows stand in 1:1 for TransitionWorkflow(StateReviewed), which
 # shares the gate's else-branch in checkInboxes.
 #
+# Every review→edit reply ends in EXIT=0: since MUX-172 the gate reads the
+# reply's own verdict and withholds a reply that carries none, so a
+# sentinel-less reply would test that gate instead of this one
+# (scripts/test-plan-verify-verdict.sh covers it).
+#
 # ISOLATION: scratch BUS_SESSION under /tmp, scratch repo dir pinned via
 # MUXCODE_SESSION_REPO_DIR, lifecycle log in a temp dir, empty config,
 # force-respond ladder disabled so escalation cannot inject or consume
@@ -179,7 +184,7 @@ sleep 3
   || bad "reviewed marker written for a CC copy: $(marker)"
 
 # --- 2. One review completion → exactly one verify-spec --------------------
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: LGTM, no issues found" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: LGTM, no issues found. EXIT=0" --type response >/dev/null 2>&1
 FIRST_ID="$(newest_review_id)"
 [ -n "$FIRST_ID" ] \
   && ok "review→edit response sits unconsumed in edit's inbox ($FIRST_ID)" \
@@ -254,7 +259,7 @@ grep -q '"action":"verify-spec"' "$BD/inbox/plan.jsonl" 2>/dev/null \
   && bad "plan's inbox still holds a pending verify-spec after the drain" \
   || ok "plan's inbox drained (models a live plan consuming its request)"
 
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: second pass, one nit" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: second pass, one nit. EXIT=0" --type response >/dev/null 2>&1
 SECOND_ID="$(newest_review_id)"
 
 if wait_vs_count 2; then
@@ -317,7 +322,7 @@ grep -q '"action":"verify-spec"' "$BD/inbox/plan.jsonl" 2>/dev/null \
   && bad "plan's inbox still holds a verify-spec before the provenance fire" \
   || ok "plan's inbox drained before the provenance fire"
 
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: third pass" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: third pass. EXIT=0" --type response >/dev/null 2>&1
 wait_vs_count 3 \
   && ok "completion with movement evidence fired (first fingerprinted fire)" \
   || bad "no fire with movement evidence: $(tail -3 "$WORK/daemon.log" 2>/dev/null)"
@@ -340,7 +345,7 @@ grep -q '"action":"verify-spec"' "$BD/inbox/plan.jsonl" 2>/dev/null \
   && bad "plan's inbox not drained before the suppression checks" \
   || ok "plan's inbox drained before the suppression checks"
 
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: fourth pass, nothing changed since" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: fourth pass, nothing changed since. EXIT=0" --type response >/dev/null 2>&1
 sleep 3
 [ "$(vs_count)" -eq 3 ] \
   && ok "no verify-spec when nothing moved" \
@@ -352,7 +357,7 @@ grep -q '"event":"plan-verify-suppressed"' "$LIFELOG" 2>/dev/null \
 # Item 10's closed loop: the verifier's own spec edit must not read as
 # movement — re-verifying it would manufacture the next echo.
 echo "- [x] checked by plan" >> "$REPO/$SPEC"
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: fifth pass after spec edit" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: fifth pass after spec edit. EXIT=0" --type response >/dev/null 2>&1
 sleep 3
 [ "$(vs_count)" -eq 3 ] \
   && ok "verifier's own spec edit is not movement" \
@@ -363,7 +368,7 @@ cat > "$BD/graphs/fixture-run/run.json" <<'EOF'
 {"id":"fixture-run","template":"t","state":"failed","created_at":1,"updated_at":2}
 EOF
 echo "- [ ] reopened" >> "$REPO/$SPEC"
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: sixth pass after run failure" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: sixth pass after run failure. EXIT=0" --type response >/dev/null 2>&1
 wait_vs_count 4 \
   && ok "run-state transition fired despite a docs-only file change (fire-11 shape)" \
   || bad "fire-11 shape suppressed — a filename or tree-only rule cannot pass this"
@@ -373,7 +378,7 @@ sleep 1
 AGENT_ROLE=plan "$MUX" inbox >/dev/null 2>&1
 echo "// change" >> "$REPO/bus/keep.go"
 echo "- [x] closed" >> "$REPO/$SPEC"
-AGENT_ROLE=review "$MUX" send edit review-result "Review complete: seventh pass with source change" --type response >/dev/null 2>&1
+AGENT_ROLE=review "$MUX" send edit review-result "Review complete: seventh pass with source change. EXIT=0" --type response >/dev/null 2>&1
 wait_vs_count 5 \
   && ok "genuine completion changing source and touching the spec fired" \
   || bad "suppressed on 'spec was touched' rather than 'nothing moved'"

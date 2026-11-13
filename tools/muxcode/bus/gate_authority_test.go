@@ -152,6 +152,35 @@ func TestGateSelfApprovalOptIn(t *testing.T) {
 	}
 }
 
+// The daemon's road: an opt-in present at the seal is honoured, removing it
+// mid-session revokes it at once, and the opt-in grants nothing to a role the
+// gate authority does not name.
+func TestGateSelfApprovalSealedGrantAndRevoke(t *testing.T) {
+	const optedIn = "MUXCODE_GATE_AUTHORITY_ROLES=user,auto\n" + GateSelfApprovalKey + "=auto\n"
+	unsealGateAuthority(t)
+	pinGateConfigBody(t, optedIn)
+	SealGateAuthority()
+	pinActor(t, "auto")
+
+	sealed := createTestRun(t, actorGateGraph())
+	if err := ApproveGraphGate(runTestSession, sealed.ID, "gate"); err != nil {
+		t.Fatalf("a sealed opt-in was refused: %v", err)
+	}
+
+	pinGateConfigBody(t, "MUXCODE_GATE_AUTHORITY_ROLES=user,auto\n")
+	revoked := createTestRun(t, actorGateGraph())
+	if err := ApproveGraphGate(runTestSession, revoked.ID, "gate"); err == nil {
+		t.Error("removing the opt-in mid-session did not revoke it")
+	}
+
+	unsealGateAuthority(t)
+	pinGateConfigBody(t, "MUXCODE_GATE_AUTHORITY_ROLES=user\n"+GateSelfApprovalKey+"=auto\n")
+	noBase := createTestRun(t, actorGateGraph())
+	if err := ApproveGraphGate(runTestSession, noBase.ID, "gate"); err == nil {
+		t.Error("self-approval opt-in granted a role without the gate authority")
+	}
+}
+
 // TestApproveGraphGateAllowsUser is Phase 2's negative control: the human path
 // is unchanged. A person approves, the marker lands with their identity, and
 // approving their own run is not self-approval.

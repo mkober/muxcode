@@ -214,6 +214,12 @@ script is not executable in the tree (`-rw-r--r--`) and was run as `bash scripts
   (why the run must not carry a second copy); [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)
   (the fail-closed `phase-check` path a vanished pointer would take).
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-168-reinit-purges-active-spec-graph-run-survives | 2m | 2026-11-13 17:54 |
+
 ## Status
 
 Complete
