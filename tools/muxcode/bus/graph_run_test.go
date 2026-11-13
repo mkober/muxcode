@@ -338,6 +338,51 @@ func TestCreateGraphRunDerivesLoopCap(t *testing.T) {
 	}
 }
 
+// The defect loop's cap is the ranked defect count at run creation, and a
+// backlog with no ranked defect refuses to start rather than guess a bound.
+func TestCreateGraphRunDerivesBacklogLoopCap(t *testing.T) {
+	g := linearGraph()
+	g.Edges = append(g.Edges, Edge{From: "b", To: "a", Outcome: OutcomeFailure, MaxIterationsFromBacklog: true})
+
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+	writeBacklog := func(rows string) {
+		t.Helper()
+		path := filepath.Join(repo, BacklogIndexPath)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := "### Defects — prioritized\n\n| # | ID |\n|---|----|\n" + rows + "\n### Reliability\n\n| 9 | MUX-900 |\n"
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeBacklog("| 1 | MUX-001 |\n| 2 | MUX-002 |\n| 3 | MUX-003 |\n")
+	run, err := CreateGraphRun(runTestSession, g, "t", "")
+	if err != nil {
+		t.Fatalf("backlog-capped run must start with defects listed: %v", err)
+	}
+	frozen, err := ReadGraphRunGraph(runTestSession, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range frozen.Edges {
+		if e.From == "b" && e.To == "a" && (e.MaxIterations != 3 || e.MaxIterationsFromBacklog) {
+			t.Errorf("frozen loop edge = cap %d (from backlog %v), want a plain cap of 3", e.MaxIterations, e.MaxIterationsFromBacklog)
+		}
+	}
+
+	writeBacklog("")
+	if _, err := CreateGraphRun(runTestSession, g, "t", ""); err == nil {
+		t.Error("a backlog with no ranked defect must refuse to start")
+	}
+}
+
 func TestNewGraphRunIDSanitizesName(t *testing.T) {
 	id := NewGraphRunID("../evil/name x")
 	if strings.ContainsAny(id, "/ .") {

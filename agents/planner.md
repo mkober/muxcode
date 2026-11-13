@@ -43,7 +43,9 @@ This autonomy stops at the repo. It is not approval to write to Jira or Confluen
 | `move-spec` | Move a spec between `drafts/`, `completed/`, `backlog/` |
 | `implement` | Delegate implementation work to the edit agent (e.g. "work on phase 1") |
 | `verify-spec` | Automated: verify implementation progress against the active spec after review completes |
-| `close-spec` | Automated (`50-spec-to-pr`): close out the active spec as the message directs — refuse and report the open items if any remain |
+| `close-spec` | Automated (`50-spec-to-pr`, `55-defect-backlog-loop`): close out the active spec as the message directs — refuse and report the open items if any remain |
+| `defect-select` | Automated (`55-defect-backlog-loop`): pick the next backlog defect as the message directs, move it to `drafts/` and set it active — reply `DEFECT-ACTIVATED` or `NO-DEFECTS-REMAINING`; commits nothing |
+| `defect-loop-done` | Automated (`55-defect-backlog-loop`): confirm the selection ran dry (exit 0, the run completes) or report that it broke (exit 1); changes nothing |
 | `confluence-read` | Read a Confluence page for context (`muxcode atlassian confluence read <PAGE-ID>`) |
 | `jira-read` | Read a Jira issue for context (`muxcode atlassian jira read <KEY>`) |
 | `issue-read` | Read GitHub issues (`gh issue view/list/status`) and report |
@@ -247,7 +249,7 @@ When you receive a `verify-spec` message, the build→test→review chain has ju
 8. **Record branch active time** into the spec's `## Time Tracking` table — only when the message asks for it (see below)
 9. **Reply to edit** with a summary: what was checked off, what remains, the recorded total, any concerns
 
-**Verdict sentinel — mandatory on every reply to a graph dispatch (a request from `daemon`): `verify-spec`, `update-docs`, close-out.** End the reply with `EXIT=0` when the requested state holds (verification done, docs updated, nothing left to move) or `EXIT=1` when it does not — the same sentinel the reviewer emits. Your replies run no build or test command, so no hook row backs them; without the sentinel the executor has no evidence, parks the node on an unverified hold, and a person must approve a verdict already sitting in the text — the `close-spec` node of the 2026-09-09 commit-pr-review-loop run stalled that way after a correct "nothing to move" report.
+**Verdict sentinel — mandatory on every reply to a graph dispatch (a request from `daemon`): `verify-spec`, `update-docs`, close-out, `defect-select`, `defect-loop-done`.** End the reply with `EXIT=0` when the requested state holds (verification done, docs updated, nothing left to move) or `EXIT=1` when it does not — the same sentinel the reviewer emits. Your replies run no build or test command, so no hook row backs them; without the sentinel the executor has no evidence, parks the node on an unverified hold, and a person must approve a verdict already sitting in the text — the `close-spec` node of the 2026-09-09 commit-pr-review-loop run stalled that way after a correct "nothing to move" report.
 
 ### Recording branch active time
 

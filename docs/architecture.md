@@ -473,7 +473,7 @@ restart; `--render-once` emits a single frame for scripts and tests. Gate approv
 calls `bus.ApproveGraphGate` directly — the same path as the CLI, with no bus-message route into
 it, preserving the rule that a human at the keyboard is the only thing that releases a gate.
 
-Templates resolve `project > user > builtin`, like agent files. Twelve ship built in, every one
+Templates resolve `project > user > builtin`, like agent files. Thirteen ship built in, every one
 carrying a workflow-stage number in tens so a listing (sorted by stage, then name, unnumbered last —
 `graphTemplateLess`) reads top-down as the workflow and a stage can be added without renumbering;
 the typeahead matches with or without the number. Renamed and extended 2026-09-24 on the user's
@@ -486,6 +486,7 @@ request:
 | 30 | `30-build-test-review` | The build, test, review subgraph the others compose |
 | 40 | `40-sync-main` | Gated rebase onto `origin/main`, build and test on the new base, `push --force-with-lease`; a conflict or red build withholds the push |
 | 50 | `50-spec-to-pr` | Check the checkout is on the spec's `<id>-<slug>` branch (gated create if not), then walk the active spec phase by phase: implement, build/test, review (findings route to fix), update-spec, gated per-phase commit, close-out, final gate, push and PR |
+| 55 | `55-defect-backlog-loop` | Work the backlog's prioritized defects one after another on `main`'s working tree: plan activates the best-ranked open defect, implement/build/test/review phase by phase, close-out, then one gate per defect ships it — branch, commit, rebase, push, PR, CI and review-comment fixes, merge — and the loop takes the next; completes when none remain, capped at the backlog's defect count |
 | 60 | `60-integration-suite` | Run the integration scripts one at a time through the run agent; failures go to a fix worker, rebuild, re-run, capped |
 | 70 | `70-pr-local-review` | Prompt for a PR id, gated checkout of main+rebase and the PR branch, local diff, review, branch restore (also on a failed review) |
 | 80 | `80-pr-review-fix` | Find the branch's PR, read its review comments, gated fix loop, push the fixes, reply to every comment |
@@ -509,8 +510,9 @@ is approved, so a merge can no longer be approved — or land — over open comm
 `70-pr-local-review` a `review -[failure]-> restore` edge, since a review with findings once left the
 checkout on the PR's head.
 
-Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (12 built-ins),
-`bus/graph_run.go` (durable store), `bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
+Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (13 built-ins),
+`bus/graph_run.go` (durable store, derived loop caps), `bus/backlog.go` (`BacklogDefectCount`),
+`bus/graph_exec.go` (executor), `cmd/graph.go` (CLI),
 `tui/graph.go` + `tui/graph_ui.go` (interactive surfaces),
 `daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
 [Agent Bus CLI](agent-bus.md#muxcode-graph).
@@ -556,6 +558,53 @@ phase did not close, routing it to the stuck gate. That comparison is what turns
 an intention into something that actually fires; without it the guard has no trigger, because
 "lowest phase with open items" returns the same phase forever and cannot tell iteration 5 from
 iteration 1.
+
+**A cap takes one of four forms.** An edge is bounded by a literal `max_iterations`, by a cap
+derived once at run creation (`resolveDerivedLoopCaps`, `bus/graph_run.go`) and frozen into the run's
+copy of the graph as a plain number, or by a cap the executor reads each time the edge fires
+(`edgeIterationLimits`, `bus/graph_exec.go`) and never freezes:
+
+| Edge field | Cap | Resolved | When it cannot be computed |
+|------------|-----|----------|----------------------------|
+| `max_iterations: N` | `N` | Written in the template | — |
+| `max_iterations_from_spec: true` | The active spec's phase count (`SpecPhases`) | Once, at run creation | Run creation refused: no active spec, a pointer outside the repo, an unresolvable repo dir, or a spec with no phase sections |
+| `max_iterations_from_backlog: true` | The ranked rows of the `### Defects` table in `docs/requirements/backlog/backlog.md` (`BacklogDefectCount`, `bus/backlog.go`) | Once, at run creation | Run creation refused: no index, no Defects section, zero ranked rows, or an unresolvable repo dir |
+| `max_iterations_from_active_spec: true` | The phase count of the spec active **when the edge fires** | Every fire | No readable spec is a budget of 0 — the fire is refused and the run fails loudly (`loop cap exhausted`) rather than looping on nothing; an unresolvable repo dir leaves the node unrouted and asks again next tick |
+
+An edge sets at most one of the four (`capForms`; more is a validation error), and any of them makes
+the edge capped for the cycle check and for `resets_iterations`. Each creation-time cap writes a
+`graph-loop-cap-derived` lifecycle row naming its source (`spec phase count`, `backlog defect count`),
+and one that cannot be computed fails creation rather than defaulting: a loop with a guessed bound is
+the failure the derivation exists to prevent. The fire-time form exists for a run whose active spec
+changes under it — a creation-time count would bound every later spec by the first one's length. In
+the graph TUI an edge still carrying a derived cap is badged `↺ ×phases` or `↺ ×defects` (`↺ k×phases`
+once fired) in place of a number (`loopAnnotation`, `tui/graph.go`).
+
+**The defect loop: one gate per defect.** `55-defect-backlog-loop` wraps the phase loop in an outer
+loop over the backlog's prioritized defects, `merge → select`, capped by
+`max_iterations_from_backlog`. It differs from `50-spec-to-pr` in three deliberate ways:
+
+- **Work happens on `main`'s working tree, uncommitted.** There is no per-phase commit and so no
+  per-phase gate; the branch is created only at ship time, carrying the tree. A checkout that is not
+  on `main` parks at `main-gate` before anything else.
+- **The gates were not removed, they were collapsed.** Every commit-role node still needs an upstream
+  `wait_human` and approval is single-use, so each lap of the outer loop asks exactly once, at
+  `ship-gate`, which dominates `ship`, `pr-push`, `pr-reply` and `merge`. The other four gates
+  (`main-gate`, `stuck-gate`, `close-stuck-gate`, `ship-stuck-gate`) are reached only on failure.
+- **Loop budgets are per defect, not per phase.** `merge → select` resets every inner loop edge. A
+  reset may not name an edge that itself resets others, so the inner loops reset nothing themselves —
+  the fix budget (10) spans all of one defect's phases, where `50-spec-to-pr` refreshes it per phase
+  ([MUX-193](requirements/completed/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md)).
+
+The phase loop itself (`phases-left → implement`) is capped by `max_iterations_from_active_spec`,
+not a fixed number: each defect is a different spec, selected mid-run, so the bound is the phase
+count of whichever spec is active when the edge fires — a count frozen at creation would describe a
+spec the run had not chosen yet.
+
+The run ends through `finish`, not by running out of edges: when `select` activates nothing, plan
+confirms `NO-DEFECTS-REMAINING` and exits zero (run completes), and any other report exits non-zero
+(run fails) — so a selection that broke cannot read as a backlog worked through. Node-level shape:
+[Agent Bus CLI](agent-bus.md#muxcode-graph).
 
 **Check before you ask (MUX-167).** The guard runs at `commit` dispatch — one node *after* the
 human approved `phase-gate` — so an open phase used to cost two gates per lap: an approval the guard

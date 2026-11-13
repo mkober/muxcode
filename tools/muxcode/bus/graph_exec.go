@@ -2737,13 +2737,17 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			}
 		}
 
+		limits, ok := edgeIterationLimits(session, matching)
+		if !ok {
+			continue
+		}
 		fired, exhausted := 0, 0
-		for _, e := range matching {
+		for i, e := range matching {
 			key := EdgeFireKey(e)
-			if e.MaxIterations > 0 && run.EdgeFires[key] >= e.MaxIterations {
+			if (e.MaxIterations > 0 || e.MaxIterationsFromActiveSpec) && run.EdgeFires[key] >= limits[i] {
 				exhausted++
 				LogLifecycle(session, "warn", "daemon", "graph-loop-exhausted",
-					fmt.Sprintf("%s: edge %s exhausted after %d iterations", run.ID, key, e.MaxIterations))
+					fmt.Sprintf("%s: edge %s exhausted after %d iterations", run.ID, key, limits[i]))
 				continue
 			}
 			if run.EdgeFires == nil {
@@ -2777,6 +2781,33 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			s.Routed = true
 		})
 	}
+}
+
+// edgeIterationLimits returns the cap each edge enforces as it fires. A
+// max_iterations_from_active_spec edge reads the phase count of the spec
+// active now; with no readable spec its limit is 0, so a fire is refused and
+// the run fails loudly rather than loops on nothing. ok is false when the repo
+// dir is unresolvable this tick: the caller leaves the node unrouted and asks
+// again next tick, since routing on a guess would either loop or fail a run.
+func edgeIterationLimits(session string, edges []Edge) (limits []int, ok bool) {
+	limits = make([]int, len(edges))
+	for i, e := range edges {
+		if !e.MaxIterationsFromActiveSpec {
+			limits[i] = e.MaxIterations
+			continue
+		}
+		path, specOK, transient, _ := activeSpecFile(session)
+		if transient {
+			return nil, false
+		}
+		if !specOK {
+			continue
+		}
+		if phases, err := SpecPhases(path); err == nil {
+			limits[i] = len(phases)
+		}
+	}
+	return limits, true
 }
 
 // resetLoopBudgets clears the fire counts of the edges a firing edge names in

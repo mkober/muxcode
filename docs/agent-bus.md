@@ -1894,11 +1894,11 @@ question correctly already exists.
 
 Broadly they follow a story's life — derive a spec from the branch, implement it, review, commit and
 PR, address the PR's review comments or failing CI, merge, deploy — with a defect-to-spec entry, a
-rebase-onto-main step, the integration suite and `30-build-test-review`, the build/test/review
+loop that works the backlog's defects one after another, a rebase-onto-main step, the integration suite and `30-build-test-review`, the build/test/review
 subgraph the others compose. Every builtin is pinned by `TestBuiltinGraphTemplatesValidate`, so one
 violating the gate rule fails the suite rather than shipping. Since 2026-09-24 every builtin carries
 a workflow-stage prefix in tens — `10-story-to-spec`, `20-defect-to-spec`, `30-build-test-review`,
-`40-sync-main`, `50-spec-to-pr`, `60-integration-suite`, `70-pr-local-review`, `80-pr-review-fix`,
+`40-sync-main`, `50-spec-to-pr`, `55-defect-backlog-loop`, `60-integration-suite`, `70-pr-local-review`, `80-pr-review-fix`,
 `90-ci-fix`, `100-docs-sync`, `110-pr-merge`, `120-deploy-verify` — and listings sort by stage
 number, then name, unnumbered names last (`graphTemplateLess`, `bus/graph.go`), so they read
 top-down as the workflow and a stage can be inserted without renumbering. The launcher typeahead
@@ -1974,9 +1974,38 @@ unresolved thread marked **outdated** — its lines moved, not necessarily its f
 code demonstrably makes the requested change or makes it inapplicable, which the reply must say.
 Not actionable: resolved threads, and bot summaries or chatter that ask for no change.
 
+**`55-defect-backlog-loop` shape.** Works the `### Defects` table of
+`docs/requirements/backlog/backlog.md` one defect per lap, on `main`'s working tree, with one human
+gate per defect.
+
+| Stage | Nodes | Notes |
+|-------|-------|-------|
+| Preflight | `preflight` (commit, `pr-read`) → `on-main` | `ON-MAIN` goes to `select`; otherwise `main-gate` → `to-main` (switch to `main`, pull) → `select` |
+| Select | `select` (plan, `defect-select`) → `activated` | Resumes an `In Progress` defect spec already in `drafts/`; else takes the best-ranked row whose spec is in `backlog/`, not Parked, dependencies done — moves it to `drafts/`, sets `In Progress`, `muxcode spec set`. Replies `DEFECT-ACTIVATED` or `NO-DEFECTS-REMAINING` |
+| Finish | `finish` (plan, `defect-loop-done`) | Reached when nothing was activated: `NO-DEFECTS-REMAINING` confirmed exits zero and the run completes; any other report exits non-zero and the run fails |
+| Phase loop | `implement` (spawn) → `build` → `test` → `review` → `update-spec` (plan `verify-spec`, `PHASE-COMPLETE`) → `phase-done` → `phases-left` | Nothing is committed. Failures route to `fix` → `build` (cap 10 per defect); `phases-left` → `implement` (`max_iterations_from_active_spec` — the active defect spec's phase count, read as the edge fires); a phase that did not complete parks at `stuck-gate` (retry, cap 3) |
+| Close-out | `close-spec` (plan, `spec-complete` guard) | Status `Complete`, move to `completed/`, remove the Defects and In progress rows, renumber ranks, re-point the active spec; a refusal parks at `close-stuck-gate` (retry, cap 3) |
+| Ship | `ship-gate` → `ship` (commit) | The one gate per defect. Branch `<id>-<slug>` carrying the tree, commit, rebase onto `origin/main` (a conflict aborts, never self-resolved), push, PR titled `<id> <spec title>` with `Closes #<issue>` from the spec's Tracking line; a failure parks at `ship-stuck-gate` (retry, cap 2) |
+| PR | `ci-watch` → `ci-green` → `read-comments` → `no-comments` | `ci-watch` is shared with `110-pr-merge` (`ciWatchNodeJSON`), the review read with `80-pr-review-fix`. Red CI or an actionable comment goes to `pr-fix` (spawn) → `pr-build` → `pr-test` → `pr-review` → `pr-push` → `pr-reply` → `ci-watch` (caps 4 and 3) |
+| Merge | `merge` (commit) → `select` | `gh pr merge`, branch deleted, `main` pulled, then the next defect |
+
+`merge → select` carries `max_iterations_from_backlog` and resets every inner loop edge, so each
+defect starts with full budgets. Unlike `110-pr-merge` there is no second gate or re-read before the
+merge: `ship-gate` is approved before the PR exists and covers the unattended ship, PR fixes and
+merge for that one defect.
+
 **Validation is strict by design.** Undefined node refs, unreachable nodes, and uncapped
-cycles are errors, not warnings — a loop is only legal via an explicit `max_iterations` on a
-loop edge. A node that commits or writes to Jira/Confluence is rejected unless it sits
+cycles are errors, not warnings — a loop is only legal via a cap on a loop edge: an explicit
+`max_iterations`, or one derived at run creation — `max_iterations_from_spec` (the active spec's
+phase count) or `max_iterations_from_backlog` (the ranked rows of the backlog's Defects table,
+`BacklogDefectCount`) — or one the executor reads each time the edge fires,
+`max_iterations_from_active_spec` (the phase count of the spec active then, never frozen at
+creation). An edge sets at most one of the four. A creation-time cap that cannot be computed (no
+active spec, no backlog index, zero ranked defects) refuses run creation, and each resolution writes a
+`graph-loop-cap-derived` lifecycle row naming its source; a fire-time cap with no readable spec is a
+budget of 0, so the run fails loudly instead of looping, and an unresolvable repo dir defers routing
+to the next tick. The graph TUI badges an edge carrying a derived cap `↺ ×phases` or `↺ ×defects`.
+A node that commits or writes to Jira/Confluence is rejected unless it sits
 downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
 commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets
 `80-pr-review-fix` open with two read-only nodes, `find-pr` and `read-comments`, and end without ever

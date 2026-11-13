@@ -84,6 +84,12 @@ var knownNodeGuards = map[string]bool{
 // count at run creation (MUX-121: a fixed cap silently truncates a long
 // spec or over-allows a short one); CreateGraphRun resolves it into
 // MaxIterations on the frozen copy, so the executor sees only numbers.
+// MaxIterationsFromBacklog does the same with the number of rows in the
+// backlog's prioritized Defects table, for a loop that walks the defects one
+// per pass. MaxIterationsFromActiveSpec is never frozen: the executor reads
+// the phase count of the spec active when the edge fires, for a phase loop in
+// a run that switches specs (55-defect-backlog-loop), where any number fixed
+// at creation would truncate a longer spec. An edge sets at most one cap form.
 //
 // ResetsIterations names loop edges whose fire counts are cleared each time
 // this edge fires — "from->to" for every outcome of that pair, or a full
@@ -93,12 +99,31 @@ var knownNodeGuards = map[string]bool{
 // Validation keeps every reset bounded: the resetting edge must itself be
 // capped, and may name neither itself nor an edge that resets others.
 type Edge struct {
-	From                  string   `json:"from"`
-	To                    string   `json:"to"`
-	Outcome               string   `json:"outcome,omitempty"` // empty means "success"
-	MaxIterations         int      `json:"max_iterations,omitempty"`
-	MaxIterationsFromSpec bool     `json:"max_iterations_from_spec,omitempty"`
-	ResetsIterations      []string `json:"resets_iterations,omitempty"`
+	From                        string   `json:"from"`
+	To                          string   `json:"to"`
+	Outcome                     string   `json:"outcome,omitempty"` // empty means "success"
+	MaxIterations               int      `json:"max_iterations,omitempty"`
+	MaxIterationsFromSpec       bool     `json:"max_iterations_from_spec,omitempty"`
+	MaxIterationsFromBacklog    bool     `json:"max_iterations_from_backlog,omitempty"`
+	MaxIterationsFromActiveSpec bool     `json:"max_iterations_from_active_spec,omitempty"`
+	ResetsIterations            []string `json:"resets_iterations,omitempty"`
+}
+
+// Capped reports whether the edge is a loop edge carrying an iteration bound:
+// numeric, derived at run creation, or read when it fires.
+func (e Edge) Capped() bool {
+	return e.capForms() > 0
+}
+
+// capForms counts the cap forms the edge sets.
+func (e Edge) capForms() int {
+	n := 0
+	for _, set := range []bool{e.MaxIterations > 0, e.MaxIterationsFromSpec, e.MaxIterationsFromBacklog, e.MaxIterationsFromActiveSpec} {
+		if set {
+			n++
+		}
+	}
+	return n
 }
 
 // resetTargets resolves one ResetsIterations entry to the edges it names.
@@ -428,8 +453,8 @@ func (g *Graph) validateEdges(byID map[string]*Node, v *GraphValidation) {
 		if e.MaxIterations < 0 {
 			v.errf("edge %s->%s has negative max_iterations", e.From, e.To)
 		}
-		if e.MaxIterationsFromSpec && e.MaxIterations > 0 {
-			v.errf("edge %s->%s sets both max_iterations and max_iterations_from_spec — choose one", e.From, e.To)
+		if e.capForms() > 1 {
+			v.errf("edge %s->%s sets more than one of max_iterations, max_iterations_from_spec, max_iterations_from_backlog and max_iterations_from_active_spec — choose one", e.From, e.To)
 		}
 		key := e.From + "\x00" + e.To + "\x00" + edgeOutcome(e)
 		if seen[key] {
@@ -447,7 +472,7 @@ func (g *Graph) validateResets(e Edge, v *GraphValidation) {
 	if len(e.ResetsIterations) == 0 {
 		return
 	}
-	if e.MaxIterations == 0 && !e.MaxIterationsFromSpec {
+	if !e.Capped() {
 		v.errf("edge %s->%s resets iterations but has no cap of its own — the budget it refreshes would be unbounded", e.From, e.To)
 	}
 	for _, ref := range e.ResetsIterations {
@@ -498,13 +523,14 @@ func (g *Graph) validateReachability(v *GraphValidation) {
 }
 
 // validateAcyclic runs a DFS cycle check over the graph with capped loop
-// edges removed — explicitly capped (max_iterations > 0) or spec-derived
-// (resolved to a number at run creation). Any cycle that survives has no
-// iteration bound and would run forever, so it is an error.
+// edges removed — explicitly capped (max_iterations > 0), derived from the
+// spec or backlog at run creation, or read from the active spec when fired.
+// Any cycle that survives has no iteration bound and would run forever, so it
+// is an error.
 func (g *Graph) validateAcyclic(v *GraphValidation) {
 	out := make(map[string][]string)
 	for _, e := range g.Edges {
-		if e.MaxIterations > 0 || e.MaxIterationsFromSpec {
+		if e.Capped() {
 			continue
 		}
 		out[e.From] = append(out[e.From], e.To)

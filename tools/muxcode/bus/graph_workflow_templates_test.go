@@ -1,6 +1,8 @@
 package bus
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -26,8 +28,8 @@ func TestBuiltinTemplatesListInWorkflowOrder(t *testing.T) {
 		names = append(names, name)
 	}
 	sort.Slice(names, func(i, j int) bool { return graphTemplateLess(names[i], names[j]) })
-	want := []string{"10-story-to-spec", "20-defect-to-spec", "30-build-test-review", "40-sync-main", "50-spec-to-pr", "60-integration-suite",
-		"70-pr-local-review", "80-pr-review-fix", "90-ci-fix", "100-docs-sync", "110-pr-merge", "120-deploy-verify"}
+	want := []string{"10-story-to-spec", "20-defect-to-spec", "30-build-test-review", "40-sync-main", "50-spec-to-pr", "55-defect-backlog-loop",
+		"60-integration-suite", "70-pr-local-review", "80-pr-review-fix", "90-ci-fix", "100-docs-sync", "110-pr-merge", "120-deploy-verify"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("builtins = %v, want %v", names, want)
 	}
@@ -258,6 +260,126 @@ func TestPRMergeTemplate(t *testing.T) {
 	}
 }
 
+// The defect loop runs dry into a terminal success, ships each defect only
+// through its gate and a green, comment-free PR, and gives every defect the
+// full budget of every inner loop. Its spec changes each pass, so no node may
+// name the run's launch-time text.
+func TestDefectBacklogLoopTemplate(t *testing.T) {
+	g := mustTemplate(t, "55-defect-backlog-loop")
+
+	onlyReachedFrom(t, g, "finish", "activated", OutcomeFailure)
+	for _, e := range g.Edges {
+		if e.From == "finish" {
+			t.Errorf("finish must end the run — a success with no edges completes it — not route to %s", e.To)
+		}
+	}
+
+	onlyReachedFrom(t, g, "ship-gate", "close-spec", OutcomeSuccess)
+	onlyReachedFrom(t, g, "merge", "no-comments", OutcomeSuccess)
+	for _, e := range g.Edges {
+		if e.To == "ship" && !(e.From == "ship-gate" || e.From == "ship-stuck-gate") {
+			t.Errorf("ship reachable from %s — only its gates may release it", e.From)
+		}
+	}
+
+	var outer *Edge
+	for i := range g.Edges {
+		if g.Edges[i].From == "merge" && g.Edges[i].To == "select" {
+			outer = &g.Edges[i]
+		}
+	}
+	if outer == nil || !outer.MaxIterationsFromBacklog {
+		t.Fatal("merge->select must loop to the next defect, capped at the backlog's defect count")
+	}
+	for _, e := range g.Edges {
+		if e.From == "phases-left" && e.To == "implement" && !e.MaxIterationsFromActiveSpec {
+			t.Error("the phase loop must be capped by the active spec when it fires — each defect's spec differs, so any fixed number truncates a longer one")
+		}
+	}
+	resets := map[string]bool{}
+	for _, r := range outer.ResetsIterations {
+		resets[r] = true
+	}
+	for _, e := range g.Edges {
+		if e.Capped() && e.From+"->"+e.To != "merge->select" && !resets[e.From+"->"+e.To] {
+			t.Errorf("merge->select does not reset %s->%s — the next defect would start on this one's spent budget", e.From, e.To)
+		}
+	}
+
+	for _, n := range g.Nodes {
+		for _, frozen := range []string{"${spec}", "${spec_title}", "${intent}"} {
+			if strings.Contains(n.Message, frozen) {
+				t.Errorf("node %s names %s, the run's launch text — the loop's spec changes every pass", n.ID, frozen)
+			}
+		}
+	}
+
+	if w, m := g.node("ci-watch"), mustTemplate(t, "110-pr-merge").node("ci-watch"); w == nil || m == nil || w.Message != m.Message || w.Role != m.Role {
+		t.Error("the loop's CI watch must be 110-pr-merge's — one definition of green")
+	}
+}
+
+// Driven through the executor with the real template: a selection that runs
+// dry completes the run, one that broke fails it instead of reading as
+// finished, and an activated defect starts the implement worker without
+// reaching finish.
+func TestDefectBacklogLoopEndsOnlyWhenTheBacklogRunsDry(t *testing.T) {
+	for _, c := range []struct {
+		name, selectReply, finishReply string
+		wantRun                        string
+		wantImplement                  bool
+	}{
+		{"backlog worked through", "Every remaining row is parked. NO-DEFECTS-REMAINING\nEXIT=0", "Confirmed.\nEXIT=0", GraphRunComplete, false},
+		{"selection broke", "backlog.md could not be read\nEXIT=0", "The selection broke.\nEXIT=1", GraphRunFailed, false},
+		{"defect activated", "DEFECT-ACTIVATED MUX-001 x docs/requirements/drafts/MUX-001-x.md\nEXIT=0", "", GraphRunRunning, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			repo := t.TempDir()
+			t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+			backlog := filepath.Join(repo, BacklogIndexPath)
+			if err := os.MkdirAll(filepath.Dir(backlog), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(backlog, []byte("### Defects — prioritized\n\n| # | ID |\n|---|----|\n| 1 | MUX-001 |\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			g, err := ParseGraph([]byte(builtinGraphJSON["55-defect-backlog-loop"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := createTestRun(t, g)
+			fakeLiveSpawns(t)
+			settle := func() {
+				for i := 0; i < 4; i++ {
+					step(t, runTestSession, run.ID)
+				}
+			}
+
+			settle()
+			completeSendNodeSentinel(t, runTestSession, run.ID, "preflight", "Branch main, tree clean. ON-MAIN\nEXIT=0")
+			settle()
+			completeSendNodeSentinel(t, runTestSession, run.ID, "select", c.selectReply)
+			settle()
+			if c.finishReply != "" {
+				completeSendNodeSentinel(t, runTestSession, run.ID, "finish", c.finishReply)
+				settle()
+			}
+
+			if impl := nodeState(t, runTestSession, run.ID, "implement"); (impl != GraphNodePending) != c.wantImplement {
+				t.Errorf("implement %q, want started=%v", impl, c.wantImplement)
+			}
+			if c.wantImplement {
+				if f := nodeState(t, runTestSession, run.ID, "finish"); f != GraphNodePending {
+					t.Errorf("finish %q — an activated defect must not reach the loop's end", f)
+				}
+			}
+			if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != c.wantRun {
+				t.Errorf("run %q, want %q", r.State, c.wantRun)
+			}
+		})
+	}
+}
+
 // A suite that outlives its budget may still be running, so the timeout must
 // stop the run rather than start a fix worker beside it; a suite that reports
 // its failures (SUITE-FAILED) is what releases the fix. Driven through the
@@ -320,6 +442,7 @@ func TestLongRunningNodesOutlastTheDefaultBudget(t *testing.T) {
 	for _, c := range []struct{ tpl, node string }{
 		{"60-integration-suite", "suite"},
 		{"110-pr-merge", "ci-watch"},
+		{"55-defect-backlog-loop", "ci-watch"},
 	} {
 		n := mustTemplate(t, c.tpl).node(c.node)
 		if got := nodeTimeoutSecs(n); got < 3600 {

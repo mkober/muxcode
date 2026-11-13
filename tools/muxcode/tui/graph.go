@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +50,7 @@ func LayoutGraph(g *bus.Graph) *GraphGrid {
 		indeg[n.ID] = 0
 	}
 	for _, e := range g.Edges {
-		if e.MaxIterations > 0 {
+		if e.Capped() {
 			grid.Loops = append(grid.Loops, e)
 			continue
 		}
@@ -214,10 +215,17 @@ func loopAnnotation(run *bus.GraphRun, loops []bus.Edge, nodeID string) string {
 		if run != nil && run.EdgeFires != nil {
 			fired = run.EdgeFires[bus.EdgeFireKey(e)]
 		}
-		if fired > 0 {
-			return fmt.Sprintf(" ↺ %d×%d", fired, e.MaxIterations)
+		limit := strconv.Itoa(e.MaxIterations)
+		switch {
+		case e.MaxIterationsFromSpec, e.MaxIterationsFromActiveSpec:
+			limit = "phases"
+		case e.MaxIterationsFromBacklog:
+			limit = "defects"
 		}
-		return fmt.Sprintf(" ↺ ×%d", e.MaxIterations)
+		if fired > 0 {
+			return fmt.Sprintf(" ↺ %d×%s", fired, limit)
+		}
+		return " ↺ ×" + limit
 	}
 	return ""
 }
@@ -391,7 +399,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	// Skip edges (spanning >1 layer) route below the grid, one lane each.
 	skipLanes := 0
 	for _, e := range snap.Graph.Edges {
-		if e.MaxIterations > 0 {
+		if e.Capped() {
 			continue
 		}
 		if grid.Pos[e.To][0]-grid.Pos[e.From][0] > 1 {
@@ -422,7 +430,7 @@ func RenderGraphFrameH(snap GraphSnapshot, width, height int, selection string, 
 	// Edges first so labels overwrite line stubs cleanly.
 	lane := 0
 	for _, e := range snap.Graph.Edges {
-		if e.MaxIterations > 0 {
+		if e.Capped() {
 			continue // loop edges are badges, not drawn cycles
 		}
 		fromL, toL := grid.Pos[e.From][0], grid.Pos[e.To][0]

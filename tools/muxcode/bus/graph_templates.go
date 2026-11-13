@@ -82,6 +82,92 @@ var builtinGraphJSON = map[string]string{
   ]
 }`,
 
+	"55-defect-backlog-loop": `{
+  "name": "55-defect-backlog-loop",
+  "description": "Work the backlog's prioritized defects one after another: activate the highest-ranked open defect spec, implement it phase by phase on main's working tree (build/test/review, fix loops), close it out, then one gate per defect ships it unattended — branch, commit, rebase, push, PR, CI and review-comment fixes, merge — and the loop takes the next defect. Completes when none remain; capped at the backlog's defect count",
+  "start": "preflight",
+  "nodes": [
+    {"id": "preflight", "type": "send", "role": "commit", "action": "pr-read", "message": "Report, WITHOUT changing anything, the current branch (git branch --show-current) and the working tree status (git status --short). If the current branch is main, your reply MUST contain the literal token ON-MAIN; otherwise it must not. A completed read exits zero either way"},
+    {"id": "on-main", "type": "condition", "conditions": {"output_contains": "ON-MAIN"}},
+    {"id": "main-gate", "type": "wait_human", "message": "This checkout is not on main — the defect loop works each defect on main and creates its branch only at ship time. Approve switching to main with git and pulling origin/main, or cancel the run"},
+    {"id": "to-main", "type": "send", "role": "commit", "action": "checkout", "message": "Switch to main (git switch main), then pull it (git pull --rebase origin main), as separate commands. If uncommitted changes block the switch, change nothing, report them and exit non-zero. Report the branch and HEAD sha"},
+    {"id": "select", "type": "send", "role": "plan", "action": "defect-select", "message": "Choose the next defect for this loop and make it the active spec. Resume first: if a spec from the 'Defects — prioritized' table of docs/requirements/backlog/backlog.md is in docs/requirements/drafts/ with status In Progress, set it active (muxcode spec set <path>) and pick nothing else. Otherwise take the best-ranked row (#1 first) whose spec file is in docs/requirements/backlog/, is not listed under Parked, and whose 'Depends on' entries are all done (a link into ../completed/, or —; ⇄ marks a peer, not a blocker). Move that spec to docs/requirements/drafts/ (a plain file move, not git mv — the ship step stages it), set its Status to In Progress, list it in backlog.md's In progress table, and set it active with muxcode spec set <new path>. Commit nothing. Then reply with the literal token DEFECT-ACTIVATED followed by its id, title and path. If no row qualifies, clear the active spec (muxcode spec clear) and reply with the literal token NO-DEFECTS-REMAINING, naming why each remaining row was skipped. A completed selection exits zero either way"},
+    {"id": "activated", "type": "condition", "conditions": {"output_contains": "DEFECT-ACTIVATED"}},
+    {"id": "finish", "type": "send", "role": "plan", "action": "defect-loop-done", "message": "The defect loop's selection started no defect. Its report: ${output:select}. If that report carries NO-DEFECTS-REMAINING the backlog is worked through: confirm it and exit zero, which completes the run. If it does not, the selection broke rather than ran dry: say what it reported and exit non-zero, so the run fails instead of reading as finished. Change nothing"},
+    {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement ${current_phase} of the active requirements spec — the defect this loop is working (muxcode spec get names it). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Work on the current branch and commit nothing: the graph branches, commits and ships once every phase is done. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
+    {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
+    {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
+    {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the reported build, test, or review failure in ${current_phase} of the active defect spec. A review failure means every must-fix and should-fix it lists — read its findings file when it names one. Commit nothing. Verify the fix the way the reviewer will: run the phase's integration script through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id in your report. THE FAILURE TO FIX: ${failure_report}"},
+    {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch"},
+    {"id": "update-spec", "type": "send", "role": "plan", "action": "verify-spec", "message": "Verify the implemented changes against the active requirements spec and check off the completed criteria and steps of ${current_phase}. The worker's report for this phase follows; if it names a handoff or decision file, read that file and record what it carries. Then, if every item of that phase is now checked — or every phase of the spec already was — your reply MUST contain the literal token PHASE-COMPLETE; if any item stays open it must not, and name the open items. A completed verification exits zero either way. WORKER REPORT: ${output:implement}"},
+    {"id": "phase-done", "type": "condition", "conditions": {"output_contains": "PHASE-COMPLETE"}},
+    {"id": "phases-left", "type": "condition", "conditions": {"spec_phases_remaining": true}},
+    {"id": "stuck-gate", "type": "wait_human", "message": "The defect's current phase did not complete this iteration — the spec verification reported: ${output:update-spec} — approve retrying the phase, or cancel the run to stop the loop"},
+    {"id": "close-spec", "type": "send", "role": "plan", "action": "close-spec", "guard": "spec-complete", "message": "Every phase of the active defect spec is complete — close it out ONLY if every acceptance criterion and phase step is checked: set its status Complete, move it to docs/requirements/completed/ (a plain file move, not git mv — the ship step stages it), take its row out of the Defects table and the In progress table of docs/requirements/backlog/backlog.md, renumber the remaining defect ranks, add it to the completed id registry, update every cross-reference to the old path, then point the active spec at the new path (muxcode spec set <new path>) — the ship step names the branch and PR from it. Report its id, title and new path. Any item still open = refuse and report the open items"},
+    {"id": "close-stuck-gate", "type": "wait_human", "message": "The defect spec close-out was refused — items are still open: ${output:close-spec} — resolve them, then approve retrying the close-out, or cancel the run"},
+    {"id": "ship-gate", "type": "wait_human", "message": "Defect fixed, reviewed, green and closed out on the working tree: ${output:close-spec} — approve shipping it unattended: create its branch, commit, rebase onto origin/main, push and open the PR; fix, push and reply to any CI failure or review comment; then, once CI is green with no unresolved comments, merge the PR, delete the branch, update main and move on to the next defect"},
+    {"id": "ship", "type": "send", "role": "commit", "action": "commit", "message": "Ship the closed-out defect the active spec names (muxcode spec get): create and switch to a branch named after the spec's filename without .md (its <id>-<slug>), carrying every uncommitted change — if that branch already exists, switch to it. Stage and commit everything uncommitted, the fix and the spec close-out together, with a subject of the spec's id and title (nothing uncommitted = skip the commit). Fetch origin and rebase the branch onto origin/main; on a conflict run git rebase --abort, report the conflicting files and exit non-zero — never resolve a conflict yourself. Push the branch and create a PR titled exactly '<id> <spec title>' — if the spec has a **Tracking:** line naming a GitHub issue, put Closes #<that issue number> on its own line in the PR body. If a PR already exists for the branch, report it instead of creating another. Report the branch, commit sha, PR number and URL"},
+    {"id": "ship-stuck-gate", "type": "wait_human", "message": "Shipping the defect failed: ${output:ship} — resolve it (a rebase conflict, a push or PR failure), then approve retrying the commit, rebase, push and PR, or cancel the run"},
+    ` + ciWatchNodeJSON + `,
+    {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
+    ` + prReviewReadNodesJSON + `,
+    {"id": "pr-fix", "type": "spawn", "role": "edit", "message": "Fix this defect's PR. The latest CI watch reported: ${output:ci-watch}. If that report lacks CI-GREEN, fix the failing checks it names. If it carries CI-GREEN, CI passed and you are here for review comments — address each one the latest review read listed: ${output:read-comments} — fixing it in the code or declining it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it, carrying earlier iterations forward, since the reply step reads only your latest report"},
+    {"id": "pr-build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
+    {"id": "pr-test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
+    {"id": "pr-review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's failing CI checks or review comments"},
+    {"id": "pr-push", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR fixes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
+    {"id": "pr-reply", "type": "send", "role": "commit", "action": "comment", "message": "Reply to each PR review comment the fix addressed: cite the commit sha for every fix that was pushed, or give the reason for every comment declined. If the fix addressed only failing CI checks, reply nothing to do. The push node reported: ${output:pr-push}. The fix worker reported, per comment: ${output:pr-fix}"},
+    {"id": "merge", "type": "send", "role": "commit", "action": "commit", "message": "Merge this branch's PR with the repo's usual merge method (gh pr merge), delete the PR branch, then switch to main and pull it. Report the merge commit sha"}
+  ],
+  "edges": [
+    {"from": "preflight", "to": "on-main"},
+    {"from": "on-main", "to": "select"},
+    {"from": "on-main", "to": "main-gate", "outcome": "failure"},
+    {"from": "main-gate", "to": "to-main"},
+    {"from": "to-main", "to": "select"},
+    {"from": "select", "to": "activated"},
+    {"from": "activated", "to": "implement"},
+    {"from": "activated", "to": "finish", "outcome": "failure"},
+    {"from": "implement", "to": "build"},
+    {"from": "build", "to": "test"},
+    {"from": "build", "to": "fix", "outcome": "failure"},
+    {"from": "test", "to": "review"},
+    {"from": "test", "to": "fix", "outcome": "failure"},
+    {"from": "fix", "to": "build", "max_iterations": 10},
+    {"from": "review", "to": "update-spec"},
+    {"from": "review", "to": "fix", "outcome": "failure"},
+    {"from": "update-spec", "to": "phase-done"},
+    {"from": "phase-done", "to": "phases-left"},
+    {"from": "phase-done", "to": "stuck-gate", "outcome": "failure"},
+    {"from": "phases-left", "to": "implement", "max_iterations_from_active_spec": true},
+    {"from": "phases-left", "to": "close-spec", "outcome": "failure"},
+    {"from": "stuck-gate", "to": "implement", "max_iterations": 3},
+    {"from": "close-spec", "to": "ship-gate"},
+    {"from": "close-spec", "to": "close-stuck-gate", "outcome": "failure"},
+    {"from": "close-stuck-gate", "to": "close-spec", "max_iterations": 3},
+    {"from": "ship-gate", "to": "ship"},
+    {"from": "ship", "to": "ci-watch"},
+    {"from": "ship", "to": "ship-stuck-gate", "outcome": "failure"},
+    {"from": "ship-stuck-gate", "to": "ship", "max_iterations": 2},
+    {"from": "ci-watch", "to": "ci-green"},
+    {"from": "ci-green", "to": "read-comments"},
+    {"from": "ci-green", "to": "pr-fix", "outcome": "failure"},
+    {"from": "read-comments", "to": "no-comments"},
+    {"from": "no-comments", "to": "merge"},
+    {"from": "no-comments", "to": "pr-fix", "outcome": "failure"},
+    {"from": "pr-fix", "to": "pr-build", "max_iterations": 4},
+    {"from": "pr-build", "to": "pr-test"},
+    {"from": "pr-build", "to": "pr-fix", "outcome": "failure"},
+    {"from": "pr-test", "to": "pr-review"},
+    {"from": "pr-test", "to": "pr-fix", "outcome": "failure"},
+    {"from": "pr-review", "to": "pr-push"},
+    {"from": "pr-review", "to": "pr-fix", "outcome": "failure"},
+    {"from": "pr-push", "to": "pr-reply"},
+    {"from": "pr-reply", "to": "ci-watch", "max_iterations": 3},
+    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->implement", "stuck-gate->implement", "close-stuck-gate->close-spec", "ship-stuck-gate->ship", "pr-fix->pr-build", "pr-reply->ci-watch"]}
+  ]
+}`,
+
 	"10-story-to-spec": `{
   "name": "10-story-to-spec",
   "description": "Derive the Jira/GitHub id from the branch, read its requirements, draft a requirements doc and set it active, then human-gated tracker update",
@@ -288,7 +374,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
     ` + prReviewReadNodesJSON + `,
     {"id": "open-comments", "type": "wait_human", "message": "NOT MERGING — the PR has unresolved review comments: ${output:read-comments} — address them with muxcode graph run 80-pr-review-fix, then run 110-pr-merge again. Approving this only acknowledges it and ends the run; nothing is merged"},
-    {"id": "ci-watch", "type": "send", "role": "watch", "action": "watch", "timeout_secs": 3600, "message": "Watch the CI checks for this branch's PR's CURRENT head commit. First read the head (gh pr view --json headRefOid) and confirm a CI run exists for exactly that commit (gh run list --commit <headRefOid>); a just-pushed commit's checks take a moment to register, so while none exists re-check every 15s for up to 5 minutes — never treat 'no checks' or an older commit's results as this commit's. Then watch them until they finish (gh pr checks --watch) and report each check's result and the commit it ran on. Only if every check on the current head passed must your reply contain the literal token CI-GREEN; no run for the head after 5 minutes is not green"},
+    ` + ciWatchNodeJSON + `,
     {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
     {"id": "merge-gate", "type": "wait_human", "message": "CI is green and the PR had no unresolved review comments when read — approve merging the PR, deleting its branch, updating main, and moving the tracker story (Jira) to Done. The review is read again right before the merge, and a comment that arrived meanwhile stops it"},
     ` + prReviewReadNodes("recheck-comments", "still-clear") + `,
@@ -338,3 +424,9 @@ func prReviewReadNodes(readID, clearID string) string {
 // prReviewReadNodesJSON is the first review read of a template: read-comments
 // and its no-comments condition.
 var prReviewReadNodesJSON = prReviewReadNodes("read-comments", "no-comments")
+
+// ciWatchNodeJSON is the one definition of waiting on a PR's CI, shared by
+// every template that merges (110-pr-merge, 55-defect-backlog-loop): green
+// means every check passed on the PR's current head, never an older commit's
+// results or an empty check list.
+const ciWatchNodeJSON = `{"id": "ci-watch", "type": "send", "role": "watch", "action": "watch", "timeout_secs": 3600, "message": "Watch the CI checks for this branch's PR's CURRENT head commit. First read the head (gh pr view --json headRefOid) and confirm a CI run exists for exactly that commit (gh run list --commit <headRefOid>); a just-pushed commit's checks take a moment to register, so while none exists re-check every 15s for up to 5 minutes — never treat 'no checks' or an older commit's results as this commit's. Then watch them until they finish (gh pr checks --watch) and report each check's result and the commit it ran on. Only if every check on the current head passed must your reply contain the literal token CI-GREEN; no run for the head after 5 minutes is not green"}`
