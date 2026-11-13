@@ -779,6 +779,12 @@ func TestWatchChainLogAllowlist(t *testing.T) {
 		{"cd-prefixed tail", "cd /srv/app && tail -n 50 logs/app.log", true},
 		{"cd-prefixed aws logs", "cd /repo && aws logs tail /aws/lambda/fn", true},
 		{"env-prefixed tail", "LC_ALL=C tail -n 20 /var/log/app.log", true},
+		{"indented tail", "   tail -n 5 /var/log/app.log", true},
+		{"cd-prefixed log grep", "cd /srv && grep ERROR logs/app.log", true},
+		{"log grep with -e patterns", "grep -e ERROR -e WARN /var/log/app.log", true},
+		{"log grep after --", "grep -- -ERROR app.log", true},
+		{"log grep with attached --regexp=", "grep --regexp=ERROR app.log", true},
+		{"log grep with attached -e", "grep -eERROR app.log", true},
 
 		{"echo", "echo hello", false},
 		{"ls", "ls -la", false},
@@ -796,6 +802,15 @@ func TestWatchChainLogAllowlist(t *testing.T) {
 		{"cd-prefixed muxcode before a tail", "cd /repo && muxcode send edit notify x && tail -n 5 app.log", false},
 		{"cd-prefixed echo quoting a tail", `cd /repo && echo "example && tail app.log"`, false},
 		{"cd-prefixed ls before a tail", "cd /repo && ls -la && tail -n 5 app.log", false},
+		{"cd; echo quoting a tail", `cd /repo; echo "x && tail app.log"`, false},
+		{"cd into a quoted dir naming a tail", `cd "/tmp/x && tail app.log"`, false},
+		{"code grep then echo a log name", "grep -n foo src/x.go; echo app.log", false},
+		{"code grep for a log name", "grep -rn app.log src/", false},
+		{"code grep with -e for a log name", "grep -e app.log src/x.go", false},
+		{"code grep with --regexp for a log name", "grep --regexp app.log src/x.go", false},
+		{"code grep with -A operand", "grep -A 2 app.log src/x.go", false},
+		{"code grep redirected into a log", "grep -n foo src/x.go > out.log", false},
+		{"code grep with trailing --include of a log", "grep foo src/x.go --include app.log", false},
 	}
 
 	for _, tt := range tests {

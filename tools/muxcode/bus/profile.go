@@ -612,7 +612,6 @@ func runWatchActions(patterns ...string) ChainActions {
 // on 2026-09-10, and a `nohup muxcode inbox …` on 2026-09-22 (MUX-177).
 var watchLogShapes = []string{
 	"tail *", "journalctl *", "zcat *",
-	"grep *.log", "grep *.log *", "grep */log/*", "grep */logs/*",
 	"aws logs *", "aws cloudwatch *", "gcloud logging *", "az monitor *",
 	"kubectl logs *", "kubectl get events", "kubectl get events *",
 	"docker logs *", "docker-compose logs *", "stern *",
@@ -620,22 +619,33 @@ var watchLogShapes = []string{
 	"xcrun simctl spawn * log show*", "xcrun simctl spawn * log stream*",
 }
 
+// watchLogGrepFiles are the input files that make a grep a log read, matched
+// by grep_files_match against grep's file operands only — a glob over the
+// whole call read `grep -rn app.log src/` as one (PR #177 review).
+var watchLogGrepFiles = []string{"*.log", "*/log/*", "*/logs/*"}
+
 // watchNotifyActions gates one watch-chain notice to edit behind
-// watchLogShapes, first-match-wins, with the bus-call exclusion the run chain
-// carries.
+// watchLogShapes and watchLogGrepFiles, first-match-wins, with the bus-call
+// exclusion the run chain carries.
 func watchNotifyActions(message string) ChainActions {
-	actions := make(ChainActions, 0, len(watchLogShapes))
-	for _, p := range watchLogShapes {
+	actions := make(ChainActions, 0, len(watchLogShapes)+len(watchLogGrepFiles))
+	notify := func(cond, p string) {
 		actions = append(actions, ChainAction{
 			SendTo:  "edit",
 			Action:  "notify",
 			Message: message,
 			Type:    "event",
 			Conditions: map[string]any{
-				"first_command_match": p,
-				"command_not_match":   "muxcode *",
+				cond:                p,
+				"command_not_match": "muxcode *",
 			},
 		})
+	}
+	for _, p := range watchLogShapes {
+		notify("first_command_match", p)
+	}
+	for _, p := range watchLogGrepFiles {
+		notify("grep_files_match", p)
 	}
 	return actions
 }
