@@ -379,6 +379,17 @@ func TestRenderGraphFrame_LoopBadge(t *testing.T) {
 	}
 }
 
+// A loop capped by the active spec carries no number in the graph, yet is
+// still a loop: badged, never laid out as a cycle edge.
+func TestRenderGraphFrame_ActiveSpecLoopBadge(t *testing.T) {
+	g := cappedLoopGraph()
+	g.Edges[2] = bus.Edge{From: "fix", To: "build", MaxIterationsFromActiveSpec: true}
+	frame := StripAnsi(RenderGraphFrame(snapshot(g, nil), 120, 40, "", frameClock))
+	if !strings.Contains(frame, "↺ ×phases") {
+		t.Errorf("expected the spec-tracking loop badge ↺ ×phases:\n%s", frame)
+	}
+}
+
 // A waiting wait_human gate must be visually prominent: flag glyph.
 func TestRenderGraphFrame_GateProminent(t *testing.T) {
 	snap := snapshot(gateGraph(), map[string]string{

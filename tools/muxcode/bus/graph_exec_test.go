@@ -3352,6 +3352,69 @@ func TestExecLoopExhaustionFailsRunLoudly(t *testing.T) {
 	}
 }
 
+// TestExecActiveSpecLoopCapReadsSpecAtFire pins the defect loop's phase cap:
+// it is the phase count of the spec active when the edge fires, so a 14-phase
+// spec loops past any number the template could fix, a spec switched mid-run
+// is measured afresh, and the loop stays bounded — one fire past the phase
+// count fails the run.
+func TestExecActiveSpecLoopCapReadsSpecAtFire(t *testing.T) {
+	newRun := func(t *testing.T) (*GraphRun, string) {
+		g := linearGraph()
+		g.Edges = []Edge{{From: "a", To: "b"}, {From: "b", To: "a", MaxIterationsFromActiveSpec: true}}
+		run := createTestRun(t, g)
+		repo := t.TempDir()
+		t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+		step(t, runTestSession, run.ID)
+		return run, repo
+	}
+	setSpec := func(t *testing.T, repo string, phases int) {
+		var b strings.Builder
+		for i := 1; i <= phases; i++ {
+			fmt.Fprintf(&b, "### Phase %d: P\n- [ ] x\n", i)
+		}
+		path := filepath.Join(repo, fmt.Sprintf("spec-%d.md", phases))
+		if err := os.WriteFile(path, []byte(b.String()), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteActiveSpec(runTestSession, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass := func(t *testing.T, runID string) string {
+		completeSendNode(t, runTestSession, runID, "a", OutcomeSuccess)
+		step(t, runTestSession, runID)
+		completeSendNode(t, runTestSession, runID, "b", OutcomeSuccess)
+		step(t, runTestSession, runID)
+		r, _ := ReadGraphRun(runTestSession, runID)
+		return r.State
+	}
+
+	t.Run("a 14-phase spec loops 14 times, then stops", func(t *testing.T) {
+		run, repo := newRun(t)
+		setSpec(t, repo, 14)
+		for i := 1; i <= 14; i++ {
+			if s := pass(t, run.ID); s != GraphRunRunning {
+				t.Fatalf("pass %d: run %q, want running — the spec has 14 phases", i, s)
+			}
+		}
+		if s := pass(t, run.ID); s != GraphRunFailed {
+			t.Errorf("pass 15: run %q, want failed — the loop must stop at the phase count", s)
+		}
+	})
+
+	t.Run("a spec switched mid-run is measured afresh", func(t *testing.T) {
+		run, repo := newRun(t)
+		setSpec(t, repo, 1)
+		if s := pass(t, run.ID); s != GraphRunRunning {
+			t.Fatalf("pass 1: run %q, want running", s)
+		}
+		setSpec(t, repo, 3)
+		if s := pass(t, run.ID); s != GraphRunRunning {
+			t.Errorf("pass 2 on a 3-phase spec: run %q, want running — the 1-phase spec's cap must not carry over", s)
+		}
+	})
+}
+
 // TestExecRedriveStalledDispatch pins executor-owned stall resolution
 // (MUX-123): an un-receipted in-flight dispatch past the stall threshold
 // is redriven with persisted bookkeeping, rate-limited between attempts,

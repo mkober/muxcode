@@ -306,53 +306,91 @@ func announceGraphActionAt(session, actor, event, detail string, ts int64) {
 	_ = SendNoCC(session, NewMessage(graphSender, "edit", "event", event, detail, ""))
 }
 
-// resolveDerivedLoopCaps rewrites max_iterations_from_spec edges into
-// concrete caps on a copy of the graph before it is frozen: cap = the
+// resolveDerivedLoopCaps rewrites derived-cap edges into concrete caps on a
+// copy of the graph before it is frozen: max_iterations_from_spec takes the
 // active spec's phase count (MUX-121 decision 2 — a fixed cap silently
-// truncates a long spec). A derived cap that cannot be computed is a
-// creation error, not a silent default: a loop with a guessed bound is
-// the failure the derivation exists to prevent. The cap resolution is
-// logged so the bound is visible before the run ever loops.
+// truncates a long spec), max_iterations_from_backlog the number of ranked
+// defects in the backlog index. A derived cap that cannot be computed is a
+// creation error, not a silent default: a loop with a guessed bound is the
+// failure the derivation exists to prevent. The cap resolution is logged so
+// the bound is visible before the run ever loops.
 func resolveDerivedLoopCaps(session string, g *Graph) (*Graph, error) {
-	needs := false
+	var fromSpec, fromBacklog bool
 	for _, e := range g.Edges {
-		if e.MaxIterationsFromSpec {
-			needs = true
-			break
-		}
+		fromSpec = fromSpec || e.MaxIterationsFromSpec
+		fromBacklog = fromBacklog || e.MaxIterationsFromBacklog
 	}
-	if !needs {
+	if !fromSpec && !fromBacklog {
 		return g, nil
 	}
-	path, ok, transient, refused := activeSpecFile(session)
-	if refused {
-		return nil, fmt.Errorf("graph %q: active spec pointer resolves outside the repo — refusing to read it for a loop cap", g.Name)
+	var specCap, backlogCap int
+	var err error
+	if fromSpec {
+		if specCap, err = specPhaseLoopCap(session, g); err != nil {
+			return nil, err
+		}
 	}
-	if transient {
-		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but the repo dir is unresolvable — retry", g.Name)
-	}
-	if !ok {
-		return nil, fmt.Errorf("graph %q derives a loop cap from the spec but no active spec is set", g.Name)
-	}
-	phases, err := SpecPhases(path)
-	if err != nil {
-		return nil, fmt.Errorf("graph %q: cannot read active spec for loop cap: %v", g.Name, err)
-	}
-	if len(phases) == 0 {
-		return nil, fmt.Errorf("graph %q derives a loop cap but the active spec has no phase sections", g.Name)
+	if fromBacklog {
+		if backlogCap, err = backlogDefectLoopCap(session, g); err != nil {
+			return nil, err
+		}
 	}
 	resolved := *g
 	resolved.Edges = append([]Edge(nil), g.Edges...)
 	for i := range resolved.Edges {
-		if resolved.Edges[i].MaxIterationsFromSpec {
-			resolved.Edges[i].MaxIterations = len(phases)
-			resolved.Edges[i].MaxIterationsFromSpec = false // frozen copy carries only the number
-			LogLifecycle(session, "info", "daemon", "graph-loop-cap-derived",
-				fmt.Sprintf("%s: edge %s->%s capped at %d (spec phase count)",
-					g.Name, resolved.Edges[i].From, resolved.Edges[i].To, len(phases)))
+		e := &resolved.Edges[i]
+		capped, source := 0, ""
+		switch {
+		case e.MaxIterationsFromSpec:
+			capped, source = specCap, "spec phase count"
+		case e.MaxIterationsFromBacklog:
+			capped, source = backlogCap, "backlog defect count"
+		default:
+			continue
 		}
+		e.MaxIterations = capped
+		e.MaxIterationsFromSpec, e.MaxIterationsFromBacklog = false, false // frozen copy carries only the number
+		LogLifecycle(session, "info", "daemon", "graph-loop-cap-derived",
+			fmt.Sprintf("%s: edge %s->%s capped at %d (%s)", g.Name, e.From, e.To, capped, source))
 	}
 	return &resolved, nil
+}
+
+// specPhaseLoopCap is the active spec's phase count, for
+// max_iterations_from_spec.
+func specPhaseLoopCap(session string, g *Graph) (int, error) {
+	path, ok, transient, refused := activeSpecFile(session)
+	if refused {
+		return 0, fmt.Errorf("graph %q: active spec pointer resolves outside the repo — refusing to read it for a loop cap", g.Name)
+	}
+	if transient {
+		return 0, fmt.Errorf("graph %q derives a loop cap from the spec but the repo dir is unresolvable — retry", g.Name)
+	}
+	if !ok {
+		return 0, fmt.Errorf("graph %q derives a loop cap from the spec but no active spec is set", g.Name)
+	}
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return 0, fmt.Errorf("graph %q: cannot read active spec for loop cap: %v", g.Name, err)
+	}
+	if len(phases) == 0 {
+		return 0, fmt.Errorf("graph %q derives a loop cap but the active spec has no phase sections", g.Name)
+	}
+	return len(phases), nil
+}
+
+// backlogDefectLoopCap is the session repo's ranked defect count, for
+// max_iterations_from_backlog.
+func backlogDefectLoopCap(session string, g *Graph) (int, error) {
+	repo := SessionRepoDir(session)
+	if repo == "" {
+		return 0, fmt.Errorf("graph %q derives a loop cap from the backlog but the repo dir is unresolvable — retry", g.Name)
+	}
+	n, err := BacklogDefectCount(repo)
+	if err != nil {
+		return 0, fmt.Errorf("graph %q: cannot derive a loop cap from the backlog: %v", g.Name, err)
+	}
+	return n, nil
 }
 
 // ReadGraphRun reads a run's metadata.

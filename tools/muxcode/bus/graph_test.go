@@ -318,8 +318,8 @@ func TestValidateGateRuleMixedPaths(t *testing.T) {
 }
 
 func TestBuiltinGraphTemplatesValidate(t *testing.T) {
-	want := []string{"10-story-to-spec", "20-defect-to-spec", "30-build-test-review", "40-sync-main", "50-spec-to-pr", "60-integration-suite",
-		"70-pr-local-review", "80-pr-review-fix", "90-ci-fix", "100-docs-sync", "110-pr-merge", "120-deploy-verify"}
+	want := []string{"10-story-to-spec", "20-defect-to-spec", "30-build-test-review", "40-sync-main", "50-spec-to-pr", "55-defect-backlog-loop",
+		"60-integration-suite", "70-pr-local-review", "80-pr-review-fix", "90-ci-fix", "100-docs-sync", "110-pr-merge", "120-deploy-verify"}
 	if len(builtinGraphJSON) != len(want) {
 		t.Errorf("expected %d builtin templates, got %d", len(want), len(builtinGraphJSON))
 	}
@@ -813,6 +813,42 @@ func TestValidateDerivedLoopCap(t *testing.T) {
 	g2.Edges = append(g2.Edges, Edge{From: "b", To: "a", Outcome: OutcomeFailure})
 	if v := g2.Validate(); v.OK() {
 		t.Error("uncapped cycle must still fail validation (negative control)")
+	}
+}
+
+// The backlog-derived and active-spec caps close a cycle like the
+// spec-derived one, each is exclusive with every other form, and each bounds
+// a resetting edge.
+func TestValidateBacklogAndActiveSpecLoopCaps(t *testing.T) {
+	for name, set := range map[string]func(*Edge){
+		"backlog":     func(e *Edge) { e.MaxIterationsFromBacklog = true },
+		"active spec": func(e *Edge) { e.MaxIterationsFromActiveSpec = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			loop := Edge{From: "b", To: "a", Outcome: OutcomeFailure}
+			set(&loop)
+			g := linearGraph()
+			g.Edges = append(g.Edges, loop)
+			if v := g.Validate(); !v.OK() {
+				t.Errorf("%s loop cap must satisfy the cycle rule: %v", name, v.Errors)
+			}
+
+			g.Edges[len(g.Edges)-1].MaxIterationsFromSpec = true
+			assertErrorContains(t, g.Validate(), "choose one")
+			g.Edges[len(g.Edges)-1].MaxIterationsFromSpec = false
+			g.Edges[len(g.Edges)-1].MaxIterations = 3
+			assertErrorContains(t, g.Validate(), "choose one")
+
+			resetter := Edge{From: "a", To: "a", Outcome: OutcomeFailure, ResetsIterations: []string{"b->a"}}
+			set(&resetter)
+			r := linearGraph()
+			r.Edges = append(r.Edges, Edge{From: "b", To: "a", Outcome: OutcomeFailure, MaxIterations: 2}, resetter)
+			for _, e := range r.Validate().Errors {
+				if strings.Contains(e, "no cap of its own") {
+					t.Errorf("a %s-capped edge is capped for resets: %s", name, e)
+				}
+			}
+		})
 	}
 }
 

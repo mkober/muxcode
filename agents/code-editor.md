@@ -271,6 +271,7 @@ Builtins are numbered by workflow stage, top-down (`graph list` and the launcher
 | 30 | Build → test → review pipeline | `muxcode graph run 30-build-test-review` |
 | 40 | Gated rebase onto origin/main → build → test → push `--force-with-lease` | `muxcode graph run 40-sync-main` |
 | 50 | Implement the active spec phase by phase → gated commits → spec close-out → PR | `muxcode graph run 50-spec-to-pr` |
+| 55 | Work the backlog's defects in priority order, one gate per defect → branch, PR, CI/review fixes, merge → next defect; completes when none remain | `muxcode graph run 55-defect-backlog-loop` |
 | 60 | Run every `scripts/test-*.sh` serially, capped fix loop on failure | `muxcode graph run 60-integration-suite` |
 | 70 | Review a PR locally with branch restore | `muxcode graph run 70-pr-local-review "<pr-number>"` |
 | 80 | Fix the current branch's PR review comments, push, reply to each | `muxcode graph run 80-pr-review-fix` |
