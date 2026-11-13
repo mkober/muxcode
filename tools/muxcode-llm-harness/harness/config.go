@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -95,7 +96,9 @@ func DefaultConfig() Config {
 // resolution (bus.BusDirBase) — an absolute MUXCODE_BUS_BASE, an absolute
 // $XDG_STATE_HOME/muxcode/bus, else ~/.local/state/muxcode/bus. Never /tmp,
 // whose macOS sweep deleted idle bus state (MUX-208); moving a pre-MUX-208
-// /tmp directory is the binary's job, done before any pane launches.
+// /tmp directory is the binary's job, done before any pane launches. It panics
+// when the home directory cannot be resolved, as the bus module does: a relative
+// or /tmp fallback would put the harness on a different bus than its session.
 func resolveBusDir(session string) string {
 	if dir := os.Getenv("MUXCODE_BUS_DIR"); filepath.IsAbs(dir) {
 		return dir
@@ -105,7 +108,10 @@ func resolveBusDir(session string) string {
 		if x := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(x) {
 			base = filepath.Join(x, "muxcode", "bus")
 		} else {
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil || !filepath.IsAbs(home) {
+				panic(fmt.Sprintf("muxcode: cannot resolve the bus directory (set HOME, an absolute XDG_STATE_HOME or MUXCODE_BUS_DIR): %v", err))
+			}
 			base = filepath.Join(home, ".local", "state", "muxcode", "bus")
 		}
 	}

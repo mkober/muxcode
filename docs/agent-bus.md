@@ -1743,7 +1743,7 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `validate <file\|template>` | Structural validation — exits non-zero on errors |
 | `list` | List resolvable templates across all three tiers |
 | `status [--json] [run-id]` | Per-node state, timestamps, outcome; no id lists all runs |
-| `cancel <run-id>` | Stop scheduling; in-flight node work completes or times out |
+| `cancel <run-id>` | Stop scheduling; in-flight node work completes or times out. An agent's cancel of a user-launched run is refused (exit 1) — unless the gate authority names that agent, in which case it prints `Cancel requested: …` and exits 0: the request is filed for the daemon, which cancels only if its sealed list agrees, so check `graph status` ([Architecture](architecture.md#graph-orchestration-control-plane)) |
 | `retry <run-id> --from <node>` | Re-execute from a node, keeping upstream results |
 | `approve <run-id> <node>` | Release a `wait_human` gate |
 | `ui [run-id] [--render-once] [--width N]` | Interactive run browser → layered DAG → node detail ([MUX-031](requirements/completed/MUX-031-graph-run-tui.md)) |
@@ -2014,7 +2014,8 @@ gate per defect.
 | Merge | `merge` (commit) → `select` | `gh pr merge`, branch deleted, `main` pulled, then the next defect |
 
 `merge → select` carries `max_iterations_from_backlog` and resets every inner loop edge, so each
-defect starts with full budgets. Unlike `110-pr-merge` there is no second gate or re-read before the
+defect starts with full budgets. It also carries `clears_outputs: ["criteria"]`, so the acceptance
+worker's report from one defect is not handed to the next defect's `update-spec`. Unlike `110-pr-merge` there is no second gate or re-read before the
 merge: `ship-gate` is approved before the PR exists and covers the unattended ship, PR fixes and
 merge for that one defect.
 
@@ -2029,6 +2030,14 @@ active spec, no backlog index, zero ranked defects) refuses run creation, and ea
 `graph-loop-cap-derived` lifecycle row naming its source; a fire-time cap with no readable spec is a
 budget of 0, so the run fails loudly instead of looping, and an unresolvable repo dir defers routing
 to the next tick. The graph TUI badges an edge carrying a derived cap `↺ ×phases` or `↺ ×defects`.
+
+Two further edge fields act when the edge fires:
+
+| Edge field | Value | Effect | Validation |
+|------------|-------|--------|------------|
+| `resets_iterations` | Edge keys (`"from->to"`, or `"from->to:outcome"`) | Zeroes the named edges' fire counts, scoping an inner cap to one pass of an outer loop (`graph-loop-budget-reset`) | The resetting edge must itself be capped, and may name neither itself nor an edge that resets others |
+| `clears_outputs` | Node ids | Erases the named nodes' recorded reports, so `${output:<id>}` reads "no report recorded" until the node runs again — a node not re-run this pass cannot leak its last report into the next | Every id must name a node in the graph |
+
 A node that commits or writes to Jira/Confluence is rejected unless it sits
 downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
 commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets

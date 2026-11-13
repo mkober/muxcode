@@ -29,6 +29,12 @@ import (
 // flag, a token, an env var — would be self-service, the hole MUX-144 closed on
 // gates.
 //
+// The gate authority (MUXCODE_GATE_AUTHORITY_ROLES) is deliberately not a
+// grant here: this check runs in the CLI, where that list is read unsealed
+// from caller-controlled paths — honouring it let any agent self-grant
+// (2026-11-13 review). A granted role's refused cancel is instead delegated to
+// the daemon, which decides on its sealed list (cancel_request.go).
+//
 // actor is compared against ActorUser and nothing else, and no role is granted
 // anything, so the daemon→edit normalization cannot open this check as it
 // opened the commit backstop in MUX-144 Phase 4. ActorUnknown is not the user.

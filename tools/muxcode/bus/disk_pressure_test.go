@@ -135,6 +135,34 @@ func TestTmpPressure_SpawnWorktreesCountOnDefaultBase(t *testing.T) {
 	}
 }
 
+// TestMuxcodeTmpFootprint_CustomBusBaseCounts pins that bus directories under a
+// MUXCODE_BUS_BASE count toward the footprint, and that the state-dir spawn
+// tree stays out of it (worktrees sit beside the bus there).
+func TestMuxcodeTmpFootprint_CustomBusBaseCounts(t *testing.T) {
+	withDefaultScratchBase(t)
+	base := t.TempDir()
+	t.Setenv(BusDirBaseEnv, base)
+
+	bus := filepath.Join(base, "muxcode-bus-custom")
+	if err := os.MkdirAll(bus, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bus, "f"), make([]byte, 4096), 0644); err != nil {
+		t.Fatal(err)
+	}
+	spawn := filepath.Join(StateDir(), "spawn", "s")
+	if err := os.MkdirAll(spawn, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spawn, "big"), make([]byte, 1<<20), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := MuxcodeTmpFootprint(); got != 4096 {
+		t.Errorf("MuxcodeTmpFootprint() = %d, want 4096 — custom base bus dirs count, state spawn tree does not", got)
+	}
+}
+
 func TestTmpPressure_HealthyMachineIsSilent(t *testing.T) {
 	dir := t.TempDir()
 	withTmpOverride(t, dir)

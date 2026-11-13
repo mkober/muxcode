@@ -229,7 +229,11 @@ mark them is a display question, not a verdict question.
 
 ## Status
 
-Draft
+Backlog
+
+**Parked 2026-11-13** on the user's decision, relayed by edit. `55-defect-backlog-loop` run
+`1794602128` activated it the same day (Defects rank 1) and no work was done: 0/5 phases. Phase 2's
+five [open decisions](#open-decisions) await the user; returning it to `drafts/` is the user's call.
 
 Filed 2026-09-14 on the user's instruction ("file the actor provenance residual as a backlog item",
 given to edit, and "file defect for this" to plan), from the residual plan recorded under MUX-148

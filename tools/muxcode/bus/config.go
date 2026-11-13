@@ -241,6 +241,60 @@ const BusDirBaseEnv = "MUXCODE_BUS_BASE"
 // creates, beside BUS_SESSION, so scripts read it instead of computing it.
 const BusDirEnv = "MUXCODE_BUS_DIR"
 
+// busBaseEnvPairs returns the environment variables, set to an absolute value
+// in this process, that BusDir resolves from. BusDirEnv alone does not carry
+// them: muxcode recomputes the directory from these, so a process started later
+// in tmux without them resolves a different bus.
+func busBaseEnvPairs() [][2]string {
+	pairs, _ := busBaseEnvPlan()
+	return pairs
+}
+
+// busBaseEnvPlan splits the bus-base inputs into those to set (absolute here)
+// and those to blank: a stale value already in the tmux environment would
+// otherwise override this process's own resolution. A blank is set as an empty
+// value, never unset — removing a session key exposes the server's global
+// environment, and `new-session -e` cannot remove at all. Empty reads as unset
+// to BusDir (absolute values only) and, per the XDG spec, to XDG_STATE_HOME.
+func busBaseEnvPlan() (set [][2]string, blank []string) {
+	for _, key := range []string{BusDirBaseEnv, "XDG_STATE_HOME"} {
+		if v := os.Getenv(key); filepath.IsAbs(v) {
+			set = append(set, [2]string{key, v})
+		} else {
+			blank = append(blank, key)
+		}
+	}
+	return set, blank
+}
+
+// ExportBusBaseEnv makes the tmux session environment carry exactly the
+// bus-base inputs of this process beside BusDirEnv, so panes created later
+// resolve the same bus directory as the process that launched the session.
+func ExportBusBaseEnv(session string) {
+	set, blank := busBaseEnvPlan()
+	for _, p := range set {
+		_ = TmuxSetEnv(session, p[0], p[1])
+	}
+	for _, key := range blank {
+		_ = TmuxSetEnv(session, key, "")
+	}
+}
+
+// busBaseEnvArgs is the `KEY=VAL` form of BusDirEnv and every bus-base input,
+// blanks included, for `new-session -e`: the first window's shell starts with
+// the session, before any set-environment call could reach it.
+func busBaseEnvArgs(session string) []string {
+	args := []string{BusDirEnv + "=" + BusDir(session)}
+	set, blank := busBaseEnvPlan()
+	for _, p := range set {
+		args = append(args, p[0]+"="+p[1])
+	}
+	for _, key := range blank {
+		args = append(args, key+"=")
+	}
+	return args
+}
+
 // LegacyBusDirBase is where bus directories lived before MUX-208. macOS's
 // tmp_cleaner deletes files there untouched for three days, which is why the
 // default moved; it is read only to migrate and to clean up.

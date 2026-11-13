@@ -40,6 +40,25 @@ func TestCheckCancelAuthority(t *testing.T) {
 	}
 }
 
+// TestCheckCancelAuthority_GateAuthorityGrantsNoCancel: a config widening the
+// gate authority must not let an agent stop the user's run. The cancel check
+// runs in the CLI, where that config is caller-controlled and unsealed, so
+// honouring it is a self-grant (2026-11-13 review). The negative control keeps
+// an agent-created run freely cancellable under the same config.
+func TestCheckCancelAuthority_GateAuthorityGrantsNoCancel(t *testing.T) {
+	unsealGateAuthority(t)
+	pinGateAuthorityConfig(t, "user,edit,auto")
+	userRun := &GraphRun{ID: "r-1", CreatedBy: ActorUser, State: GraphRunRunning}
+	for _, actor := range []string{"edit", "auto", graphSender} {
+		if CheckCancelAuthority(actor, userRun) == "" {
+			t.Errorf("%q stopped the user's run on a widened gate authority", actor)
+		}
+	}
+	if deny := CheckCancelAuthority("edit", &GraphRun{ID: "r-2", CreatedBy: "auto", State: GraphRunRunning}); deny != "" {
+		t.Errorf("an agent-created run must stay cancellable: %q", deny)
+	}
+}
+
 func cancelEvents(t *testing.T, event, runID string) []LifecycleEntry {
 	t.Helper()
 	entries, err := ReadLifecycleLog(runTestSession)

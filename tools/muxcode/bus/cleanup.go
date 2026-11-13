@@ -493,9 +493,13 @@ func MuxcodeTmpFootprint() int64 {
 	var total int64
 	if busDirOverride != "" {
 		roots = []string{busDirOverride}
-	} else if !busDirBaseOverridden() {
-		roots = append(roots, BusDirBase())
-		total += dirSize(filepath.Join(StateDir(), "spawn"))
+	} else {
+		if base := BusDirBase(); base != legacyBusDirRoot {
+			roots = append(roots, base)
+		}
+		if !busDirBaseOverridden() {
+			total += dirSize(filepath.Join(StateDir(), "spawn"))
+		}
 	}
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)

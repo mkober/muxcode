@@ -2755,6 +2755,7 @@ func routeFinishedNodes(session string, run *GraphRun, g *Graph, byID map[string
 			}
 			run.EdgeFires[key]++
 			resetLoopBudgets(session, run, g, e)
+			clearEdgeOutputs(session, run, e)
 			fired++
 			armTarget(session, run, g, byID, e.To)
 		}
@@ -2830,6 +2831,18 @@ func resetLoopBudgets(session string, run *GraphRun, g *Graph, e Edge) {
 	LogLifecycle(session, "info", "daemon", "graph-loop-budget-reset",
 		fmt.Sprintf("%s: edge %s entering %s cleared %s",
 			run.ID, EdgeFireKey(e), resolveCurrentPhaseText(session), strings.Join(cleared, ", ")))
+}
+
+// clearEdgeOutputs erases the recorded report of every node a firing edge names
+// in ClearsOutputs, so ${output:<id>} reads as "no report recorded" until the
+// node runs again instead of replaying the previous pass.
+func clearEdgeOutputs(session string, run *GraphRun, e Edge) {
+	for _, id := range e.ClearsOutputs {
+		if err := MutateNodeStatus(session, run.ID, id, func(st *GraphNodeStatus) { st.Output = "" }); err != nil {
+			LogLifecycle(session, "warn", "daemon", "graph-output-clear-failed",
+				fmt.Sprintf("%s: edge %s could not clear the output of %s: %v", run.ID, EdgeFireKey(e), id, err))
+		}
+	}
 }
 
 // armTarget moves an edge's target toward ready: pending targets arm

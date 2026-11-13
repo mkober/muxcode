@@ -2,6 +2,7 @@ package bus
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -59,6 +60,49 @@ func TestTmuxNewSession_NoSize(t *testing.T) {
 		if a == "-x" || a == "-y" {
 			t.Errorf("should not have size flags: %v", args)
 		}
+	}
+}
+
+func TestTmuxNewSession_EnvAtCreation(t *testing.T) {
+	cap := setupTmuxCapture(t)
+	TmuxNewSession("s", "w", "/dir", 0, 0, "A=1", "B=2")
+	if got, want := strings.Join(cap.calls[0], " "), "new-session -d -s s -n w -c /dir -e A=1 -e B=2"; got != want {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+}
+
+// TestExportBusBaseEnv_UnsetsWhatTheLauncherLacks: an input this process has no
+// absolute value for is removed from the tmux session, so a stale value there
+// cannot send later panes to another bus; a set input is exported, not unset.
+func TestExportBusBaseEnv_UnsetsWhatTheLauncherLacks(t *testing.T) {
+	cap := setupTmuxCapture(t)
+	xdg := t.TempDir()
+	t.Setenv(BusDirBaseEnv, "")
+	t.Setenv("XDG_STATE_HOME", xdg)
+	ExportBusBaseEnv("s")
+	var got []string
+	for _, c := range cap.calls {
+		got = append(got, strings.Join(c, " "))
+	}
+	// Blanked, never unset: -u would expose the server's global value.
+	want := []string{"set-environment -t s XDG_STATE_HOME " + xdg, "set-environment -t s " + BusDirBaseEnv + " "}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("tmux calls = %v, want %v", got, want)
+	}
+}
+
+// TestBusBaseEnvArgs: the first window gets the bus inputs at session creation.
+func TestBusBaseEnvArgs(t *testing.T) {
+	base := t.TempDir()
+	saved := busDirOverride
+	ResetBusDirBase()
+	t.Cleanup(func() { busDirOverride = saved })
+	t.Setenv(BusDirBaseEnv, base)
+	t.Setenv("XDG_STATE_HOME", "")
+	args := busBaseEnvArgs("argsess")
+	want := []string{BusDirEnv + "=" + filepath.Join(base, "muxcode-bus-argsess"), BusDirBaseEnv + "=" + base, "XDG_STATE_HOME="}
+	if strings.Join(args, "|") != strings.Join(want, "|") {
+		t.Errorf("busBaseEnvArgs = %v, want %v", args, want)
 	}
 }
 

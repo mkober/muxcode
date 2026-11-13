@@ -271,11 +271,12 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 
 	// Create tmux session with first window
 	firstWin := cfg.Windows[0]
-	if err := TmuxNewSession(session, firstWin, projectDir, clientW, clientH); err != nil {
+	if err := TmuxNewSession(session, firstWin, projectDir, clientW, clientH, busBaseEnvArgs(session)...); err != nil {
 		return fmt.Errorf("new session: %w", err)
 	}
 	TmuxSetEnv(session, "BUS_SESSION", session)
 	TmuxSetEnv(session, BusDirEnv, BusDir(session))
+	ExportBusBaseEnv(session)
 	TmuxSetEnv(session, "MUXCODE", "1")
 
 	LogLifecycle(session, "info", "launcher", "session-create",
