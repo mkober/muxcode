@@ -1398,6 +1398,29 @@ func TestExecUnverifiedHoldReleasedByAuditedUserApproval(t *testing.T) {
 	}
 }
 
+// The user's opt-in extends the release to an agent: a sealed self-approval
+// grant plus gate authority lets a corroborated agent approval through, while
+// the same audited approval without the opt-in, or from a role it does not
+// name, stays held.
+func TestExecUnverifiedHoldReleasedByOptedInAgent(t *testing.T) {
+	unsealGateAuthority(t)
+	pinGateConfigBody(t, "MUXCODE_GATE_AUTHORITY_ROLES=user,edit\n")
+	SealGateAuthority()
+	if s := holdOutcome(t, func(runID string) { forgeAuditedApproval(t, runID, "a", "edit") }); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — no opt-in, an agent must not release the hold", s)
+	}
+
+	unsealGateAuthority(t)
+	pinGateConfigBody(t, "MUXCODE_GATE_AUTHORITY_ROLES=user,edit\n"+GateSelfApprovalKey+"=edit\n")
+	SealGateAuthority()
+	if s := holdOutcome(t, func(runID string) { forgeAuditedApproval(t, runID, "a", "edit") }); s != GraphNodeRunning {
+		t.Errorf("b state %q, want running — the opted-in agent's audited approval must release the hold", s)
+	}
+	if s := holdOutcome(t, func(runID string) { forgeAuditedApproval(t, runID, "a", "build") }); s != GraphNodePending {
+		t.Errorf("b state %q, want pending — a role the opt-in does not name stays held", s)
+	}
+}
+
 // gateSuccessorGraph sends into a human gate, the shape every read-only node
 // feeding an approval takes (commit-pr-review-loop's b -> gate2).
 func gateSuccessorGraph() *Graph {

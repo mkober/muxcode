@@ -67,7 +67,6 @@ rank.
 | MUX-173 | 0/12 | — | Phase 1: discovery convention (per-role `help` pattern or shared) |
 | MUX-188 | 0/15 | — | Decision 1: whether a worker gets its own bootstrap |
 | MUX-197 | 0/16 | — | Phase 1 presents options A–D to the user; decision unrecorded |
-
 ### Defects — prioritized
 
 **Tiers.** `0` stop the bleeding / in flight · `1` repair the instruments · `2` firing now ·
@@ -75,12 +74,12 @@ rank.
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A history row's provenance is declared, not proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
-| 2 | 1 | [`MUX-181`](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md) | A graph-dispatched Atlassian write is judged on configuration, not on the gate | High | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) · ⇄ [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md) |
-| 3 | 1 | [`MUX-165`](./MUX-165-gated-jira-write-declined-by-requester-rule.md) | A gate-approved Jira write is declined because plan's rule checks the messenger, not the consent | High | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) · ⇄ [MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md) |
-| 4 | 1 | [`MUX-166`](./MUX-166-run-builds-on-stale-base-no-freshness-gate.md) | A run builds on a stale base | High | — |
-| 5 | 1 | [`MUX-170`](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) | A graph dispatch suppressed by a foreign in-flight task adopts that task as its own | High | — |
-| 6 | 1 | [`MUX-172`](./MUX-172-plan-verify-gate-hardcodes-success.md) | The spec-verification gate hardcodes `success` | High | — |
+| 1 | 0 | [`MUX-213`](./MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) | Test runs nobody requested fire the review chain, and every review is answered twice | High | — · ⇄ [MUX-127](./MUX-127-review-completion-routing.md) · ⇄ [MUX-009](./MUX-009-response-echo-chain-retrigger.md) |
+| 2 | 1 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A history row's provenance is declared, not proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
+| 3 | 1 | [`MUX-181`](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md) | A graph-dispatched Atlassian write is judged on configuration, not on the gate | High | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) · ⇄ [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md) |
+| 4 | 1 | [`MUX-165`](./MUX-165-gated-jira-write-declined-by-requester-rule.md) | A gate-approved Jira write is declined because plan's rule checks the messenger, not the consent | High | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) · ⇄ [MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md) |
+| 5 | 1 | [`MUX-166`](./MUX-166-run-builds-on-stale-base-no-freshness-gate.md) | A run builds on a stale base | High | — |
+| 6 | 1 | [`MUX-170`](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) | A graph dispatch suppressed by a foreign in-flight task adopts that task as its own | High | — |
 | 7 | 1 | [`MUX-157`](./MUX-157-role-boundary-an-agent-can-ignore.md) | No road enforces "never author" on build/test/review | High | [MUX-159](../completed/MUX-159-codex-hooks-provider.md) |
 | 8 | 1 | [`MUX-127`](./MUX-127-review-completion-routing.md) | Review failure routes nowhere; review success loops | High | — · ⇄ [MUX-009](./MUX-009-response-echo-chain-retrigger.md) |
 | 9 | 1 | [`MUX-009`](./MUX-009-response-echo-chain-retrigger.md) | Response echo re-triggers the chain | High | — · ⇄ [MUX-127](./MUX-127-review-completion-routing.md) |
@@ -130,13 +129,13 @@ rank.
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-213`](./MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) | Test Runs Nobody Requested Fire the Review Chain, and Every Review Is Answered Twice | High | ⇄ [MUX-127](./MUX-127-review-completion-routing.md) · ⇄ [MUX-009](./MUX-009-response-echo-chain-retrigger.md) |
 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` Fails — a Stale Spinner in Scrollback Pins the Pane Busy | Medium | — |
 | [`MUX-209`](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md) | `test-force-respond.sh` Fails — a Non-Forced `deliver` No Longer Surfaces the In-Flight Skip | Medium | — |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned Session Processes Are Never Reaped | High | — |
 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every Spawn Worker Launch Sends Edit a Stray Startup Request | Low | — |
-| [`MUX-172`](./MUX-172-plan-verify-gate-hardcodes-success.md) | The Spec-Verification Gate Asks Its Own Question — `notifyPlanOnReview` Hardcodes `"success"` | High | — |
 | [`MUX-160`](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The /tmp Go Caches the Disk-Pressure Sweep Counts but Cannot Clear | High | — |
 | [`MUX-161`](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) | `upgrade-daemons` Cannot See the Daemons From a Codex Build Agent | Medium | — |
 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An Orphaned Inbox Listener Consumes Messages Into the Void | High | — |
@@ -364,6 +363,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-177`](../completed/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message |
 | [`MUX-208`](../completed/MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md) | Durable Bus State Lives in /tmp, and macOS Deletes It After Three Idle Days |
 | [`MUX-168`](../completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md) | Session Re-Init Purges the Active Spec While the Graph Run That Reads It Survives |
+| [`MUX-172`](../completed/MUX-172-plan-verify-gate-hardcodes-success.md) | The Spec-Verification Gate Asks Its Own Question — `notifyPlanOnReview` Hardcodes `"success"` |
 
 ## Ideas without specs
 

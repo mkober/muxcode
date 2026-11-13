@@ -243,7 +243,10 @@ Build success        → trigger test agent
 Test success         → trigger review agent
 Deploy-apply success → trigger verify (self-loop to deploy agent)
 Any failure          → notify edit agent
+Review reply         → plan verify-spec (daemon-driven, not a hook — see below)
 ```
+
+The last edge is the one the daemon fires, not `hook bash`: when a review reply reaches edit and a spec is active, the daemon reads the verdict from the reply's `EXIT=` sentinel and sends plan `verify-spec` only if `NotifyPlanOn` admits that outcome (default `["success"]`). A failing verdict, a reply with no sentinel, or `EXIT=0` beside a must-fix count is withheld with a `plan-verify-withheld` lifecycle row ([MUX-172](requirements/completed/MUX-172-plan-verify-gate-hardcodes-success.md)). See [Architecture → Spec verification](architecture.md#spec-verification-and-branch-time-recording-verify-spec).
 
 Deploy commands are split into two categories:
 - **Deploy patterns** (`MUXCODE_DEPLOY_PATTERNS`): all deploy commands — logged to deploy history
@@ -342,6 +345,7 @@ The chain is **hook-driven**, ensuring deterministic behavior:
 5. Hook detects test command completed
 6. If exit code 0: hook sends `request:review` to review agent
 7. Review agent reviews `git diff`, replies with findings
+8. The daemon — not a hook — reads that reply's `EXIT=` sentinel and, when `NotifyPlanOn` admits the outcome and a spec is active, sends plan `verify-spec`; a failing or unreadable verdict is withheld and logged (`plan-verify-withheld`). See [Architecture → Spec verification](architecture.md#spec-verification-and-branch-time-recording-verify-spec)
 
 On failure at any step, the hook notifies edit directly with the error details.
 

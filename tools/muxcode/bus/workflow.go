@@ -354,17 +354,25 @@ func workflowDuration(d time.Duration) string {
 // what let any stale review CC satisfy the reviewed-transition check.
 // Inboxes are append-only, so the last matching entry is the newest.
 func NewestMessageIDFrom(session, role, from string) string {
+	m, _ := NewestMessageFrom(session, role, from)
+	return m.ID
+}
+
+// NewestMessageFrom is NewestMessageIDFrom returning the whole message, for a
+// caller that must read the reply's verdict as well as its id.
+func NewestMessageFrom(session, role, from string) (Message, bool) {
 	msgs, err := Peek(session, role)
 	if err != nil {
-		return ""
+		return Message{}, false
 	}
-	newest := ""
+	var newest Message
+	found := false
 	for _, m := range msgs {
 		if m.From == from && m.To == role {
-			newest = m.ID
+			newest, found = m, true
 		}
 	}
-	return newest
+	return newest, found
 }
 
 // ReviewedMarkerPath returns the file recording the ID of the review

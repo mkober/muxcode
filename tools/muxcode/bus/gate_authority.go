@@ -90,6 +90,12 @@ var (
 // authority itself; this lifts only the self-approval refusal.
 const GateSelfApprovalKey = "MUXCODE_GATE_SELF_APPROVAL_ROLES"
 
+// holdReleaseOptedIn reports whether an agent may release an unverified hold:
+// it holds the gate authority and the user's self-approval opt-in names it.
+func holdReleaseOptedIn(actor string) bool {
+	return actor != ActorUser && CheckGateApprovalAuthority(actor, nil) == "" && selfApprovalGranted(actor)
+}
+
 func selfApprovalGranted(actor string) bool {
 	for _, r := range GateSelfApprovalRoles() {
 		if NormalizeBusRole(r) == actor {

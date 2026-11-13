@@ -137,6 +137,19 @@ The F1 window also hosts a **research agent** via mode cycling (same mechanism a
 
 When the build→test→review chain finishes successfully and an active spec is set (`muxcode spec set <path>`), the daemon's `notifyPlanOnReview()` (`daemon/daemon.go`) sends the plan agent a `verify-spec` request naming the spec, the changed files, and — when the current branch is not on the branch-time ignore list — the branch to record time for. Gated by `NotifyPlanOn` in the review `EventChain` config (default `["success"]`).
 
+**"Successfully" is the review's own verdict** ([MUX-172](requirements/completed/MUX-172-plan-verify-gate-hardcodes-success.md)). When a new review→edit reply arrives, `checkInboxes` writes the reviewed marker and moves the workflow to `reviewed` — always, whatever the verdict, because that is the workflow state — and then asks `bus.ReviewReplyOutcome(reply)` (`bus/review_verdict.go`) what the review decided before calling `notifyPlanOnReview(reply.ID, outcome, evidence)`:
+
+| The reply carries | Outcome | What happens |
+|-------------------|---------|--------------|
+| `EXIT=0` (the last sentinel in the reply) | `success` | Fires when `NotifyPlanOn` lists `success` or `*` |
+| `EXIT=<non-zero>` | `failure` | Fires only when `NotifyPlanOn` lists `failure` or `*`; otherwise withheld |
+| No `EXIT=` sentinel | unknown | Withheld — `unknown verdict: the reply carries no EXIT sentinel` |
+| `EXIT=0` while its first non-blank line counts a must-fix | unknown | Withheld — `conflicting verdict: EXIT=0 beside a must-fix count` |
+
+A withheld fire writes a `plan-verify-withheld` lifecycle row — `<outcome> <review-id> (<evidence>)` at info, or `unknown <review-id> (<reason>)` at warn — and leaves the movement marker unwritten, so a later passing review still fires. A verdict the gate admits then passes the three MUX-007 controls (pointer resolution, the movement gate, repo-scoped changed files) as before. `ChainShouldNotifyPlan` did not change; it now receives the real outcome, which is what makes `NotifyPlanOn` mean something: `["success"]` withholds a failing review and fires a passing one, `["*"]` fires both, `[]` fires neither.
+
+Review history rows are deliberately **not** read. A row carries no request or reply id, and review logs after it replies, so the newest row can belong to the previous review: its late success would be handed to a sentinel-less successor, and its late failure would contradict a successor's valid `EXIT=0`. Only the reply's own text is evidence. Before MUX-172 the gate was asked about a literal — `ChainShouldNotifyPlan("review", "success")` — so `["success"]` and `["*"]` were indistinguishable and plan was sent to verify specs against reviews that had returned must-fix findings: four times on 2026-09-09, and again on 2026-11-13. Pinned by `daemon/review_verdict_test.go`.
+
 The plan agent then does two things in one pass:
 
 1. **Verify progress** — reads the spec and the changed code, checks off satisfied acceptance criteria and phase steps (`- [ ]` → `- [x]`), and updates the status field.
@@ -362,10 +375,46 @@ itself is guarded — `ApproveGraphGate` calls `CheckGateApprovalAuthority`
 (`bus/gate_authority.go`), so a release needs an authorized approver, defaulting to **the user
 alone, no agent** (`MUXCODE_GATE_AUTHORITY_ROLES` in the muxcode config file opts a role in;
 the process environment is deliberately ignored), and **no agent may approve a gate on a run
-it created** whatever the list says. The check sits in `ApproveGraphGate` rather than the CLI
+it created** whatever that list says — unless the user has separately named the role in
+`MUXCODE_GATE_SELF_APPROVAL_ROLES` (below). The check sits in `ApproveGraphGate` rather than the CLI
 because two roads reach it — `muxcode graph approve` and the graph TUI. Releases and refusals
 are attributable: the marker records `approved_by` from `BusActorVerified`, and
 `graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
+
+**The self-approval opt-in.** `CheckGateApprovalAuthority` asks two questions, and the second was
+written to survive the first being widened: does the actor hold the authority, and is an agent
+approving a gate on a run it created? Self-approval is the shape the original incident took — the
+same autonomous process on both ends — so being granted the authority did not also grant
+rubber-stamping one's own work. `MUXCODE_GATE_SELF_APPROVAL_ROLES` (`GateSelfApprovalKey`; user
+decision, 2026-11-13) is the one exception: for the roles it names, the second question is not
+asked.
+
+| Property | Behaviour |
+|----------|-----------|
+| What it lifts | The self-approval refusal on gates, and — a second permission, in the row below — the user-only rule on unverified holds. The role must still be in `MUXCODE_GATE_AUTHORITY_ROLES`; named in this key alone, it can approve nothing |
+| Where it is read | The same fixed config paths as the gate authority (`.muxcode/config`, then `~/.config/muxcode/config`) — never the environment, never `$MUXCODE_CONFIG` (`readGateConfigKey`) |
+| Sealing | `SealGateAuthority` freezes it with the gate authority at daemon start. In a sealed process `GateSelfApprovalRoles` is the sealed list intersected with the file's current one: an edit can narrow it, and an opt-in written after the seal widens nothing (`TestGateSelfApprovalOptIn`) |
+| Unverified holds too | The same roles may also release an **unverified hold** — the park a node takes when no authoritative result backs its outcome (MUX-149), which until 2026-11-13 only the user's `graph approve` could release. `unverifiedHoldReleased` (`bus/graph_exec.go`) now accepts an approval by the user **or** by a role for which `holdReleaseOptedIn` holds: it has the gate authority and the sealed self-approval list names it. **There is no run-creator check here** (`holdReleaseOptedIn` calls `CheckGateApprovalAuthority` with no run), so despite the key's name the role may release an unverified hold on **any** run — including one the user launched — not only on runs it started itself. The matching `graph-gate-approved` audit row is still required, the release is still single-use, and any other approver is refused with `graph-unverified-self-approval` |
+| Unchanged | `ActorUnknown` is refused whatever either list says; a person approving their own run was never refused |
+
+It exists so an agent-launched loop — `55-defect-backlog-loop` started by edit — can run unattended.
+The cost is exactly the control it removes: a role named in both keys can launch a run and release
+that run's `wait_human` gates itself, so the commit, push, PR and merge behind `ship-gate` proceed
+with no person in the loop. The gate still exists and its approval is still recorded and audited
+(`approved_by`, `graph-gate-approved`), but the approver and the requester are the same agent. As
+with the gate authority, the inputs are agent-writable config files that a daemon restart re-reads.
+
+The unverified-hold extension removes a second, different control. A hold is raised precisely when
+the executor has **no evidence** for a node's result — no authoritative history row, only the
+agent's own word — and it existed so that a person looked before the run moved on. With the opt-in,
+an opted-in agent can release that hold itself, on its own run or anyone else's: the node's outcome
+is then vouched for by an agent rather than a person, and on its own run by the very party whose
+claim could not be verified. The two halves of the opt-in therefore differ in reach. Gate
+self-approval lifts the creator rule, so it matters only on runs the role launched (on other runs
+the gate authority already let it approve). Hold release applies to every run in the session,
+user-launched ones included. For a role named in both keys, a run it launched can pass its
+`wait_human` gates and its unverified holds with no person seeing either, and a run the user
+launched can have its unverified holds released without the user.
 
 **Cancel authority, and the delegated cancel.** Stopping a run is guarded the same way
 ([MUX-182](requirements/completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md),

@@ -958,13 +958,7 @@ var reviewCountsRe = regexp.MustCompile(`^(?:Review\b[^:]{0,60}:\s*)?(\d{1,4}) m
 // fired: must-fixes went to the spec update and the commit gate instead
 // (2026-09-23/24, MUX-182 Phases 2 and 3, six reviews in a row).
 func reviewFindingsOutcome(payload string) (string, bool) {
-	first := ""
-	for _, line := range strings.Split(payload, "\n") {
-		if first = strings.TrimSpace(line); first != "" {
-			break
-		}
-	}
-	m := reviewCountsRe.FindStringSubmatch(first)
+	m := reviewCountsRe.FindStringSubmatch(firstNonblankLine(payload))
 	if m == nil {
 		return "", false
 	}
@@ -974,6 +968,16 @@ func reviewFindingsOutcome(payload string) (string, bool) {
 		return OutcomeFailure, true
 	}
 	return OutcomeSuccess, true
+}
+
+// firstNonblankLine returns the payload's first line with content, trimmed.
+func firstNonblankLine(payload string) string {
+	for _, line := range strings.Split(payload, "\n") {
+		if first := strings.TrimSpace(line); first != "" {
+			return first
+		}
+	}
+	return ""
 }
 
 // resolveCompletedPhaseText expands ${completed_phase}: the phase the commit
@@ -1173,11 +1177,16 @@ func gateApprovalHolds(session string, run *GraphRun, nodeID string, marker []by
 // The release is single-use like a wait_human gate: a node re-entered by a
 // loop edge or a retry must be approved again, and a marker that cannot be
 // purged holds the node rather than releasing it twice.
+//
+// The user may extend the release to agents: a role in the sealed
+// GateSelfApprovalKey list that also holds the gate authority may release a
+// hold too (user decision, 2026-11-13, so an agent-launched defect loop runs
+// unattended). The audit row is still required, and ActorUnknown never passes.
 func unverifiedHoldReleased(session string, run *GraphRun, nodeID string) bool {
 	if data, err := os.ReadFile(graphApprovalPath(session, run.ID, nodeID, "approved")); err == nil {
-		if by := approvalGrantedBy(data); by != ActorUser || !approvalHasAudit(session, run.ID, nodeID, by, data) {
+		if by := approvalGrantedBy(data); !(by == ActorUser || holdReleaseOptedIn(by)) || !approvalHasAudit(session, run.ID, nodeID, by, data) {
 			LogLifecycle(session, "warn", "daemon", "graph-unverified-self-approval",
-				fmt.Sprintf("%s: %s approval by %q refused — an unverified hold needs a person", run.ID, nodeID, by))
+				fmt.Sprintf("%s: %s approval by %q refused — an unverified hold needs a person or a role the user opted in (%s), with an audit row", run.ID, nodeID, by, GateSelfApprovalKey))
 			return false
 		}
 		// Consumed, not discarded: the grant is spent here so a re-entry asks again.
