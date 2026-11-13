@@ -132,7 +132,7 @@ listener on purpose.
 | PID / PPID | 19757 / **1** (launchd) within a second of the call |
 | Ownership | `AGENT_ROLE=watch BUS_SESSION=muxcode`, read with the narrow `ps eww -p` form above (no full dump) |
 | Outcome | edit killed it; watch's inbox was empty at the time, so nothing was consumed. A void consumer by construction — stdout to a file nobody reads, receipts written as `watch` |
-| Side effect | The same call fired the watch chain's unconditioned `notify` to edit with the raw command as its body — [MUX-177](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md)'s defect, recorded there |
+| Side effect | The same call fired the watch chain's unconditioned `notify` to edit with the raw command as its body — [MUX-177](../completed/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md)'s defect, recorded there |
 
 **Refused at PreToolUse, for every role.** `CheckListenerGuard` (`bus/listener_guard.go`, the last
 check in `GuardDecisionFor`) now denies a `muxcode inbox --poll`/`--loop` that is not the bare, lone

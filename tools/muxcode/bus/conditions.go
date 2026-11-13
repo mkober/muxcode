@@ -40,6 +40,8 @@ var knownConditionTypes = map[string]bool{
 	"branch_not_match":       true,
 	"command_match":          true,
 	"command_not_match":      true,
+	"first_command_match":    true,
+	"grep_files_match":       true,
 	"env_set":                true,
 	"env_equals":             true,
 	"output_contains":        true,
@@ -103,6 +105,10 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalCommandMatch(value, ctx)
 	case "command_not_match":
 		return evalCommandNotMatch(value, ctx)
+	case "first_command_match":
+		return evalFirstCommandMatch(value, ctx)
+	case "grep_files_match":
+		return evalGrepFilesMatch(value, ctx)
 	case "env_set":
 		return evalEnvSet(value)
 	case "env_equals":
@@ -273,20 +279,147 @@ func evalCommandMatch(value any, ctx *ChainContext) ConditionResult {
 	return result
 }
 
-// evalCommandNotMatch checks that the command string does NOT match a glob pattern.
+// evalCommandNotMatch checks that the command string does NOT match a glob
+// pattern, read both raw and after stripCommandPrefix: an exclusion such as
+// "muxcode *" must also catch `cd dir && muxcode send …`, which ClassifyCommand's
+// raw prefix test leaves unclassified and so feeds the run or watch chain
+// (MUX-177).
 func evalCommandNotMatch(value any, ctx *ChainContext) ConditionResult {
 	pattern, ok := value.(string)
 	if !ok {
 		return ConditionResult{Type: "command_not_match", Passed: false, Detail: "pattern must be a string"}
 	}
 	result := ConditionResult{Type: "command_not_match", Pattern: pattern}
-	result.Passed = !globMatch(pattern, ctx.Command)
+	result.Passed = !globMatch(pattern, ctx.Command) && !globMatch(pattern, stripCommandPrefix(ctx.Command))
 	if result.Passed {
 		result.Detail = fmt.Sprintf("command %q does not match %q (good)", ctx.Command, pattern)
 	} else {
 		result.Detail = fmt.Sprintf("command %q matches excluded pattern %q", ctx.Command, pattern)
 	}
 	return result
+}
+
+// firstStatement returns the statement a command leads with, as
+// parseShellStatements splits it: a leading `cd <dir> &&` dropped, leading
+// NAME=value words stripped, surrounding whitespace trimmed. It never calls
+// stripCommandPrefix, whose raw `&&` search reaches past statement and quote
+// boundaries: `cd /repo; echo "x && tail app.log"` and `cd "/tmp/x && tail
+// app.log"` each read as a tail, and an indented `  tail app.log` stayed
+// unanchored (PR #177 review).
+func firstStatement(cmd string) string {
+	stmts, _ := dropLeadingCd(parseShellStatements(cmd))
+	if len(stmts) == 0 {
+		return ""
+	}
+	stmt := strings.TrimSpace(stmts[0])
+	for {
+		words := shellWords(stmt)
+		if len(words) < 2 || !isEnvAssignment(words[0]) || !strings.HasPrefix(stmt, words[0]) {
+			return stmt
+		}
+		stmt = strings.TrimSpace(stmt[len(words[0]):])
+	}
+}
+
+// evalFirstCommandMatch checks that the command's first statement
+// (firstStatement) matches a glob pattern. A raw "cd * && tail *" is not that:
+// its first * spans later `&&`s and quoted text, so `cd /repo && echo "x &&
+// tail app.log"` read as a log read (MUX-177 review, 2026-11-03).
+func evalFirstCommandMatch(value any, ctx *ChainContext) ConditionResult {
+	pattern, ok := value.(string)
+	if !ok {
+		return ConditionResult{Type: "first_command_match", Passed: false, Detail: "pattern must be a string"}
+	}
+	first := firstStatement(ctx.Command)
+	result := ConditionResult{Type: "first_command_match", Pattern: pattern, Passed: globMatch(pattern, first)}
+	if result.Passed {
+		result.Detail = fmt.Sprintf("first command %q matches %q", first, pattern)
+	} else {
+		result.Detail = fmt.Sprintf("first command %q does not match %q", first, pattern)
+	}
+	return result
+}
+
+// evalGrepFilesMatch passes when the command's first statement is a grep and
+// one of its input-file operands (grepFileOperands) matches the glob. A glob
+// over the whole call cannot tell an operand from the search expression, so
+// "grep *.log *" read `grep -rn app.log src/` as a log read (PR #177 review).
+func evalGrepFilesMatch(value any, ctx *ChainContext) ConditionResult {
+	pattern, ok := value.(string)
+	if !ok {
+		return ConditionResult{Type: "grep_files_match", Passed: false, Detail: "pattern must be a string"}
+	}
+	result := ConditionResult{Type: "grep_files_match", Pattern: pattern}
+	args := commandArgs(firstStatement(ctx.Command))
+	if len(args) == 0 || filepath.Base(args[0]) != "grep" {
+		result.Detail = fmt.Sprintf("command %q is not a grep", ctx.Command)
+		return result
+	}
+	files := grepFileOperands(args[1:])
+	for _, f := range files {
+		if globMatch(pattern, f) {
+			result.Passed = true
+			result.Detail = fmt.Sprintf("grep input %q matches %q", f, pattern)
+			return result
+		}
+	}
+	result.Detail = fmt.Sprintf("no grep input of %q matches %q", files, pattern)
+	return result
+}
+
+// grepShortWithArg are grep's short options that take an operand — attached
+// (`-m5`) or as the next word (`-m 5`).
+const grepShortWithArg = "ABCDdefm"
+
+// grepLongWithArg are grep's long options whose operand may be the next word.
+var grepLongWithArg = map[string]bool{
+	"--regexp": true, "--file": true, "--max-count": true, "--after-context": true,
+	"--before-context": true, "--context": true, "--label": true, "--include": true,
+	"--exclude": true, "--exclude-from": true, "--exclude-dir": true, "--include-dir": true,
+	"--binary-files": true, "--devices": true, "--directories": true, "--group-separator": true,
+}
+
+// grepFileOperands returns the input files of a grep call's arguments: option
+// operands dropped, and the first operand dropped as the search pattern unless
+// -e/-f (or their long forms) supplied it. Options may follow operands, as GNU
+// grep permutes them; `--` ends option parsing.
+func grepFileOperands(args []string) []string {
+	var operands []string
+	patternGiven := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			operands = append(operands, args[i+1:]...)
+			i = len(args)
+		case strings.HasPrefix(a, "--"):
+			name, _, attached := strings.Cut(a, "=")
+			if name == "--regexp" || name == "--file" {
+				patternGiven = true
+			}
+			if grepLongWithArg[name] && !attached {
+				i++
+			}
+		case len(a) > 1 && a[0] == '-':
+			for j := 1; j < len(a); j++ {
+				if a[j] == 'e' || a[j] == 'f' {
+					patternGiven = true
+				}
+				if strings.IndexByte(grepShortWithArg, a[j]) >= 0 {
+					if j == len(a)-1 {
+						i++
+					}
+					break
+				}
+			}
+		default:
+			operands = append(operands, a)
+		}
+	}
+	if !patternGiven && len(operands) > 0 {
+		operands = operands[1:]
+	}
+	return operands
 }
 
 // evalSwiftPMQuery passes when whether the command is a SwiftPM query

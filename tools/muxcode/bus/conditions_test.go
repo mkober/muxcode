@@ -620,6 +620,9 @@ func TestCommandNotMatch(t *testing.T) {
 		{"deploy allowed", "muxcode *", "aws lambda invoke --function-name test", true},
 		{"curl allowed", "muxcode *", "curl -sf http://localhost:8080/", true},
 		{"bash script allowed", "muxcode *", "bash scripts/test.sh", true},
+		{"cd-prefixed muxcode excluded", "muxcode *", "cd /repo && muxcode send edit notify hi", false},
+		{"env-prefixed muxcode excluded", "muxcode *", "BUS_SESSION=s muxcode inbox", false},
+		{"cd-prefixed tail allowed", "muxcode *", "cd /srv && tail -n 5 app.log", true},
 	}
 
 	for _, tt := range tests {
@@ -748,6 +751,83 @@ func TestRunChainWatchAllowlist(t *testing.T) {
 				t.Errorf("run chain should send to watch for %q, got %q", tt.command, action.SendTo)
 			}
 		})
+	}
+}
+
+// TestWatchChainLogAllowlist pins MUX-177 Phase 1: every watch-chain branch
+// notifies edit only for a log-inspection command, never for the scratch calls
+// watch makes while investigating or for its own bus calls. The firing rows are
+// the negative control — a gate that silenced the chain outright would pass
+// every "no notify" row and remove watch's only route to report.
+func TestWatchChainLogAllowlist(t *testing.T) {
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	tests := []struct {
+		name    string
+		command string
+		fires   bool
+	}{
+		{"tail log", "tail -n 100 /var/log/app.log", true},
+		{"tail piped to scrub", "tail -100 /var/log/app.log | muxcode pii-scrub", true},
+		{"grep a log file", "grep -i error /tmp/app.log", true},
+		{"grep a rotated log", "grep -c ERROR /var/log/nginx/error.log.1", true},
+		{"aws logs tail", "aws logs tail /aws/lambda/fn --since 10m", true},
+		{"kubectl logs", "kubectl logs my-pod --previous", true},
+		{"docker logs", "docker logs api", true},
+		{"macOS log show", "log show --last 5m --predicate 'process == \"App\"'", true},
+		{"cd-prefixed tail", "cd /srv/app && tail -n 50 logs/app.log", true},
+		{"cd-prefixed aws logs", "cd /repo && aws logs tail /aws/lambda/fn", true},
+		{"env-prefixed tail", "LC_ALL=C tail -n 20 /var/log/app.log", true},
+		{"indented tail", "   tail -n 5 /var/log/app.log", true},
+		{"cd-prefixed log grep", "cd /srv && grep ERROR logs/app.log", true},
+		{"log grep with -e patterns", "grep -e ERROR -e WARN /var/log/app.log", true},
+		{"log grep after --", "grep -- -ERROR app.log", true},
+		{"log grep with attached --regexp=", "grep --regexp=ERROR app.log", true},
+		{"log grep with attached -e", "grep -eERROR app.log", true},
+
+		{"echo", "echo hello", false},
+		{"ls", "ls -la", false},
+		{"ps grep", "ps aux | grep muxcode", false},
+		{"cat serve state", "cat /tmp/muxcode-bus-s/serve-state.json", false},
+		{"code grep", "grep -rn foo .", false},
+		{"grep a catalog file", "grep -n foo catalog.go", false},
+		{"ci check", "gh pr checks 175", false},
+		{"ci wait", "sleep 15", false},
+		{"health curl", "curl -sf http://localhost:8080/", false},
+		{"2026-09-10 scratch block", "BUS_DIR=/tmp/muxcode-bus-muxcode\necho $BUS_DIR\nls -la $BUS_DIR\ncat $BUS_DIR/serve-state.json", false},
+		{"2026-09-22 detached listener", "nohup muxcode inbox --poll --loop > /tmp/watch-listener.log 2>&1 & disown; sleep 1; ps aux | grep inbox", false},
+		{"muxcode send", "muxcode send edit notify done", false},
+		{"muxcode inbox", "muxcode inbox", false},
+		{"cd-prefixed muxcode before a tail", "cd /repo && muxcode send edit notify x && tail -n 5 app.log", false},
+		{"cd-prefixed echo quoting a tail", `cd /repo && echo "example && tail app.log"`, false},
+		{"cd-prefixed ls before a tail", "cd /repo && ls -la && tail -n 5 app.log", false},
+		{"cd; echo quoting a tail", `cd /repo; echo "x && tail app.log"`, false},
+		{"cd into a quoted dir naming a tail", `cd "/tmp/x && tail app.log"`, false},
+		{"code grep then echo a log name", "grep -n foo src/x.go; echo app.log", false},
+		{"code grep for a log name", "grep -rn app.log src/", false},
+		{"code grep with -e for a log name", "grep -e app.log src/x.go", false},
+		{"code grep with --regexp for a log name", "grep --regexp app.log src/x.go", false},
+		{"code grep with -A operand", "grep -A 2 app.log src/x.go", false},
+		{"code grep redirected into a log", "grep -n foo src/x.go > out.log", false},
+		{"code grep with trailing --include of a log", "grep foo src/x.go --include app.log", false},
+	}
+
+	for _, tt := range tests {
+		for _, outcome := range []string{"success", "failure", "unknown"} {
+			t.Run(tt.name+"/"+outcome, func(t *testing.T) {
+				action := ResolveChain("watch", outcome, &ChainContext{Command: tt.command})
+				if !tt.fires {
+					if action != nil {
+						t.Errorf("watch %s fired for %q: %+v", outcome, tt.command, action)
+					}
+					return
+				}
+				if action == nil || action.SendTo != "edit" || action.Action != "notify" {
+					t.Errorf("watch %s for %q = %+v, want an edit notify", outcome, tt.command, action)
+				}
+			})
+		}
 	}
 }
 

@@ -27,7 +27,7 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 
 | ID | Spec | Since | State |
 |----|------|-------|-------|
-| — | _None — MUX-207 closed 2026-11-02; the next active spec is the user's call_ | — | — |
+| — | _None — MUX-177 closed 2026-11-09; the next active spec is the user's call_ | — | — |
 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
@@ -46,7 +46,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
-| 1 | 1 | [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The watch chain fires on every bash call and pastes the raw command into the message | Medium | ⇄ [MUX-176](../completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md) |
+| 1 | 1 | [`MUX-208`](./MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md) | Durable bus state lives in `/tmp`, and macOS deletes it after three idle days — a parked graph run lost its definition | High | ⇄ [MUX-160](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) · ⇄ [MUX-137](./MUX-137-test-bus-dir-leak.md) |
 | 2 | 1 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A history row's provenance is declared, not proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | 3 | 1 | [`MUX-181`](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md) | A graph-dispatched Atlassian write is judged on configuration, not on the gate | High | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) · ⇄ [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md) |
 | 4 | 1 | [`MUX-165`](./MUX-165-gated-jira-write-declined-by-requester-rule.md) | A gate-approved Jira write is declined because plan's rule checks the messenger, not the consent | High | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) · ⇄ [MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md) |
@@ -99,6 +99,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-208`](./MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md) | Durable Bus State Lives in /tmp, and macOS Deletes It After Three Idle Days | High | ⇄ [MUX-160](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) · ⇄ [MUX-137](./MUX-137-test-bus-dir-leak.md) |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned Session Processes Are Never Reaped | High | — |
@@ -140,7 +141,6 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The Prompt Profile Denies Its Own Discovery Commands | Low | — |
-| [`MUX-177`](./MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message | Medium | — |
 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two Agents Can Acknowledge Each Other Forever — Response Traffic Has No Brake | Medium | — |
 | [`MUX-170`](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) | A Graph Dispatch Adopts a Foreign In-Flight Task That Shares Its Action | High | — |
 | [`MUX-166`](./MUX-166-run-builds-on-stale-base-no-freshness-gate.md) | A Run Builds on a Stale Base — Branch Freshness Is a Note, Not a Gate | High | — |
@@ -328,6 +328,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-142`](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Spawned Worker Delegates Build/Test Into the Wrong Tree |
 | [`MUX-174`](../completed/MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) | `./test.sh` Fails Repo-Wide When the Harness Module's Vet Cannot Resolve a Stdlib Package |
 | [`MUX-176`](../completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md) | The Run Chain Reported Success Three Minutes Before the Script Finished — and It Failed |
+| [`MUX-177`](../completed/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) | The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message |
 
 ## Ideas without specs
 

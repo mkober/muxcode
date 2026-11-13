@@ -101,11 +101,11 @@ Out of the box, MuxCode uses Claude Code for orchestration roles and OpenCode fo
 
 | Role                                             | Default CLI | Default model                   |
 | ------------------------------------------------ | ----------- | ------------------------------- |
-| edit                                             | Claude Code | `claude-fable-5-1`             |
+| edit                                             | Claude Code | `claude-fable-5-2`             |
 | plan                                             | Claude Code | `claude-opus-5-5`             |
 | review, analyze                                  | OpenCode    | `opencode-go/qwen3.7-plus`     |
 | build, test, serve, deploy, run, watch, commit   | OpenCode    | `opencode-go/minimax-m3`       |
-| api                                              | Claude Code | `claude-sonnet-5`              |
+| api                                              | Claude Code | `claude-sonnet-5-5`            |
 
 OpenCode Go models are available through [OpenCode Go](https://opencode.ai/go). Override the model per role with `MUXCODE_{ROLE}_MODEL` for OpenCode roles (e.g. `MUXCODE_BUILD_MODEL=opencode-go/minimax-m3`) or `MUXCODE_{ROLE}_CLAUDE_MODEL` for Claude Code roles. Override the CLI provider per role with `MUXCODE_{ROLE}_CLI`.
 
@@ -121,14 +121,14 @@ MUXCODE_REVIEW_CLI=codex
 MUXCODE_ANALYZE_CLI=codex
 
 # Cost optimization — use Haiku for API role
-MUXCODE_API_CLAUDE_MODEL=claude-haiku-4-5
+MUXCODE_API_CLAUDE_MODEL=claude-haiku-5-5
 ```
 
 This gives you:
 
 | Role     | Provider    | Model              | Why                                                      |
 | -------- | ----------- | ------------------ | -------------------------------------------------------- |
-| edit     | Claude Code | Opus 5             | Full hook support, orchestration, code editing            |
+| edit     | Claude Code | Fable 5.2          | Full hook support, orchestration, code editing            |
 | commit   | OpenCode    | MiniMax M3         | Git operations — prompt-instructed chains                |
 | build    | OpenCode    | MiniMax M3         | Runs `./build.sh` — structured commands, no hooks needed |
 | test     | OpenCode    | MiniMax M3         | Runs `./test.sh` — structured commands, no hooks needed  |

@@ -44,7 +44,7 @@ func TestAvailableProviders_Defaults(t *testing.T) {
 		cli     string
 		wantDef string
 	}{
-		{"claude", "claude-sonnet-5"},
+		{"claude", "claude-sonnet-5-5"},
 		{"opencode", "opencode-go/minimax-m3"},
 		{"codex", "gpt-5.5"},
 	}

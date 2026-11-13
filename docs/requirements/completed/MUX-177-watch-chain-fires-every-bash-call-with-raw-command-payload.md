@@ -1,0 +1,253 @@
+# The Watch Chain Fires on Every Bash Call and Pastes the Raw Command Into the Message
+
+**Tracking:** [mkober/muxcode#135](https://github.com/mkober/muxcode/issues/135)
+
+**Provenance:** filed 2026-09-10 by plan on the user's request relayed by edit (`1789070947`), after the
+watch agent reported and then root-caused it itself at 15:58. Verified in code by plan before filing.
+
+The `watch` role's event chain has **no conditions on any branch**. Every classified bash call in the
+watch pane sends edit a `notify`, and the message interpolates `${command}` verbatim — so a
+multi-line heredoc, a `ps` pipeline or a scratch `echo` block arrives at edit as its own raw text
+wrapped in "logs look healthy after deploy (…)". Four such messages reached edit inside three minutes
+while watch was investigating an unrelated question.
+
+The same class was already fixed for the **run** chain, which carries a `command_match` allowlist and
+a `command_not_match: "muxcode *"` exclusion. Watch never got either.
+
+## Context
+
+### Observed (2026-09-10, session `muxcode`)
+
+| When | Evidence | Source | Provenance |
+|------|----------|--------|------------|
+| 15:47 | `watch → edit [event:notify]` "Watch completed — logs look healthy after deploy (`BUS_DIR=…` / `echo` / `ls -la` / `cat serve-state.json`)" — a four-line shell block as the message body | bus history | **machine-written (chain)** |
+| 15:48 | same shape, body is a `tail` / `ps aux \| grep` block | bus history | **machine-written (chain)** |
+| 15:49 | same shape, body is a `ps -o pid,ppid,stat,lstart,command` block | bus history | **machine-written (chain)** |
+| 15:58 | watch → run, retracting an unrelated claim and naming this as the cause: the chain "fires on every successful watch-role bash call and interpolates the raw multi-line `${command}` verbatim into the notify — confirmed 4 such spam messages fired to edit" | bus history | agent self-report |
+
+None of the four described a log finding. All fired because a bash call in the watch pane exited 0.
+
+### Recurrence (2026-09-22, session `muxcode`)
+
+| When | Evidence | Source | Provenance |
+|------|----------|--------|------------|
+| 10:09:23 | `watch → edit [event:notify]` "Watch completed — logs look healthy after deploy (`nohup muxcode inbox --poll --loop > /tmp/watch-listener.log 2>&1 & disown; sleep 1; ps aux \| grep …`)" — the body is a listener-detaching call, not a log finding | bus history | **machine-written (chain)** |
+
+The call itself is the [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md)
+2026-09-22 entry, and is now refused at PreToolUse by `CheckListenerGuard`. The chain defect is
+**not** fixed by that change and remains this spec's work. A second facet of the mechanism, verified
+in code the same day: `ClassifyCommand`'s bus test is a raw `strings.HasPrefix(command, "muxcode")`
+(`bus/hook.go:306`), so a `nohup`-, `cd … &&`- or env-prefixed bus command is not `CmdBus` but
+`CmdUnknown` — and in the watch role `ChainEvent` returns `watch` for an unclassified call, whose
+`OnSuccess` has no conditions. The `command_not_match: "muxcode *"` exclusion the run chain carries
+would have the same blind spot for a prefixed bus call; the fix should match on the statement after
+`stripCommandPrefix`, not the raw command.
+
+### Mechanism — verified in code, not inferred
+
+`tools/muxcode/bus/profile.go:976–995`, the `"watch"` chain:
+
+| Branch | Message | Conditions |
+|--------|---------|------------|
+| `OnSuccess` | `Watch completed — logs look healthy after deploy (${command})` | **none** |
+| `OnFailure` | `Watch detected errors (exit ${exit_code}): ${command} — …` | **none** |
+| `OnUnknown` | `Watch completed (exit code unknown): ${command}` | **none** |
+
+Contrast `runWatchActions` (`profile.go:555–570`), which builds the run chain's `OnSuccess`:
+
+```go
+Conditions: map[string]any{
+    "command_match":     p,              // an allowlist of verification commands
+    "command_not_match": "muxcode *",    // never fire on a bus call
+},
+```
+
+A comment at `profile.go:949` refers to a prior **`run-chain-watch-overfire`** fix — the precedent
+that this exact overfiring was already recognised and gated for `run`. The watch chain was not
+revisited.
+
+Two distinct defects, separable and worth separating:
+
+| # | Defect | Consequence |
+|---|--------|-------------|
+| 1 | **No condition gate** — any classified bash call in the watch pane notifies edit | Volume: routine investigation becomes a message storm; watch's own `muxcode send` calls also qualify, so the chain can amplify itself |
+| 2 | **Raw `${command}` interpolation** | Shape: a multi-line body violates the delegation-message-hygiene rule, and per `CLAUDE.md` such a payload misses the `Bash(muxcode *)` glob and **prompts instead of delivering** — so the noise is not merely cosmetic |
+
+Defect 2 is shared textually by the run and serve chains, which also interpolate `${command}`; there
+it is largely masked because their allowlists keep the matched commands short and predictable. Any
+fix should decide whether to bound the interpolation everywhere or only gate watch.
+
+### Scope boundary
+
+In scope: the watch chain's missing conditions, and the shape of `${command}` in chain messages. Not
+in scope: the PID-ownership mistake watch made in the same window (watch retracted it at 15:58 and it
+had no chain involvement), and the `run` chain's own allowlist, which is working as designed.
+
+## Requirements
+
+### Acceptance criteria
+
+- [x] A routine bash call in the watch pane that produces no log finding sends edit **no** `notify` — Phase 1, 2026-11-03: 16 non-firing rows incl. the 2026-09-10 scratch block and 2026-09-22 listener call verbatim, across all three outcomes; `ps` through the real hook
+- [x] A genuine watch finding still reaches edit — pinned by a test, so the fix does not buy quiet by disabling the chain — Phase 1, 2026-11-03: `TestWatchChainLogAllowlist` firing rows and `TestWatchRoleChainGate` (`tail` notifies on exit 0 and 1)
+- [x] No chain message carries a multi-line body; `${command}` is bounded (single line, truncated with an explicit marker) or omitted — Phase 2, 2026-11-04: `boundCommand` joins lines with ` ⏎ ` and cuts at 200 bytes with `… [truncated N bytes]`, on every chain and subscription expansion; the other variables (`${branch}`, `${serve_url}`, `${changed_files}` — comma-joined, 10 names) were already one line
+- [x] A chain message that would exceed the hygiene limits is truncated rather than sent raw, and the truncation is visible in the message — Phase 2, 2026-11-04: `TestChainMessagesPassValidatePayload` expands a 1.5k heredoc through every default chain action that names `${command}` (run, watch, serve all reached) and asserts `validatePayload()` accepts the result and the `[truncated` marker is in it; the raw heredoc failing is the control
+- [x] Watch's own `muxcode *` calls never fire the watch chain (the exclusion the run chain already has) — Phase 1, 2026-11-03: `command_not_match: "muxcode *"` on every branch, now also tested after `stripCommandPrefix`, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded too (`TestCommandNotMatch`, the nohup and cd-prefixed rows)
+- [x] `docs/hooks.md` chain table and `CLAUDE.md` record the watch chain's gate alongside the run chain's — Phase 3, 2026-11-05: `docs/hooks.md` "Deploy-Run-Watch Chain" paragraph directly after the run gate's, and `CLAUDE.md`'s "Conditional chains" bullet extended after its run-allowlist sentence; both name all three branches, `watchLogShapes` + `first_command_match` + `command_not_match: "muxcode *"`, and the `${command}` bound
+
+### Technical approach
+
+The narrow fix is to give the watch chain the treatment the run chain already has: a `command_match`
+allowlist of log-inspection commands plus `command_not_match: "muxcode *"`. That reuses
+`EvaluateConditions()` and needs no new mechanism.
+
+The interpolation is a separate decision. Bounding `${command}` at the point of substitution fixes it
+for every chain at once and is the smaller change; gating watch alone leaves the same trap set for
+the next role that gets a chain without an allowlist. Prefer the bounded interpolation, with the
+allowlist as well — they address different halves.
+
+**The load-bearing test is the negative control:** a real watch finding must still notify edit. A fix
+that simply stops the chain firing would satisfy every "no spam" assertion and silently remove watch's
+only route to report.
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `tools/muxcode/bus/profile.go` | the `"watch"` chain (976–995); `runWatchActions` (555–570) as the model; the `run-chain-watch-overfire` comment at 949 |
+| `tools/muxcode/bus/conditions.go` | `EvaluateConditions()`, `command_match` / `command_not_match` |
+| `tools/muxcode/bus/hook.go` | where chain messages are built and `${command}` is substituted |
+| `tools/muxcode/bus/inbox.go` | `validatePayload()` — the hygiene limits the raw body violates |
+| `docs/hooks.md`, `CLAUDE.md` | chain tables and the constraint bullet |
+
+## Implementation
+
+### Phase 1: Gate the watch chain
+
+- [x] Add `command_match` (log-inspection allowlist) and `command_not_match: "muxcode *"` to the watch chain's branches — 2026-11-03, as `first_command_match` (the allowlist read after `stripCommandPrefix`, see findings) plus `command_not_match: "muxcode *"` on all three branches (`watchNotifyActions`, `profile.go`)
+- [x] Unit tests: a `tail`/`grep` log command fires; a `ps`/`echo`/`ls` scratch command does not; a `muxcode send` never does — `TestWatchChainLogAllowlist` (11 firing, 16 non-firing rows × 3 outcomes), `TestCommandNotMatch`, `TestWatchRoleChainGate`; suite green `./test.sh` ts 1793727902 on the fix tree
+- [x] **Negative control:** a genuine log-inspection command still fires the notify — `tail`, log `grep`, `aws`/`kubectl`/`docker logs`, `log show`, cd- and env-prefixed tails notify edit on success, failure and unknown; through the real hook, `tail` on exit 0 and 1
+
+#### Phase 1 findings (2026-11-03)
+
+Verified 12:45 on the fix tree: `./build.sh` ts 1793727826, `./test.sh` ts 1793727902 (both after the
+last file write at 1793727792), review `1793727928-review-0a4e79d9` 0 must-fix / 0 should-fix / 0 nits
+("prior wildcard finding is resolved"). Uncommitted at verification, on branch
+`MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload`
+(graph run `1793727228-50-spec-to-pr-5f982531`):
+
+| Item | In the tree |
+|------|-------------|
+| Gate | `watchLogShapes` (`profile.go`: `tail *`, `journalctl *`, `grep *.log`/`*/log(s)/*`, `aws logs`/`cloudwatch`, `gcloud logging`, `az monitor`, `kubectl logs`/`get events`, `docker(-compose) logs`, `stern`, `log show`/`stream`, `xcrun simctl spawn * log …`); `watchNotifyActions` puts one first-match-wins action per shape on **all three** branches (`OnSuccess`/`OnFailure`/`OnUnknown`), each with `first_command_match: <shape>` and `command_not_match: "muxcode *"` |
+| New condition | `first_command_match` (`conditions.go`, the 15th type): the glob is read against `stripCommandPrefix(command)` — a genuine `cd <dir> &&` and env assignments removed — so no `cd * && <reader>` shape is needed. `command_not_match` now tests the stripped command as well as the raw one, so `cd dir && muxcode send …` is excluded (the Recurrence note's blind spot) |
+| Tests | `TestWatchChainLogAllowlist` (`conditions_test.go`): 11 firing rows (tail, grep of a log, aws/kubectl/docker logs, `log show`, cd- and env-prefixed tails) × 3 outcomes, 16 non-firing rows (echo, ls, `ps aux \| grep`, cat, a code grep, `gh pr checks`, sleep, curl, the 2026-09-10 scratch block, the 2026-09-22 detached listener, `muxcode send`/`inbox`, and the review's `cd /repo && echo "example && tail app.log"`, `cd … && muxcode send … && tail`, `cd … && ls && tail`); `TestCommandNotMatch` rows for cd- and env-prefixed `muxcode`; `TestWatchRoleChainGate` (`hook_test.go`) through the real `ProcessBashHook` + `BuildChainContext`: the prefixed bus call, the cd-prefixed send and a `ps` resolve no edge, a `tail` notifies edit on exit 0 and 1 |
+
+Review history: the first review (`1793727743`, 1 must-fix) found that a raw `cd * && tail *` shape's
+first `*` spanned later `&&`s and quoted text, so `cd /repo && echo "example && tail app.log"` read as
+a log read; the fix replaced every `cd *` shape with `first_command_match` and added that command, a
+`cd … && muxcode send … && tail` and a `cd … && ls && tail` as non-firing rows. The first verify-spec
+(12:42) held the boxes because that suite run predated the fix; the fix tree's own chain ticked them.
+
+Known limit, left for Phase 2 by design: a multi-line block whose **first** line is a log reader still
+notifies — the allowlist gates on the first statement, and bounding the body is Phase 2's work.
+Follow-up for Phase 3: `first_command_match` is the 15th condition type — `docs/hooks.md`'s table,
+`docs/architecture.md`'s count (14 as of 2026-11-02) and `CLAUDE.md`'s "13 types" all move.
+
+### Phase 2: Bound the interpolation
+
+- [x] `${command}` substitution collapses newlines and truncates at a fixed width with an explicit marker — 2026-11-04: `boundCommand` (`profile.go`): lines trimmed, blanks dropped, joined with ` ⏎ `; cut at a rune boundary within `chainCommandMaxLen` = 200 bytes, suffixed `… [truncated N bytes]`
+- [x] Applies to every chain that interpolates `${command}` (run, watch, serve), not watch alone — 2026-11-04: the one substitution point is `ExpandMessageWithContext` (`ExpandMessage` now delegates to it), so every chain is bounded; `ExpandSubscriptionMessage` bounds the same way
+- [x] Unit test: a multi-line heredoc command yields a single-line bounded message that passes `validatePayload()` — 2026-11-04: `TestChainMessagesPassValidatePayload` (`cmd/send_test.go`, every default chain action naming `${command}`, run/watch/serve asserted reached), `TestBoundCommand` (`profile_test.go`: heredoc with `\r\n` and blank lines, a 237-byte line, a multibyte cut), a subscription row; suite green `./test.sh` ts 1793808379
+- [x] **Negative control:** a short single-line command is passed through unchanged — 2026-11-04: `TestBoundCommand` unchanged rows — a `tail`, a tab-holding `grep`, exactly 200 bytes, empty — byte-identical; the raw heredoc failing `validatePayload()` proves the check can see the defect
+
+#### Phase 2 findings (2026-11-04)
+
+Verified 11:06 on the tree: `./build.sh` ts 1793808313, `./test.sh` ts 1793808379 (both after the last
+file write at 1793808289), review `1793808406-review-782db78e` 0 must-fix / 0 should-fix / 0 nits
+("prior expansion finding resolved"). Uncommitted at verification, on branch
+`MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload`
+(graph run `1793727228-50-spec-to-pr-5f982531`):
+
+| Item | In the tree |
+|------|-------------|
+| Bound | `boundCommand` (`profile.go`): a command holding `\n` or `\r` is split, each line trimmed, blanks dropped, the rest joined with ` ⏎ `; then, past `chainCommandMaxLen` (200 bytes — with the longest default template it keeps the message under `validatePayload()`'s 500), cut back to a rune start and suffixed `… [truncated N bytes]`. Within the limit and on one line, the command is returned as is |
+| Reach | `ExpandMessageWithContext` substitutes `${command}` through `boundCommand`; `ExpandMessage` is now a nil-ctx call to it, so the run, watch and serve chains (and any user chain) share the bound. `ExpandSubscriptionMessage` applies it too |
+| One pass | Both expanders now build a `strings.NewReplacer` and replace every token in one pass over the **template**, with the git and serve lookups keyed on the template rather than the partly expanded string — a substituted value is never rescanned, so a command holding a literal `${changed_files}` cannot expand after the bound (the review's finding; `TestExpandMessageWithContextNoRescan`, `TestExpandSubscriptionMessage_NoRescan`, each with the template's own tokens expanding as the control) |
+| Tests | `TestBoundCommand` (heredoc → one line; 237 bytes → 200 + `[truncated 37 bytes]`; `x` + 200 × `é` cut to a valid string at 199 bytes; four unchanged rows; `ExpandMessage` bounding); `TestChainMessagesPassValidatePayload` (`cmd`): a 1.5k heredoc opening with a literal `${changed_files}`, expanded through every default chain action naming `${command}` with a ten-long-path context, passes `validatePayload()` and shows `[truncated`, with run, watch and serve asserted reached and the raw heredoc asserted rejected; a `multi-line command bounded` row in `TestExpandSubscriptionMessage` |
+
+No integration script for this phase; Phase 4's `scripts/test-watch-chain-gate.sh` carries the
+"no message body contains a newline" assertion end to end. Residual, outside this spec: `${changed_files}`
+is bounded by count (10 names), not bytes — no default chain template names it, so it reaches a message
+only from a user-written chain.
+
+### Phase 3: Docs
+
+- [x] `docs/hooks.md` chain table: the watch chain's gate, beside the run chain's — 2026-11-05: a paragraph under "Deploy-Run-Watch Chain" directly after the run gate's: all three branches, every `watchLogShapes` shape, `first_command_match` + `command_not_match: "muxcode *"`, what does not fire, the 2026-09-10 incident, why not `command_match`, the three pinning tests; plus the `${command}` bound under "Message templates" (`boundCommand`, 200 bytes, ` ⏎ `, visible marker, one-pass replacement, `validatePayload()`)
+- [x] `CLAUDE.md`: extend the run-chain allowlist note to say every notifying chain is gated and `${command}` is bounded — 2026-11-05 (edit): the "Conditional chains" bullet now records the watch gate on all three branches (`watchNotifyActions`, the shapes, `command_not_match` tested on the stripped command too, the pre-MUX-177 raw-command notices), that a run **failure** still notifies for any command by design, and the `boundCommand` bound (` ⏎ `, 200 bytes, one-pass). Review `1793890396` nit — "a chain message always passes `validatePayload()`" over-claimed — qualified by plan to the default templates naming `${command}`, with user templates and `${changed_files}` named as unbounded
+- [x] `docs/hooks.md` conditions table: a `first_command_match` row — glob read against `stripCommandPrefix(command)` (a genuine `cd <dir> &&` and env assignments removed), why it is not `command_match` with a `cd * &&` shape (the first `*` spans later `&&`s and quoted text — the Phase 1 review finding) — 2026-11-05: row after `command_not_match`, with the review's `cd /repo && echo "example && tail app.log"` as the example; the "Chain context" Command bullet names it too
+- [x] `docs/hooks.md` `command_not_match` row: now also tests the prefix-stripped command, so `cd dir && muxcode …` and `VAR=1 muxcode …` are excluded — this narrows the run chain's own `muxcode *` exclusion the same way, never widens it — 2026-11-05: row rewritten with both forms, the strip order (`cd <dir> &&` then env assignments) and the narrows-never-widens note
+- [x] Condition count: `docs/architecture.md` 14 → 15 types with `first_command_match` named in its list (`docs/hooks.md` carries the table, no count; `CLAUDE.md` already reads 15 with both `swiftpm_query` and `first_command_match` — done by the Phase 1 worker, nothing left there) — 2026-11-05: `docs/architecture.md` "15 condition types", `first_command_match` named with its purpose
+
+#### Phase 3 findings (2026-11-05)
+
+Verified 09:53: `CLAUDE.md` written by edit at 1793890152, `docs/hooks.md` and `docs/architecture.md` by plan at
+1793890277/1793890280 (handoff `/tmp/mux177-phase3-docs.md`), `./test.sh` ts 1793890350 (docs-only phase; the
+chain ran intact), review `1793890396-review-9439cd1b` 0 must-fix / 0 should-fix / 1 nit ("other documentation
+matches implementation"). The nit — `CLAUDE.md` claimed every chain message passes `validatePayload()` when only
+`${command}` is bounded — is fixed in the tree: the claim now covers the default templates naming `${command}`
+and names a user template's own text and `${changed_files}` as unbounded, matching `docs/hooks.md` and the Phase 2
+residual. Uncommitted at verification.
+
+### Phase 4: Integration test
+
+- [x] `scripts/test-watch-chain-gate.sh`: run a scratch non-log bash call in a watch-role pane and assert **no** notify reaches edit — 2026-11-05: hermetic (tree-built muxcode, scratch bus, Claude `PostToolUse`/`PostToolUseFailure` payloads into the real `hook bash` as `AGENT_ROLE=watch`); 7 scratch calls (`ps | grep`, a bus-dir `ls`, the 2026-09-10 heredoc, the 2026-09-22 nohup listener, a cd-prefixed `muxcode send`, an empty code grep on exit 1, quoted `&& tail` text after a `cd`) each prove the hook ran (+1 watch-history row) and leave edit's **and** analyze's inboxes empty; a bare bus call writes no row and notifies nobody
+- [x] **Negative control:** a log-inspection call in the same pane **does** notify edit — 2026-11-05: `tail` on exit 0, a log `grep` on exit 1 (edit and analyze), a cd-prefixed `kubectl logs`; each asserted as exactly one notice with the expected body
+- [x] Assert no message body contains a newline — 2026-11-05: every message in every scratch inbox (≥ 8) checked for `[\r\n]` and for > 500 bytes — `validatePayload()`'s two limits; plus a 31-line `tail`-led watch block and a 42-line failing run heredoc each asserted to reach edit and analyze joined with ` ⏎ ` and carrying `[truncated `
+- [x] Coverage floor pinned to the exact pass count so a skipped section cannot read green — 2026-11-05: `EXPECTED_PASS=18`; any failure or a count other than 18 exits 1
+- [x] Run through the run agent (**foreground**, per MUX-171) and record the counts here — 2026-11-05: run task `1793892656-spawn-5d9ee28e-a947a99f`, foreground at ts 1793892674, `EXIT_CODE:0` — **18 passed, 0 failed, floor 18** (8 silent, 4 negative control, 4 bounded, 2 hygiene)
+
+#### Phase 4 findings (2026-11-05)
+
+Verified 10:41: script written 1793892646, run by the run agent 1793892674 (18/18), `./build.sh` ts 1793892785,
+`./test.sh` ts 1793892854 (both after the last code write at 1793892543), review `1793893260-review-4a2d1f29`
+0 must-fix / 0 should-fix / 0 nits. Uncommitted at verification.
+
+**The script found a fourth leak and the phase fixed it.** The analyst's copy of a chain outcome
+(`triggerChain` in `cmd/hook.go` and `Chain` in `cmd/chain.go`) was built with `fmt.Sprintf` from the **raw**
+command, so a failing heredoc reached analyze multi-line even after Phase 2 bounded the chain message itself.
+Both sites now call `analystNotice` (`cmd/chain.go`), which expands `… ${command}` templates through
+`bus.ExpandMessage` and so shares `boundCommand`; `TestAnalystNoticeBounded` (`cmd/send_test.go`) pins all
+three outcomes under `validatePayload()` with the marker visible, the three plain-text forms unchanged, and
+`""` for an outcome the analyst is not told of. The script's own evidence that it can see this: run against
+the **installed** (pre-fix) binary via `MUXCODE_WATCH_CHAIN_GATE_BIN` (run task `1793892711`, reply
+1793892748) it reported 14 passed / 4 failed — the bounded-analyze and gate rows — where the tree build
+passes 18. (The run agent noted that wrapper's exit status did not propagate; that was the worker's `/tmp`
+wrapper script, not `test-watch-chain-gate.sh`, which exits 1 on any failure or floor miss.)
+
+`CLAUDE.md`'s `scripts/test-*.sh` row lists `test-watch-chain-gate` (edit, 1793892761);
+`docs/hooks.md`'s watch-gate and `${command}` paragraphs now point at the script and the analyst bound (plan).
+
+## Notes
+
+**Found by the agent it was firing from.** Watch reported the noise, initially misattributed it to an
+orphaned listener it had killed, and then retracted and root-caused it correctly. The retraction is
+the reason this is filed against the chain and not against a process. Recorded because the first
+explanation was wrong and the record should show why the second is better: the four messages are in
+the bus history with chain-written bodies, and the missing `Conditions` are in the source.
+
+**Related:** [MUX-176](./MUX-176-run-chain-fires-success-on-backgrounded-call.md) — the other chain
+defect in the same session, where the run chain fired success on an unfinished call. Both are chain
+edges firing on evidence that does not support them.
+
+**Recurred 2026-09-22** on a `nohup muxcode inbox …` call, which also showed that a prefixed bus
+command escapes the `HasPrefix("muxcode")` classification and lands in the unconditioned watch
+chain — recorded under [Recurrence](#recurrence-2026-09-22-session-muxcode); not re-scoped.
+
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload | 50m | 2026-11-07 00:02 |
+
+## Status
+
+Complete — closed out 2026-11-09 by hand on the user's instruction (the `50-spec-to-pr` run broke before its `close-spec` node): all four phases committed, Phase 4 as `3013363`; every box ticked (23/23, acceptance criteria 1–6); spec moved `backlog/` → `completed/`. All four phases verified 2026-11-05 10:41 and re-verified 2026-11-07 on the committed tree. Phase 4 ([findings](#phase-4-findings-2026-11-05)): `scripts/test-watch-chain-gate.sh` 18/18 through the run agent, and it caught a fourth raw-command leak (the analyst notice), fixed in the same phase. History — active spec since 2026-11-03 (set by the user). Phase 1 (Gate the watch chain) complete 2026-11-03 12:45: allowlist + `muxcode *` exclusion on all three branches, review must-fix (raw `cd *` shapes) fixed with `first_command_match`, suite green ts 1793727902, review 1793727928 clean ([Phase 1 findings](#phase-1-findings-2026-11-03)); committed as `66d7622`. Phase 2 (Bound the interpolation) complete 2026-11-04 11:06: `boundCommand` (` ⏎ `-joined, 200-byte cut with a visible marker) on every chain and subscription expansion, one-pass token replacement after the review's rescan finding, suite green ts 1793808379, review 1793808406 clean ([Phase 2 findings](#phase-2-findings-2026-11-04)); committed as `e6d5839`. Phase 3 (Docs) complete 2026-11-05 09:53: `docs/hooks.md` watch gate + condition rows + `${command}` bound, `docs/architecture.md` 15 types, `CLAUDE.md` bullet by edit, review 1793890396 clean bar one nit fixed in the tree ([Phase 3 findings](#phase-3-findings-2026-11-05)); uncommitted at verification. Phase 4 (Integration test) complete 2026-11-05 10:41: `scripts/test-watch-chain-gate.sh` 18/18 through the run agent, the analyst-notice leak it caught fixed in the same phase, suite green ts 1793892854, review 1793893260 clean ([Phase 4 findings](#phase-4-findings-2026-11-05)); uncommitted at verification. Re-verified 2026-11-07 on the unchanged tree after a suite re-run (ts 1794027681, green) and review 1794027673 (0/0/3 nits: two doc wording nits fixed in the tree — this sentence and `docs/hooks.md`'s bare-bus-call row claim — and the third fixed by edit in the script, whose bare-bus-call check now asserts the analyze inbox stays empty as well as edit's; all three committed in `3013363`, rerun 18/18). Recurred 2026-09-22 (see [Recurrence](#recurrence-2026-09-22-session-muxcode)).

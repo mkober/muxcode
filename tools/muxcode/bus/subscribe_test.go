@@ -346,6 +346,12 @@ func TestExpandSubscriptionMessage(t *testing.T) {
 			"deploy", "success", "0", "cdk deploy",
 			"deploy done",
 		},
+		{
+			"multi-line command bounded",
+			"${event} ${outcome}: ${command}",
+			"run", "success", "0", "echo a\necho b",
+			"run success: echo a ⏎ echo b",
+		},
 	}
 
 	for _, tt := range tests {
@@ -602,6 +608,17 @@ func TestExpandSubscriptionMessage_WithContext(t *testing.T) {
 	got := ExpandSubscriptionMessage(template, "build", "success", "0", "make", ctx)
 	want := "build success on feat/deploy: lib/stack.ts, bin/app.ts"
 	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestExpandSubscriptionMessage_NoRescan: a command's literal tokens stay
+// literal; the template's own tokens still expand (MUX-177 review).
+func TestExpandSubscriptionMessage_NoRescan(t *testing.T) {
+	ctx := &ChainContext{Branch: "feat", ChangedFiles: []string{"a.go"}}
+	got := ExpandSubscriptionMessage("${event} ${outcome} on ${branch} [${changed_files}]: ${command}",
+		"run", "success", "0", "echo ${changed_files} ${event}", ctx)
+	if want := "run success on feat [a.go]: echo ${changed_files} ${event}"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

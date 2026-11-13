@@ -198,6 +198,75 @@ func TestDefaultsToTrack_FireAndForgetEscapeHatch(t *testing.T) {
 	}
 }
 
+// TestChainMessagesPassValidatePayload pins MUX-177 Phase 2 across every
+// default chain that interpolates ${command}: an oversized multi-line heredoc
+// still expands, through the hook's ExpandMessageWithContext, to a message
+// validatePayload accepts — its leading literal ${changed_files} included,
+// which a rescan would expand into the long file list after the bound. The
+// raw heredoc is the control that the check can see the failure at all.
+func TestChainMessagesPassValidatePayload(t *testing.T) {
+	heredoc := "echo ${changed_files}\ncat <<'EOF' > /tmp/x.sh\n" + strings.Repeat("echo some scratch investigation line\n", 40) + "EOF"
+	var files []string
+	for i := 0; i < 10; i++ {
+		files = append(files, "tools/muxcode/bus/a-rather-long-generated-file-name-"+strings.Repeat("x", 30)+".go")
+	}
+	ctx := &bus.ChainContext{Branch: "MUX-177", ChangedFiles: files}
+	if len(validatePayload(heredoc)) == 0 {
+		t.Fatal("validatePayload accepted the raw heredoc — the check cannot see the defect")
+	}
+
+	reached := map[string]bool{}
+	for chain, ec := range bus.DefaultConfig().EventChains {
+		for outcome, actions := range map[string]bus.ChainActions{"success": ec.OnSuccess, "failure": ec.OnFailure, "unknown": ec.OnUnknown} {
+			for _, a := range actions {
+				if !strings.Contains(a.Message, "${command}") {
+					continue
+				}
+				reached[chain] = true
+				msg := bus.ExpandMessageWithContext(a.Message, "1", heredoc, ctx)
+				if w := validatePayload(msg); len(w) != 0 {
+					t.Errorf("%s %s message fails validatePayload %v: %q", chain, outcome, w, msg)
+				}
+				if !strings.Contains(msg, "[truncated ") {
+					t.Errorf("%s %s message truncated the command invisibly: %q", chain, outcome, msg)
+				}
+			}
+		}
+	}
+	for _, chain := range []string{"run", "watch", "serve"} {
+		if !reached[chain] {
+			t.Errorf("no %s chain message interpolates ${command} — the audit missed it", chain)
+		}
+	}
+}
+
+// TestAnalystNoticeBounded pins the analyst's copy of a chain outcome to the
+// same bound as the chain message: it was built from the raw command, so a
+// failing heredoc reached analyze multi-line (MUX-177).
+func TestAnalystNoticeBounded(t *testing.T) {
+	heredoc := "cat <<'EOF' > /tmp/x.sh\n" + strings.Repeat("echo some scratch investigation line\n", 40) + "EOF"
+	for _, outcome := range []string{"success", "failure", "unknown"} {
+		msg := analystNotice("run", outcome, "3", heredoc)
+		if w := validatePayload(msg); len(w) != 0 {
+			t.Errorf("%s analyst notice fails validatePayload %v: %q", outcome, w, msg)
+		}
+		if !strings.Contains(msg, "[truncated ") {
+			t.Errorf("%s analyst notice truncated the command invisibly: %q", outcome, msg)
+		}
+	}
+
+	for _, tc := range []struct{ outcome, want string }{
+		{"success", "Run succeeded: bash scripts/x.sh"},
+		{"failure", "Run FAILED (exit 3): bash scripts/x.sh"},
+		{"unknown", "Run completed (exit code unknown): bash scripts/x.sh"},
+		{"skipped", ""},
+	} {
+		if got := analystNotice("run", tc.outcome, "3", "bash scripts/x.sh"); got != tc.want {
+			t.Errorf("analystNotice(%s) = %q, want %q", tc.outcome, got, tc.want)
+		}
+	}
+}
+
 func TestValidatePayload_Clean(t *testing.T) {
 	warnings := validatePayload("Build succeeded: all tests pass")
 	if len(warnings) != 0 {

@@ -153,16 +153,7 @@ func Chain(args []string) {
 
 	// Notify analyst if configured (outcome-conditional) — skip when chain action already targets analyze
 	if bus.ChainShouldNotifyAnalyst(eventType, outcome) && action.SendTo != "analyze" {
-		var analystMsg string
-		switch outcome {
-		case "success":
-			analystMsg = fmt.Sprintf("%s succeeded: %s", capitalize(eventType), command)
-		case "failure":
-			analystMsg = fmt.Sprintf("%s FAILED (exit %s): %s", capitalize(eventType), exitCode, command)
-		case "unknown":
-			analystMsg = fmt.Sprintf("%s completed (exit code unknown): %s", capitalize(eventType), command)
-		}
-		if analystMsg != "" {
+		if analystMsg := analystNotice(eventType, outcome, exitCode, command); analystMsg != "" {
 			aMsg := bus.NewMessage(from, "analyze", "event", "notify", analystMsg, "")
 			if err := bus.SendNoCC(session, aMsg); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: analyst notification failed: %v\n", err)
@@ -181,6 +172,25 @@ func Chain(args []string) {
 			fmt.Printf("Notified %d subscriber(s)\n", fired)
 		}
 	}
+}
+
+// analystNotice is the analyst's copy of a chain outcome, or "" for an outcome
+// it is not told about. It is expanded through bus.ExpandMessage so the
+// command is bounded like every chain message's — before MUX-177 the raw
+// command went into it, so a failing heredoc reached analyze multi-line.
+func analystNotice(eventType, outcome, exitCode, command string) string {
+	var template string
+	switch outcome {
+	case "success":
+		template = capitalize(eventType) + " succeeded: ${command}"
+	case "failure":
+		template = capitalize(eventType) + " FAILED (exit ${exit_code}): ${command}"
+	case "unknown":
+		template = capitalize(eventType) + " completed (exit code unknown): ${command}"
+	default:
+		return ""
+	}
+	return bus.ExpandMessage(template, exitCode, command)
 }
 
 // capitalize returns the string with the first letter uppercased.
