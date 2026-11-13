@@ -104,10 +104,13 @@ func TmuxKillSession(session string) error {
 
 // TmuxNewSession creates a new detached tmux session.
 // width/height of 0 means no size constraint.
-func TmuxNewSession(session, firstWindow, dir string, width, height int) error {
+func TmuxNewSession(session, firstWindow, dir string, width, height int, env ...string) error {
 	args := []string{"new-session", "-d", "-s", session, "-n", firstWindow, "-c", dir}
 	if width > 0 && height > 0 {
 		args = append(args, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height))
+	}
+	for _, kv := range env {
+		args = append(args, "-e", kv)
 	}
 	return TmuxRun(args...)
 }

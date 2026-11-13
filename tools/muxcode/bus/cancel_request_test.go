@@ -80,6 +80,65 @@ func TestDelegatedCancelRefusedOutsideSealedAuthority(t *testing.T) {
 	}
 }
 
+// A claim left by a daemon that died mid-request is processed on the next tick,
+// and a request filed meanwhile is never deleted unread: it stays until the
+// leftover is done, then is claimed and honoured on the tick after.
+func TestDelegatedCancelResumesLeftoverClaimAndKeepsNewerRequest(t *testing.T) {
+	unsealGateAuthority(t)
+	pinGateAuthorityConfig(t, "user,edit")
+	SealGateAuthority()
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+	dir := GraphRunDir(runTestSession, run.ID)
+	claimed := filepath.Join(dir, cancelRequestClaimedFile)
+
+	// Crash leftover: a genuine request already renamed to its claim.
+	if err := fileCancelRequest(runTestSession, run.ID, "edit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(cancelRequestPath(run.ID), claimed); err != nil {
+		t.Fatal(err)
+	}
+	ProcessCancelRequests(runTestSession)
+	if st := runState(t, run.ID); st != GraphRunCanceled {
+		t.Errorf("a leftover claim was never processed: run %q", st)
+	}
+	if _, err := os.Stat(claimed); !os.IsNotExist(err) {
+		t.Error("a finished claim was left behind")
+	}
+}
+
+func TestDelegatedCancelNewerRequestSurvivesLeftoverClaim(t *testing.T) {
+	unsealGateAuthority(t)
+	pinGateAuthorityConfig(t, "user,edit")
+	SealGateAuthority()
+	pinActor(t, "")
+	run := createTestRun(t, linearGraph())
+	claimed := filepath.Join(GraphRunDir(runTestSession, run.ID), cancelRequestClaimedFile)
+
+	// A forged leftover (no audit row) is refused; the genuine request filed
+	// after it must not be consumed by that tick.
+	// A second earlier than the genuine request, so its audit identity is its
+	// own: it must not borrow the genuine row and be honoured.
+	if err := atomicWriteJSON(claimed, cancelRequest{Actor: "edit", RequestedAt: time.Now().Unix() - 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fileCancelRequest(runTestSession, run.ID, "edit"); err != nil {
+		t.Fatal(err)
+	}
+	ProcessCancelRequests(runTestSession)
+	if st := runState(t, run.ID); st != GraphRunRunning {
+		t.Fatalf("the forged leftover was honoured: run %q", st)
+	}
+	if _, err := os.Stat(cancelRequestPath(run.ID)); err != nil {
+		t.Fatalf("the newer request was deleted unread: %v", err)
+	}
+	ProcessCancelRequests(runTestSession)
+	if st := runState(t, run.ID); st != GraphRunCanceled {
+		t.Errorf("the newer request was never honoured: run %q", st)
+	}
+}
+
 // A request file written without the CLI's audit row is forged, whatever role
 // it names — even one the seal grants — and is consumed and refused. This is
 // the bypass the 2026-11-13 review found: the actor field alone is a claim.

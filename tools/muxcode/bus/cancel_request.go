@@ -95,9 +95,18 @@ func cancelRequestHasAudit(session, runID string, req cancelRequest) bool {
 	return false
 }
 
-// ProcessCancelRequests performs or refuses every filed delegated cancel. Each
-// request is consumed before it is judged, so a refusal is never retried.
-// Called from the daemon's graph tick; a no-op outside a sealed process.
+// cancelRequestClaimedFile is the name a request is renamed to while the daemon
+// works on it.
+const cancelRequestClaimedFile = cancelRequestFile + ".claimed"
+
+// ProcessCancelRequests performs or refuses every filed delegated cancel. A
+// request is claimed by an atomic rename before it is read, so a request
+// replaced meanwhile is a new file the next tick claims, never one deleted
+// unread. A refusal consumes the claim, so it is never retried; a cancel that
+// errors keeps it, and a claim left by a crashed daemon is processed first on
+// the next tick — both bounded by cancelRequestMaxAge, past which the audit
+// check refuses and consumes it. Called from the daemon's graph tick; a no-op
+// outside a sealed process.
 func ProcessCancelRequests(session string) {
 	entries, err := os.ReadDir(GraphRunsDir(session))
 	if err != nil {
@@ -108,29 +117,45 @@ func ProcessCancelRequests(session string) {
 			continue
 		}
 		runID := e.Name()
-		path := filepath.Join(GraphRunsDir(session), runID, cancelRequestFile)
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
+		dir := filepath.Join(GraphRunsDir(session), runID)
+		claimed := filepath.Join(dir, cancelRequestClaimedFile)
+		if _, err := os.Lstat(claimed); err != nil {
+			if os.Rename(filepath.Join(dir, cancelRequestFile), claimed) != nil {
+				continue
+			}
 		}
-		os.Remove(path)
-		var req cancelRequest
-		if err := json.Unmarshal(data, &req); err != nil {
-			LogLifecycle(session, "warn", graphSender, "graph-cancel-refused", fmt.Sprintf("Graph run %s: unreadable delegated cancel request: %v", runID, err))
-			continue
-		}
-		if !sealedCancelGrant(req.Actor) {
-			LogLifecycle(session, "warn", graphSender, "graph-cancel-refused",
-				fmt.Sprintf("Graph run %s: delegated cancel by %q refused — not in the daemon's sealed gate authority", runID, req.Actor))
-			continue
-		}
-		if !cancelRequestHasAudit(session, runID, req) {
-			LogLifecycle(session, "warn", graphSender, "graph-cancel-refused",
-				fmt.Sprintf("Graph run %s: delegated cancel by %q refused — no matching graph-cancel-delegated audit row, or the request is stale", runID, req.Actor))
-			continue
-		}
-		if err := cancelGraphRun(session, runID, req.Actor, true); err != nil {
-			LogLifecycle(session, "error", graphSender, "graph-cancel-delegated-failed", fmt.Sprintf("Graph run %s: %v", runID, err))
-		}
+		processClaimedCancel(session, runID, claimed)
 	}
+}
+
+// processClaimedCancel judges one claimed request and removes the claim unless
+// the cancel itself failed.
+func processClaimedCancel(session, runID, claimed string) {
+	data, err := os.ReadFile(claimed)
+	if err != nil {
+		return
+	}
+	var req cancelRequest
+	if err := json.Unmarshal(data, &req); err != nil {
+		LogLifecycle(session, "warn", graphSender, "graph-cancel-refused", fmt.Sprintf("Graph run %s: unreadable delegated cancel request: %v", runID, err))
+		os.Remove(claimed)
+		return
+	}
+	if !sealedCancelGrant(req.Actor) {
+		LogLifecycle(session, "warn", graphSender, "graph-cancel-refused",
+			fmt.Sprintf("Graph run %s: delegated cancel by %q refused — not in the daemon's sealed gate authority", runID, req.Actor))
+		os.Remove(claimed)
+		return
+	}
+	if !cancelRequestHasAudit(session, runID, req) {
+		LogLifecycle(session, "warn", graphSender, "graph-cancel-refused",
+			fmt.Sprintf("Graph run %s: delegated cancel by %q refused — no matching graph-cancel-delegated audit row, or the request is stale", runID, req.Actor))
+		os.Remove(claimed)
+		return
+	}
+	if err := cancelGraphRun(session, runID, req.Actor, true); err != nil {
+		LogLifecycle(session, "error", graphSender, "graph-cancel-delegated-failed", fmt.Sprintf("Graph run %s: %v (kept for retry)", runID, err))
+		return
+	}
+	os.Remove(claimed)
 }
