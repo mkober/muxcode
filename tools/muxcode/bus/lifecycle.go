@@ -295,7 +295,7 @@ func splitLifecycleLines(data []byte) [][]byte {
 // (`MUXCODE_LIFECYCLE_LOG_MAX=1 muxcode …`) invalidated every outstanding
 // approval and erased the record of it happening, in one move. Preserving these
 // rows is what keeps the audit horizon out of a caller's hands (MUX-144).
-var lifecycleAuditEvents = map[string]bool{"graph-gate-approved": true}
+var lifecycleAuditEvents = map[string]bool{"graph-gate-approved": true, "graph-cancel-delegated": true}
 
 // rotateLifecycleLog truncates the log file to keep the last maxEntries lines,
 // plus every older audit row. Audit rows cannot be capped by count: an older

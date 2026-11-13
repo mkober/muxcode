@@ -1,12 +1,15 @@
 package bus
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -134,6 +137,55 @@ func migrateBusDirAt(session, oldDir, base string) (BusDirMigration, error) {
 	return BusDirMigrated, nil
 }
 
+// rewriteProcLogPaths repoints the LogFile of every proc.jsonl entry under
+// from to to, in the proc.jsonl inside dir. Entries store absolute paths, so
+// after the move they would name a directory that no longer exists and
+// ProcLogTail and the exit-code scan would read nothing. moveDir calls it
+// before the destination is published, so no other process can read or update
+// the registry mid-rewrite; the write is a temp file renamed over the original,
+// never a truncation in place. It reads and writes the file directly: BusDir
+// would re-enter the migration it is called from.
+func rewriteProcLogPaths(dir, from, to string) error {
+	path := filepath.Join(dir, "proc.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	prefix := from + string(filepath.Separator)
+	var out bytes.Buffer
+	changed := false
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var e ProcEntry
+		if json.Unmarshal(line, &e) == nil && strings.HasPrefix(e.LogFile, prefix) {
+			e.LogFile = filepath.Join(to, strings.TrimPrefix(e.LogFile, prefix))
+			if b, err := json.Marshal(e); err == nil {
+				line, changed = b, true
+			}
+		}
+		out.Write(line)
+		out.WriteByte('\n')
+	}
+	if !changed {
+		return nil
+	}
+	tmp := fmt.Sprintf("%s.migrating-%d", path, os.Getpid())
+	if err := os.WriteFile(tmp, out.Bytes(), 0o644); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // ReportLegacyBusDirConflict migrates session and logs a bus-dir-conflict row
 // when a /tmp directory is left beside the one in use. Session launch and
 // daemon start call it, once per session unlike BusDir, and must stop on its
@@ -157,8 +209,21 @@ func ReportLegacyBusDirConflict(session string) error {
 // removed only after dst is published; a leftover from that removal is logged
 // and left, since the move itself succeeded.
 func moveDir(session, src, dst string) error {
+	repointFailed := func(dir, from, to string, err error) {
+		LogLifecycle(session, "warn", "bus", "bus-dir-migrate-proc-paths-failed",
+			fmt.Sprintf("Could not repoint proc.jsonl log paths in %s: %v", dir, err))
+	}
+	if err := rewriteProcLogPaths(src, src, dst); err != nil {
+		repointFailed(src, src, dst, err)
+	}
 	err := renameDir(src, dst)
-	if err == nil || !errors.Is(err, syscall.EXDEV) {
+	if err == nil {
+		return nil
+	}
+	if rerr := rewriteProcLogPaths(src, dst, src); rerr != nil {
+		repointFailed(src, dst, src, rerr)
+	}
+	if !errors.Is(err, syscall.EXDEV) {
 		return err
 	}
 	staging := filepath.Join(filepath.Dir(dst), fmt.Sprintf(".%s.migrating-%d", filepath.Base(dst), os.Getpid()))
@@ -166,6 +231,9 @@ func moveDir(session, src, dst string) error {
 	if err := copyTree(src, staging); err != nil {
 		os.RemoveAll(staging)
 		return err
+	}
+	if err := rewriteProcLogPaths(staging, src, dst); err != nil {
+		repointFailed(staging, src, dst, err)
 	}
 	if err := os.Rename(staging, dst); err != nil {
 		os.RemoveAll(staging)

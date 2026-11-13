@@ -52,7 +52,10 @@ func Graph(args []string) {
 			fmt.Fprintln(os.Stderr, "Usage: muxcode graph cancel <run-id>")
 			os.Exit(1)
 		}
-		if err := bus.CancelGraphRun(bus.BusSession(), args[1]); err != nil {
+		if err := bus.CancelGraphRun(bus.BusSession(), args[1]); errors.Is(err, bus.ErrCancelDelegated) {
+			fmt.Printf("Cancel requested: %v\n", err)
+			return
+		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}

@@ -241,6 +241,29 @@ const BusDirBaseEnv = "MUXCODE_BUS_BASE"
 // creates, beside BUS_SESSION, so scripts read it instead of computing it.
 const BusDirEnv = "MUXCODE_BUS_DIR"
 
+// busBaseEnvPairs returns the environment variables, set to an absolute value
+// in this process, that BusDir resolves from. BusDirEnv alone does not carry
+// them: muxcode recomputes the directory from these, so a process started later
+// in tmux without them resolves a different bus.
+func busBaseEnvPairs() [][2]string {
+	var pairs [][2]string
+	for _, key := range []string{BusDirBaseEnv, "XDG_STATE_HOME"} {
+		if v := os.Getenv(key); filepath.IsAbs(v) {
+			pairs = append(pairs, [2]string{key, v})
+		}
+	}
+	return pairs
+}
+
+// ExportBusBaseEnv copies the bus-base inputs of this process into the tmux
+// session environment beside BusDirEnv, so panes created later resolve the
+// same bus directory as the process that launched the session.
+func ExportBusBaseEnv(session string) {
+	for _, p := range busBaseEnvPairs() {
+		_ = TmuxSetEnv(session, p[0], p[1])
+	}
+}
+
 // LegacyBusDirBase is where bus directories lived before MUX-208. macOS's
 // tmp_cleaner deletes files there untouched for three days, which is why the
 // default moved; it is read only to migrate and to clean up.

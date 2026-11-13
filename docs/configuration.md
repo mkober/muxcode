@@ -529,6 +529,12 @@ afterwards goes — a graph run parked on a `wait_human` gate lost its `graph.js
 `scripts/muxcode-daemon-monitor.sh` reads `$MUXCODE_BUS_DIR`, else `muxcode bus-dir`, and exits 1
 rather than fall back to `/tmp`.
 
+`MUXCODE_BUS_DIR` alone does not make a later process agree: muxcode recomputes the directory from
+its inputs. So the launcher and the daemon also copy `MUXCODE_BUS_BASE` and `XDG_STATE_HOME` into
+the tmux session environment, each only when set to an absolute path in the launching process
+(`ExportBusBaseEnv`, `bus/config.go`). A pane created later then resolves the same bus directory as
+the process that launched the session.
+
 **Migration from `/tmp`.** A session whose state is still in `/tmp/muxcode-bus-{session}` is moved,
 not abandoned (`MigrateLegacyBusDir`, `bus/busdir_migrate.go`):
 

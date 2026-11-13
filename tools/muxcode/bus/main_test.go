@@ -21,7 +21,13 @@ import (
 // XDG_STATE_HOME is redirected so a test that resolves a bus directory without
 // SetBusDirBase lands in this temp root, never the real ~/.local/state/muxcode
 // (MUX-208) — the same leak MUX-137 found against /tmp.
+//
+// The gate authority reads fixed paths (the cwd's .muxcode/config and the real
+// home config), so it is pinned to none: a user's own
+// MUXCODE_GATE_AUTHORITY_ROLES grant would otherwise flip every test that
+// expects an agent refused. Tests needing a value use pinGateAuthorityConfig.
 func TestMain(m *testing.M) {
+	gateAuthorityConfigPaths = func() []string { return nil }
 	dir, err := os.MkdirTemp("", "muxcode-lifecycle-test-")
 	if err != nil {
 		panic(err)

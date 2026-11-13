@@ -85,6 +85,15 @@ func (e *CancelIncompleteError) Error() string {
 // the mutation: it depends on state, and a canceled run read before the
 // lock may be running again by a RetryGraphRun before the cancel acts.
 func CancelGraphRun(session, runID string) error {
+	return cancelGraphRun(session, runID, BusActorVerified(), false)
+}
+
+// cancelGraphRun is CancelGraphRun for a known actor. sealedGrant is set only
+// by ProcessCancelRequests, after the daemon's sealed gate authority approved a
+// delegated cancel; it lifts CheckCancelAuthority's refusal and nothing else.
+// Without it, a refused actor the gate authority names files a delegated
+// request (ErrCancelDelegated) instead of cancelling — see cancel_request.go.
+func cancelGraphRun(session, runID, actor string, sealedGrant bool) error {
 	unlock, err := lockExistingGraphRun(session, runID, "canceled")
 	if err != nil {
 		return err
@@ -95,8 +104,13 @@ func CancelGraphRun(session, runID string) error {
 	if err != nil {
 		return fmt.Errorf("unknown run: %w", err)
 	}
-	actor := BusActorVerified()
-	if deny := CheckCancelAuthority(actor, run); deny != "" {
+	if deny := CheckCancelAuthority(actor, run); deny != "" && !sealedGrant {
+		if delegableCancelActor(actor) {
+			if err := fileCancelRequest(session, runID, actor); err != nil {
+				return fmt.Errorf("%s (filing a delegated cancel failed: %v)", deny, err)
+			}
+			return fmt.Errorf("%w: run %s was launched by the user, so the daemon cancels it only if %s holds its sealed gate authority — check muxcode graph status", ErrCancelDelegated, runID, actor)
+		}
 		LogLifecycle(session, "warn", actor, "graph-cancel-refused", fmt.Sprintf("Graph run %s: %s", runID, deny))
 		return errors.New(deny)
 	}

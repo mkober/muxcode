@@ -31,12 +31,13 @@ without one are in [Ideas without specs](#ideas-without-specs); delivered specs 
 A spec keeps its Defects and category rows until it closes; on close it moves to the
 [registry](#completed-id-registry) and the defect ranks are renumbered.
 
-**Parked** (2026-09-08) — returning one to `drafts/` is the user's call.
+**Parked** (2026-09-08; MUX-185 2026-11-13) — returning one to `drafts/` is the user's call.
 
 | Spec | At | Issue |
 |------|----|-------|
 | MUX-145 | 9/38 | — |
 | MUX-153 | 3/19 | — |
+| MUX-185 | 0/40 | [#141](https://github.com/mkober/muxcode/issues/141) — five Phase 2 design decisions await the user |
 
 ### Defects — prioritized
 

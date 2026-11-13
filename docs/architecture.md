@@ -356,6 +356,32 @@ because two roads reach it — `muxcode graph approve` and the graph TUI. Releas
 are attributable: the marker records `approved_by` from `BusActorVerified`, and
 `graph-run-created` / `graph-gate-approved` / `graph-gate-approval-refused` name their actor.
 
+**Cancel authority, and the delegated cancel.** Stopping a run is guarded the same way
+([MUX-182](requirements/completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md),
+`CheckCancelAuthority`, `bus/cancel_authority.go`): an agent's `graph cancel`, or its `spawn stop`
+of a run's worker, is refused on a run the user launched or whose creator is unrecorded or unknown.
+Agent-launched runs stay freely cancellable, a run already `canceling` may be finished by anyone,
+and `graph-run-canceled` names the actor.
+
+| Who runs `graph cancel` on a user-launched run | What happens |
+|---|---|
+| The user | Cancelled in-process |
+| An agent the gate authority names | Not cancelled in-process. The CLI files `graphs/<run>/cancel-request.json` (`graph-cancel-delegated`), prints `Cancel requested: …` and exits 0 (`ErrCancelDelegated`) — the cancel has not happened yet and may still be refused |
+| Any other agent | Refused, `graph-cancel-refused`, exit 1 |
+
+The gate authority is deliberately **not** a grant inside `CheckCancelAuthority`. That check runs in
+the CLI, where the list is read unsealed from caller-controlled paths (the working directory's
+`.muxcode/config`, `$HOME`), so honouring it there would let any agent grant itself the authority.
+The decision is the daemon's: `ProcessCancelRequests` (`bus/cancel_request.go`), called at the top
+of every graph tick ahead of `StepGraphRuns`, consumes each request **before** judging it — a
+refusal is never retried — and cancels as the requesting agent only if its **sealed** list names
+that agent (`sealedCancelGrant`; a no-op in any process whose authority is not sealed). A request
+naming the user, the daemon or an unidentified actor is never honoured: the user cancels directly,
+and `daemon` normalizes to `edit`, the shape Phase 4 closed on the commit backstop below. A refused
+or unreadable request logs `graph-cancel-refused`; a granted one that then fails logs
+`graph-cancel-delegated-failed`. Added 2026-11-13 for remote control, where the user has no shell to
+cancel from. `spawn stop` of a user run's worker has no delegated road and stays user-only.
+
 Two qualifications were open in
 [MUX-144](requirements/completed/MUX-144-wait-human-gate-openable-by-any-agent.md); the second closed
 2026-09-13. The
@@ -579,6 +605,18 @@ the failure the derivation exists to prevent. The fire-time form exists for a ru
 changes under it — a creation-time count would bound every later spec by the first one's length. In
 the graph TUI an edge still carrying a derived cap is badged `↺ ×phases` or `↺ ×defects` (`↺ k×phases`
 once fired) in place of a number (`loopAnnotation`, `tui/graph.go`).
+
+**A loop edge can also erase reports: `clears_outputs`.** A node's recorded output survives until
+that node runs again. A loop that re-enters upstream of a node it may not run on the next pass would
+therefore hand the previous pass's `${output:<id>}` to the next — in `55-defect-backlog-loop`, one
+defect's acceptance-worker report (`criteria`, which runs only when a close-out is refused) carried
+into the next defect's `update-spec`. An edge's `clears_outputs` lists node ids whose report is
+erased when the edge fires (`Edge.ClearsOutputs`, `bus/graph.go`; `clearEdgeOutputs`,
+`bus/graph_exec.go`, called beside `resetLoopBudgets`), so `${output:<id>}` reads as "no report
+recorded" until the node runs again. Only the named nodes are touched. An id that names no node is a
+validation error, not a silent no-op that would leave the stale report in place; a clear that fails
+at run time logs `graph-output-clear-failed` and the edge still fires. `merge → select` clears
+`criteria`.
 
 **The defect loop: one gate per defect.** `55-defect-backlog-loop` wraps the phase loop in an outer
 loop over the backlog's prioritized defects, `merge → select`, capped by
@@ -860,7 +898,7 @@ row out of the lifecycle log.
 | Consumer | Reads |
 |----------|-------|
 | Go code | `bus.BusDir(session)` |
-| Panes, hooks, the daemon | `MUXCODE_BUS_DIR` (`bus.BusDirEnv`), exported by `LaunchSession` (process env and `tmux set-environment`), the control pane (`-e`), the daemon on start (process env **and** tmux session env, so `upgrade-daemons` re-exports it into a session launched before the install) and every `muxcode agent launch` (always overwritten) |
+| Panes, hooks, the daemon | `MUXCODE_BUS_DIR` (`bus.BusDirEnv`), exported by `LaunchSession` (process env and `tmux set-environment`), the control pane (`-e`), the daemon on start (process env **and** tmux session env, so `upgrade-daemons` re-exports it into a session launched before the install) and every `muxcode agent launch` (always overwritten). The launcher and the daemon also copy the inputs `BusDir` resolves from — `MUXCODE_BUS_BASE` and `XDG_STATE_HOME`, each only when absolute in that process — into the tmux session env (`ExportBusBaseEnv`), because muxcode recomputes the directory from them: a pane created later without them would resolve a different bus |
 | Anything not launched by muxcode | `muxcode bus-dir [session]` — session defaults to `$BUS_SESSION`, exit 2 with neither |
 | Agent definitions | `${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}` |
 | Integration scripts | `scripts/lib/muxcode-bus-dir.sh` (`muxcode_bus_dir <bin> <session>`; refuses a non-absolute answer) |

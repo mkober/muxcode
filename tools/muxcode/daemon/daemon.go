@@ -341,6 +341,7 @@ func (d *Daemon) Run() error {
 	os.Setenv(bus.BusDirEnv, busDir)
 	// A session launched before MUX-208 lacks it; fails harmlessly before the launcher creates the session.
 	_ = bus.TmuxSetEnv(d.session, bus.BusDirEnv, busDir)
+	bus.ExportBusBaseEnv(d.session)
 
 	// Set BUS_SESSION so downstream code (ResolveProviderCLI → BusSession())
 	// resolves the correct session. Without this, BusSession() falls through
@@ -3403,6 +3404,7 @@ func (d *Daemon) sealGateAuthority() {
 // per-run store under BusDir()/graphs — the first tick after a daemon
 // restart IS the resume scan, no separate recovery path needed.
 func (d *Daemon) checkGraphRuns() {
+	bus.ProcessCancelRequests(d.session)
 	bus.StepGraphRuns(d.session)
 }
 

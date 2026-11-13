@@ -37,6 +37,34 @@ func TestResolveBusDir(t *testing.T) {
 	}
 }
 
+// TestResolveBusDirUnresolvableHomePanics: with no HOME (or a relative one) and
+// nothing else naming the bus, resolution must fail rather than return a
+// relative path under the working directory. A set XDG_STATE_HOME is the
+// negative control: it needs no home.
+func TestResolveBusDirUnresolvableHomePanics(t *testing.T) {
+	t.Setenv("MUXCODE_BUS_DIR", "")
+	t.Setenv("MUXCODE_BUS_BASE", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	for _, home := range []string{"", "relative/home"} {
+		t.Setenv("HOME", home)
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("HOME=%q: resolveBusDir returned instead of panicking", home)
+				}
+			}()
+			resolveBusDir("s")
+		}()
+	}
+
+	xdg := t.TempDir()
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_STATE_HOME", xdg)
+	if got, want := resolveBusDir("s"), filepath.Join(xdg, "muxcode", "bus", "muxcode-bus-s"); got != want {
+		t.Errorf("absolute XDG_STATE_HOME without HOME: %q, want %q", got, want)
+	}
+}
+
 // TestNoThink pins the MUX-109 latency lever end to end at the unit
 // level: env opt-in reaches the config, the request marshals an explicit
 // think:false (never omitted, never true), and the system prompt carries

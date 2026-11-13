@@ -276,6 +276,7 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	}
 	TmuxSetEnv(session, "BUS_SESSION", session)
 	TmuxSetEnv(session, BusDirEnv, BusDir(session))
+	ExportBusBaseEnv(session)
 	TmuxSetEnv(session, "MUXCODE", "1")
 
 	LogLifecycle(session, "info", "launcher", "session-create",

@@ -174,7 +174,7 @@ var builtinGraphJSON = map[string]string{
     {"from": "pr-review", "to": "pr-fix", "outcome": "failure"},
     {"from": "pr-push", "to": "pr-reply"},
     {"from": "pr-reply", "to": "ci-watch", "max_iterations": 3},
-    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->implement", "close-spec->criteria", "ship-stuck-gate->ship", "pr-fix->pr-build", "pr-reply->ci-watch"]}
+    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->implement", "close-spec->criteria", "ship-stuck-gate->ship", "pr-fix->pr-build", "pr-reply->ci-watch"], "clears_outputs": ["criteria"]}
   ]
 }`,
 

@@ -98,6 +98,12 @@ var knownNodeGuards = map[string]bool{
 // gets the full fix budget rather than sharing one across the run (MUX-193).
 // Validation keeps every reset bounded: the resetting edge must itself be
 // capped, and may name neither itself nor an edge that resets others.
+//
+// ClearsOutputs names nodes whose recorded report is erased when this edge
+// fires. A node's output survives until the node runs again, so a loop that
+// re-enters upstream of a node it may not run again would hand the previous
+// pass's ${output:<id>} to the next: 55-defect-backlog-loop's acceptance
+// worker report, carried from one defect into the next defect's verify-spec.
 type Edge struct {
 	From                        string   `json:"from"`
 	To                          string   `json:"to"`
@@ -107,6 +113,7 @@ type Edge struct {
 	MaxIterationsFromBacklog    bool     `json:"max_iterations_from_backlog,omitempty"`
 	MaxIterationsFromActiveSpec bool     `json:"max_iterations_from_active_spec,omitempty"`
 	ResetsIterations            []string `json:"resets_iterations,omitempty"`
+	ClearsOutputs               []string `json:"clears_outputs,omitempty"`
 }
 
 // Capped reports whether the edge is a loop edge carrying an iteration bound:
@@ -469,6 +476,15 @@ func (g *Graph) validateEdges(byID map[string]*Node, v *GraphValidation) {
 // resetting edge in the reset edge's cycle would refill its budget forever,
 // as would an edge resetting itself or two edges resetting each other.
 func (g *Graph) validateResets(e Edge, v *GraphValidation) {
+	known := map[string]bool{}
+	for _, n := range g.Nodes {
+		known[n.ID] = true
+	}
+	for _, id := range e.ClearsOutputs {
+		if !known[id] {
+			v.errf("edge %s->%s clears the output of %q, which names no node", e.From, e.To, id)
+		}
+	}
 	if len(e.ResetsIterations) == 0 {
 		return
 	}
