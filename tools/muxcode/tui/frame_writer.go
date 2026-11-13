@@ -22,15 +22,24 @@ import (
 // The first frame, a change in row count and a resize (SIGWINCH) repaint the
 // whole frame instead: tmux reflows a resized pane's rows, so the last frame
 // no longer describes the screen.
+//
+// A changed row is addressed by its absolute screen row, so the pane must
+// never scroll: a repaint writes no newline after its last row, and a frame
+// taller than the pane is cut to the pane's height. Either scroll shifts every
+// later row write down a line — on 2026-11-13 the provider selector, measured
+// to fit its first view, grew one help row on entering Agents, its trailing
+// newline scrolled the popup, and each move left a stale cursor row behind.
 type frameWriter struct {
-	out   io.Writer
-	last  []string
-	drawn bool
-	winch chan os.Signal
+	out    io.Writer
+	last   []string
+	drawn  bool
+	winch  chan os.Signal
+	height func() int // pane rows, read on the first frame and each resize; nil never clips
+	rows   int
 }
 
 func newFrameWriter() *frameWriter {
-	w := &frameWriter{out: os.Stdout, winch: make(chan os.Signal, 1)}
+	w := &frameWriter{out: os.Stdout, winch: make(chan os.Signal, 1), height: termHeight}
 	signal.Notify(w.winch, syscall.SIGWINCH)
 	return w
 }
@@ -38,9 +47,16 @@ func newFrameWriter() *frameWriter {
 // draw prints frame from the top-left corner, rewriting only changed rows
 // once a frame has been drawn.
 func (w *frameWriter) draw(frame string) {
+	resized := w.resized()
+	if w.height != nil && (!w.drawn || resized) {
+		w.rows = w.height()
+	}
 	rows := strings.Split(strings.TrimSuffix(frame, "\n"), "\n")
-	if !w.drawn || w.resized() || len(rows) != len(w.last) {
-		fmt.Fprint(w.out, CursorHome+ClearFrame(frame)+ClearBelow)
+	if w.rows > 0 && len(rows) > w.rows {
+		rows = rows[:w.rows]
+	}
+	if !w.drawn || resized || len(rows) != len(w.last) {
+		fmt.Fprint(w.out, CursorHome+ClearFrame(strings.Join(rows, "\n"))+ClearBelow)
 		w.last, w.drawn = rows, true
 		return
 	}

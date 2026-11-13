@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -100,7 +101,7 @@ func TestFrameWriter_ResizeRepaintsWholeFrame(t *testing.T) {
 	w.winch <- syscall.SIGWINCH
 	w.draw("tabs\nage 3s\n")
 
-	if want := CursorHome + ClearFrame("tabs\nage 3s\n") + ClearBelow; buf.String() != want {
+	if want := CursorHome + ClearFrame("tabs\nage 3s") + ClearBelow; buf.String() != want {
 		t.Errorf("frame after resize = %q, want a full repaint %q", buf.String(), want)
 	}
 }
@@ -115,8 +116,69 @@ func TestFrameWriter_RowCountChangeRepaintsWholeFrame(t *testing.T) {
 	buf.Reset()
 	w.draw("tabs\n")
 
-	if want := CursorHome + ClearFrame("tabs\n") + ClearBelow; buf.String() != want {
+	if want := CursorHome + ClearFrame("tabs") + ClearBelow; buf.String() != want {
 		t.Errorf("shorter frame = %q, want a full repaint %q", buf.String(), want)
+	}
+}
+
+// The 2026-11-13 provider-selector duplicate rows: a repaint whose last row
+// ended in a newline scrolled a pane it exactly filled, so every later row
+// write landed a line low. A repaint must leave the cursor on its last row.
+func TestFrameWriter_RepaintWritesNoNewlineAfterLastRow(t *testing.T) {
+	var buf bytes.Buffer
+	w := &frameWriter{out: &buf, height: func() int { return 3 }}
+
+	w.draw("agents\n> plan\n  edit\n")
+
+	if got := strings.Count(buf.String(), "\n"); got != 2 {
+		t.Errorf("3-row repaint wrote %d newlines, want 2: %q", got, buf.String())
+	}
+}
+
+// A frame taller than the pane is cut to the pane, and a change in a row past
+// it writes nothing, since that row is not on screen.
+func TestFrameWriter_ClipsFrameTallerThanPane(t *testing.T) {
+	var buf bytes.Buffer
+	w := &frameWriter{out: &buf, height: func() int { return 2 }}
+
+	w.draw("a\nb\nc 1\n")
+	if want := CursorHome + ClearFrame("a\nb") + ClearBelow; buf.String() != want {
+		t.Errorf("tall frame = %q, want %q", buf.String(), want)
+	}
+	buf.Reset()
+	w.draw("a\nb\nc 2\n")
+	if buf.Len() != 0 {
+		t.Errorf("change below the pane wrote %q", buf.String())
+	}
+}
+
+// Negative control: a frame exactly the pane's height keeps every row.
+func TestFrameWriter_KeepsFrameThatFitsPane(t *testing.T) {
+	var buf bytes.Buffer
+	w := &frameWriter{out: &buf, height: func() int { return 3 }}
+
+	w.draw("a\nb\nc\n")
+
+	if want := CursorHome + ClearFrame("a\nb\nc") + ClearBelow; buf.String() != want {
+		t.Errorf("fitting frame = %q, want %q", buf.String(), want)
+	}
+}
+
+// A resize re-reads the pane height: a pane grown past the frame shows the
+// rows the smaller pane clipped.
+func TestFrameWriter_ResizeRereadsPaneHeight(t *testing.T) {
+	var buf bytes.Buffer
+	height := 1
+	w := &frameWriter{out: &buf, winch: make(chan os.Signal, 1), height: func() int { return height }}
+
+	w.draw("a\nb\n")
+	buf.Reset()
+	height = 2
+	w.winch <- syscall.SIGWINCH
+	w.draw("a\nb\n")
+
+	if want := CursorHome + ClearFrame("a\nb") + ClearBelow; buf.String() != want {
+		t.Errorf("frame after growing the pane = %q, want %q", buf.String(), want)
 	}
 }
 
