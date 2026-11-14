@@ -404,6 +404,23 @@ inject the wake-up, confirm the text actually left the composer (re-sending Ente
 parked), and only then consume the inbox and write a `delivered` receipt. A dropped Enter no
 longer loses the message — the inbox is left intact for the next cycle.
 
+**One reply command per request (MUX-189)**: a typed wake-up batch tells the agent how to answer
+every request it holds, not only the last (`withReplyInstructions`, `bus/provider.go`):
+
+| Batch on OpenCode or scrape-road Codex | Reply instruction |
+|----------------------------------------|-------------------|
+| One request | As before — one `muxcode send <target> response … --reply-to <id>` command, stated before and after the payload |
+| Several requests | "This message holds N requests", then a numbered list — `[1] muxcode send <target> … --reply-to <id> [2] …` — one command per request, each to that request's own `ReplyTarget`, before and after the payload |
+| Events and responses | None — nothing is owed for them |
+
+The agent runs each listed command **as written**, keeping its target and its `--reply-to` id — the
+target is the request's reply role when it names one, which is not always who sent it (a test-chain
+review request comes from test and is answered to edit). The agent definitions say the same thing
+("reply to each request id listed"), so the instruction and the payload agree. Before this, the payload named only the last request's id: an agent handed
+requests A and B answered B, and A's task ran out its 600 s `task-timeout` with the answer on
+screen. Claude's listener and the Codex hook road were never affected — each message there already
+carries its own `To reply` line.
+
 **Injection guard (MUX-164)**: every typed injection — the Codex scrape and hook roads, OpenCode,
 and Claude's `SendWakeUpWithText` (the `deliver --force` road) — captures the pane first
 (`captureInjectionTarget`, `bus/provider.go`: the visible pane plus 8 history lines). A pane whose

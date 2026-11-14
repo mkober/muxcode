@@ -876,8 +876,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom, lastRequestID, lastRequestTarget string
-	hasRequest := false
+	var requests []Message
 	for _, msg := range batch {
 		// Skip messages from self — these are loop artifacts
 		if NormalizeBusRole(msg.From) == role {
@@ -888,12 +887,8 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 			text = fmt.Sprintf("[%s request from %s]", msg.Action, msg.From)
 		}
 		parts = append(parts, text)
-		if msg.From != "" {
-			lastFrom = msg.From
-		}
 		if msg.Type == "request" {
-			hasRequest = true
-			lastRequestID, lastRequestTarget = msg.ID, ReplyTarget(msg)
+			requests = append(requests, msg)
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -909,23 +904,9 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		parts = append(parts, notice)
 	}
 	prompt := CodexRoleIdentity(SpawnBaseRole(session, role)) + " — " + strings.Join(parts, " | ")
-
-	// Append reply instruction — Codex agents don't have hooks so they must
-	// be explicitly told to reply via the bus after completing the task.
-	// The reply belongs to the request's reply target, not whoever spoke last.
-	replyTarget := NormalizeBusRole(lastFrom)
-	if lastRequestTarget != "" {
-		replyTarget = lastRequestTarget
-	}
-	if replyTarget == "" || !IsKnownRole(replyTarget) {
-		replyTarget = "edit"
-	}
-	// Reply instruction twice for a request — small models lose a trailing one; an event-only batch gets none.
-	if hasRequest {
-		replyCmd := buildReplyCommand(replyTarget, lastRequestID)
-		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt
-		prompt += fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", replyCmd)
-		prompt += chainInstructionForRole(role)
+	// No hooks on this road: the agent must be told to reply; an event-only batch gets no instruction.
+	if len(requests) > 0 {
+		prompt = withReplyInstructions(prompt, requests) + chainInstructionForRole(role)
 	}
 
 	// Send text first — do NOT consume inbox until both send-keys succeed.
@@ -1203,10 +1184,13 @@ func writeCodexAgentConfig(role string, hooks bool) error {
 	buf.WriteString("```bash\n")
 	buf.WriteString("muxcode send edit response \"<summary of what you found or did>\" --type response --reply-to <request id>\n")
 	buf.WriteString("```\n\n")
-	buf.WriteString("If a different agent (not edit) requested the task, reply to that agent instead. ")
+	buf.WriteString("Otherwise reply to the target the delivered reply command or \"To reply\" line names — usually the requesting agent, not always. ")
 	buf.WriteString("Always pass `--reply-to` with the id of the request you are answering — `muxcode inbox` ")
 	buf.WriteString("prints it. Without it the requester's `--wait` cannot match your reply to its request ")
-	buf.WriteString("and blocks for 90 seconds before giving up, even though you answered.\n\n")
+	buf.WriteString("and blocks for 90 seconds before giving up, even though you answered. ")
+	buf.WriteString("When one message carries several requests it lists one reply command per request: execute each ")
+	buf.WriteString("exactly as listed, keeping its target and its `--reply-to` id — the target is not always the sender — ")
+	buf.WriteString("or every request but the one you answered times out.\n\n")
 	buf.WriteString("**This is a bash command. You MUST run it using your shell/bash/terminal tool. ")
 	buf.WriteString("If you write it as text output instead of executing it, the message is silently lost ")
 	buf.WriteString("and the requester hangs forever waiting for your response. EXECUTE IT.**\n\n")

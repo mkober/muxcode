@@ -120,4 +120,16 @@ edit's observation from the run and is recorded as reported.
 
 ## Status
 
-**Backlog** — filed 2026-09-08. Not started.
+**Backlog — parked 2026-11-14** — filed 2026-09-08. Not started.
+
+Parked by plan at the `55-defect-backlog-loop` selection (run `1794626267`), under the standing rule that a spec holding an unrecorded design decision is not worked unattended. Since this was filed, [MUX-174](../completed/MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) changed `test.sh`:
+
+| This spec asks | Tree today |
+|----------------|-----------|
+| One summary line per module naming its verdict | Shipped — `=== Summary ===`, `passed` / `failed (go vet)` / `failed (go test)` / `never executed`, plus a counts line |
+| Non-zero exit when a module failed or did not run | Shipped |
+| `CLAUDE.md`'s row describes what the script runs | Shipped |
+| A failure in one module never prevents the others from running | **Not done, and decided the other way** — `test.sh` still stops at the first failure and names the rest `never executed`; `scripts/test-test-sh-coverage.sh` pins that |
+| Phase 1: pin "no line names the module that did not run" | No longer reproducible |
+
+What remains is one choice for the user: keep stop-and-name (then this spec closes as overtaken by MUX-174), or run every module regardless (then MUX-174's script and the `CLAUDE.md` row change with it). Nothing is ticked.

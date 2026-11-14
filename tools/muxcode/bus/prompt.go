@@ -121,7 +121,7 @@ func SharedPrompt(role string) string {
 		b.WriteString("- When prompted with \"You have new messages\", immediately run `muxcode inbox` and act on every message without asking\n")
 	}
 	b.WriteString("- After completing each task, run `muxcode inbox --peek` to check for new messages before going idle\n")
-	b.WriteString("- Reply to requests with `--type response --reply-to <id>`\n")
+	b.WriteString("- Reply to each request with `--type response --reply-to <its id>` — one reply per request id listed, even when several arrive together\n")
 	b.WriteString("- Save important learnings to memory after completing tasks\n")
 	b.WriteString("- Never wait for human input — process all requests autonomously\n\n")
 

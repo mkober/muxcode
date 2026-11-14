@@ -84,7 +84,7 @@ Two requests asked review for the same review: the chain's (`test → review`, f
 edit's tracked one. Review answered once, `--reply-to` the chain's id. The correlation half of this —
 one answer for two requests — belongs with
 [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) (a foreign in-flight task
-adopted) and [MUX-189](../backlog/MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) (one reply
+adopted) and [MUX-189](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) (one reply
 line per request), and this spec does **not** try to make the agent answer both. It makes a stale
 task unable to starve the role, which is the property that has to hold whatever the agent does.
 
@@ -101,7 +101,7 @@ and a `50-spec-to-pr` review node waits on the task timeout.
 over-applies (a working pane must not be re-driven; an idle one with a stale task is not working).
 [MUX-123](../backlog/MUX-123-stall-watchdog-selective-misses.md) — the watchdog that fires routinely and misses
 live stalls. [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md),
-[MUX-189](../backlog/MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — correlation.
+[MUX-189](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — correlation.
 [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — the opposite failure on the same road
 (a task closed that should not have been; here one held that should have closed).
 

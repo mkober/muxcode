@@ -201,7 +201,7 @@ loop is covered by unit tests only (Phase 2), not end to end.
 
 - [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) —
   the fix these comments were left on
-- [MUX-189](../backlog/MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — another reply
+- [MUX-189](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — another reply
   correlated to the wrong message
 - [MUX-201](../backlog/MUX-201-non-hook-prompt-and-generated-body-drift.md) — non-hook prompt text drifting
   from the hook road

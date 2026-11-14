@@ -168,8 +168,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom, lastRequestID, lastRequestTarget string
-	hasRequest := false
+	var requests []Message
 	for _, m := range batch {
 		// Skip messages from self — these are loop artifacts
 		if NormalizeBusRole(m.From) == role {
@@ -180,10 +179,8 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 		} else {
 			parts = append(parts, fmt.Sprintf("You have a new %s request from %s", m.Action, m.From))
 		}
-		lastFrom = m.From
 		if m.Type == "request" {
-			hasRequest = true
-			lastRequestID, lastRequestTarget = m.ID, ReplyTarget(m)
+			requests = append(requests, m)
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -199,20 +196,8 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 		parts = append(parts, notice)
 	}
 	prompt := strings.Join(parts, " | ALSO: ")
-	// The reply belongs to the request's reply target, not whoever spoke last.
-	replyTarget := NormalizeBusRole(lastFrom)
-	if lastRequestTarget != "" {
-		replyTarget = lastRequestTarget
-	}
-	if replyTarget == "" || !IsKnownRole(replyTarget) {
-		replyTarget = "edit"
-	}
-	// Reply instruction twice for a request — small models lose a trailing one; an event-only batch gets none.
-	if hasRequest {
-		replyCmd := buildReplyCommand(replyTarget, lastRequestID)
-		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt
-		prompt += fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", replyCmd)
-		prompt += chainInstructionForRole(role)
+	if len(requests) > 0 { // an event-only batch gets no reply instruction
+		prompt = withReplyInstructions(prompt, requests) + chainInstructionForRole(role)
 	}
 
 	// Send text first — do NOT consume inbox until both send-keys succeed.

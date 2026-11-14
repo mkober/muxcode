@@ -362,6 +362,34 @@ func buildReplyCommand(target, requestID string) string {
 	return cmd
 }
 
+// withReplyInstructions wraps a listenerless wake-up prompt in the reply
+// instruction for every request in its batch, each to its own ReplyTarget
+// (edit when that is no known role) with its own --reply-to, in delivery
+// order — stated before the payload and again after it, since small models
+// lose a trailing one. A batch of one renders as it always has. Before MUX-189
+// only the last request was named, so an earlier request's task never saw its
+// --reply-to and expired at task-timeout though the agent had answered it.
+func withReplyInstructions(prompt string, requests []Message) string {
+	cmds := make([]string, len(requests))
+	for i, m := range requests {
+		target := ReplyTarget(m)
+		if target == "" || !IsKnownRole(target) {
+			target = "edit"
+		}
+		cmds[i] = buildReplyCommand(target, m.ID)
+	}
+	if len(cmds) == 1 {
+		return fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", cmds[0]) +
+			prompt + fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", cmds[0])
+	}
+	var list strings.Builder
+	for i, c := range cmds {
+		fmt.Fprintf(&list, " [%d] %s", i+1, c)
+	}
+	return fmt.Sprintf("IMPORTANT: This message holds %d requests. After completing them, you MUST run one bash command per request, each naming its own request id:%s — ", len(cmds), list.String()) +
+		prompt + fmt.Sprintf(" — REMINDER: Your FINAL steps MUST be to EXECUTE (not print) every one of these %d replies:%s", len(cmds), list.String())
+}
+
 // buildChainInstruction generates a natural-language chain instruction for
 // a role by reading EventChains config. Returns "" if the role has no chain
 // responsibilities. The role is the event source (e.g. "build" owns the
