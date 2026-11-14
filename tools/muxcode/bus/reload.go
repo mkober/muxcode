@@ -425,22 +425,50 @@ func ReloadWindowForRole(role string) string {
 //
 // Note: stale reload markers (>60s) are cleaned up by the daemon in Phase 4.
 func ReloadAgent(session, role, cli, model string, compact bool) error {
-	// 1. Validate role exists
 	if !IsKnownRole(role) {
 		return fmt.Errorf("unknown role: %s", role)
 	}
 	if err := RoleWindowMissing(session, role); err != nil {
 		return err
 	}
-
-	// Capture old CLI for logging (before writing overrides)
-	oldCLI := ResolveProviderCLI(role)
-
-	// 2. Acquire reload marker
 	release, err := acquireReloadMarker(session, role)
 	if err != nil {
 		return err
 	}
+	return reloadHolding(session, role, cli, model, compact, release)
+}
+
+// ReserveReload takes role's reload marker now, for a caller that decides to
+// reload in one place and relaunches later, off its own goroutine. Holding it
+// from the decision closes the gap MUX-217 lost a graph dispatch in: the
+// executor holds a send to a role under a live marker (roleReloading), and the
+// marker used to appear only once the relaunch goroutine reached ReloadAgent —
+// after the same poll iteration had dispatched. Pass the release to
+// ReloadAgentReserved, or call it to abandon the reload.
+func ReserveReload(session, role string) (release func(), err error) {
+	return acquireReloadMarker(session, role)
+}
+
+// ReloadAgentReserved is ReloadAgent with no CLI or model change, run under a
+// marker the caller already holds (ReserveReload). It releases the marker on
+// every return.
+func ReloadAgentReserved(session, role string, release func()) error {
+	if !IsKnownRole(role) {
+		release()
+		return fmt.Errorf("unknown role: %s", role)
+	}
+	if err := RoleWindowMissing(session, role); err != nil {
+		release()
+		return err
+	}
+	return reloadHolding(session, role, "", "", false, release)
+}
+
+// reloadHolding is ReloadAgent's body from the stop onward, under a held
+// marker; release is idempotent and runs on every return.
+func reloadHolding(session, role, cli, model string, compact bool, release func()) error {
+	defer release()
+	oldCLI := ResolveProviderCLI(role)
 
 	// 3. Gracefully stop the agent BEFORE writing overrides.
 	// This is critical: GracefulStop → IsAgentAlive → ResolveProvider reads

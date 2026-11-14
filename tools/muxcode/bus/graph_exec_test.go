@@ -172,6 +172,138 @@ func nodeState(t *testing.T, session, runID, nodeID string) string {
 	return st.State
 }
 
+// MUX-217: a dispatch sent between a reload's stop and its relaunch is cleared
+// by the relaunch, so a send node to a role under a live reload marker stays
+// ready, sends nothing and logs one graph-dispatch-deferred row, then
+// dispatches once the marker is gone. Negative control: a stale marker, left by
+// a reload that died, never holds a dispatch.
+func TestExecHoldsSendWhileRoleReloading(t *testing.T) {
+	run := createTestRun(t, linearGraph())
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	if err := writeReloadMarker(runTestSession, "build"); err != nil {
+		t.Fatal(err)
+	}
+
+	step(t, runTestSession, run.ID)
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "a"); s != GraphNodeReady {
+		t.Fatalf("a state %q under a live reload marker, want ready", s)
+	}
+	if msgs, _ := Peek(runTestSession, "build"); len(msgs) != 0 {
+		t.Fatalf("dispatched into a reloading role: %+v", msgs)
+	}
+	rows, err := FilterLifecycleLog(runTestSession, LifecycleFilterOpts{Event: "graph-dispatch-deferred"})
+	if err != nil || len(rows) != 1 || !strings.Contains(rows[0].Detail, "agent reload in progress: build") {
+		t.Errorf("graph-dispatch-deferred rows = %+v (err %v), want one naming the reload of build", rows, err)
+	}
+
+	old := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(ReloadMarkerPath(runTestSession, "build"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "a"); s != GraphNodeRunning {
+		t.Fatalf("a state %q under a stale marker, want running", s)
+	}
+	if msgs, _ := Peek(runTestSession, "build"); len(msgs) != 1 {
+		t.Errorf("build inbox after the stale marker: %d messages, want 1", len(msgs))
+	}
+}
+
+// MUX-217 review must-fix, through real executor ticks: a condition finishes
+// in the tick that routes build, and its edge to test is routed only in the
+// next — a whole poll iteration with build and the condition done and test
+// pending. GraphNeedsRole must still see test as needed, and a reload marker
+// reserved in that iteration (the watchdog now reserves at its check) must
+// hold test's dispatch until it is released.
+func TestExecReservedReloadHoldsDispatchThroughCondition(t *testing.T) {
+	t.Setenv("MUXCODE_MUX217_COND", "1")
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	run := createTestRun(t, &Graph{
+		Name:  "t",
+		Start: "build",
+		Nodes: []Node{
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "check", Type: NodeCondition, Conditions: map[string]any{"env_set": "MUXCODE_MUX217_COND"}},
+			{ID: "test", Type: NodeSend, Role: "test", Action: "test", Message: "run the suite"},
+		},
+		Edges: []Edge{{From: "build", To: "check"}, {From: "check", To: "test"}},
+	})
+	step(t, runTestSession, run.ID)
+	completeSendNode(t, runTestSession, run.ID, "build", OutcomeSuccess)
+	step(t, runTestSession, run.ID)
+	if c, s := nodeState(t, runTestSession, run.ID, "check"), nodeState(t, runTestSession, run.ID, "test"); c != GraphNodeDone || s != GraphNodePending {
+		t.Fatalf("fixture: check %q test %q, want done and pending — the window this test is about", c, s)
+	}
+	if _, nodeID, ok := GraphNeedsRole(runTestSession, "test"); !ok || nodeID != "test" {
+		t.Errorf("an unrouted finished condition feeding test: GraphNeedsRole(test) = %q %v, want test true", nodeID, ok)
+	}
+
+	release, err := ReserveReload(runTestSession, "test")
+	if err != nil {
+		t.Fatalf("ReserveReload: %v", err)
+	}
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "test"); s != GraphNodeReady {
+		t.Errorf("test state %q under the reserved marker, want ready", s)
+	}
+	if msgs, _ := Peek(runTestSession, "test"); len(msgs) != 0 {
+		t.Fatalf("a dispatch landed under the reserved reload: %+v", msgs)
+	}
+
+	release()
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "test"); s != GraphNodeRunning {
+		t.Errorf("test state %q after the reload released, want running", s)
+	}
+	if msgs, _ := Peek(runTestSession, "test"); len(msgs) != 1 {
+		t.Errorf("test inbox after release: %d messages, want 1", len(msgs))
+	}
+}
+
+// MUX-217: a dispatch a relaunch cleared fails its node naming the relaunch and
+// how far into its allowance it came — never a bare "task timed-out". Negative
+// control: a task timed out with no recorded cause keeps the plain reason.
+func TestExecClearedDispatchNamesTheRelaunch(t *testing.T) {
+	for _, tc := range []struct {
+		name, cause string
+		want        []string
+	}{
+		{"cleared by a relaunch", "build relaunched (reason=reload)",
+			[]string{"dispatch cleared by a relaunch — build relaunched (reason=reload)", "into its 600s allowance"}},
+		{"no recorded cause", "", []string{"task timed-out"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := createTestRun(t, linearGraph())
+			step(t, runTestSession, run.ID)
+			if tc.cause != "" {
+				if n := ClearInFlightTasksForRole(runTestSession, "build", tc.cause); n != 1 {
+					t.Fatalf("cleared %d tasks, want the dispatch", n)
+				}
+			} else {
+				st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+				TimeoutTask(runTestSession, st.TaskID)
+			}
+			step(t, runTestSession, run.ID)
+			st, err := ReadNodeStatus(runTestSession, run.ID, "a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Outcome != OutcomeFailure {
+				t.Fatalf("node a outcome %q, want failure", st.Outcome)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(st.Output, w) {
+					t.Errorf("node a output %q lacks %q", st.Output, w)
+				}
+			}
+			if tc.cause == "" && strings.Contains(st.Output, "relaunch") {
+				t.Errorf("a task with no recorded cause blamed a relaunch: %q", st.Output)
+			}
+		})
+	}
+}
+
 func TestExecLinearRun(t *testing.T) {
 	run := createTestRun(t, linearGraph())
 

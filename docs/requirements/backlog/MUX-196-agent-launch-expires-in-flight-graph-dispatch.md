@@ -123,3 +123,18 @@ Backlog
 
 Filed 2026-09-28 on the user's instruction relayed by edit; timeline and mechanism verified the same
 day.
+
+**2026-11-13 — partly overtaken by [MUX-217](../completed/MUX-217-agent-defs-reload-races-a-graph-dispatch-and-clears-it.md)**,
+a second occurrence on the daemon's own watchdog reload. Nothing is ticked here, and the line
+numbers above predate it. What MUX-217 shipped that bears on this spec:
+
+- A launch-cleared task records its cause (`Task.ClearedBy`, "`<role>` relaunched
+  (reason=`<r>`)"), and the node's outcome reads "dispatch cleared by a relaunch — …" rather than
+  `task timed-out`. That is the first half of this spec's third acceptance criterion; the node is
+  still failed, not re-dispatched or held.
+- The executor holds a send node while its role carries a live reload marker, which covers a
+  dispatch issued during a `muxcode reload` or health restart. It does not cover this spec's
+  observed case — a request already sitting unconsumed in the inbox when the relaunch happens.
+
+Still this spec's: a launch keeping a task whose request was never consumed, the late reply
+completing the node, the per-task lifecycle row, and `scripts/test-reload-keeps-dispatch.sh`.

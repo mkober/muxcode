@@ -203,12 +203,12 @@ func TestClearInFlightTasksForRole_UnblocksSendsAfterRestart(t *testing.T) {
 	}
 
 	// Relaunching the review agent must clear it.
-	if n := ClearInFlightTasksForRole(session, "review"); n != 1 {
+	if n := ClearInFlightTasksForRole(session, "review", "review relaunched (reason=restart)"); n != 1 {
 		t.Fatalf("cleared %d tasks, want 1", n)
 	}
 	task, _ := ReadTask(session, stuck.ID)
-	if task.Status != TaskTimedOut {
-		t.Errorf("stuck task Status = %q, want %q", task.Status, TaskTimedOut)
+	if task.Status != TaskTimedOut || task.ClearedBy != "review relaunched (reason=restart)" {
+		t.Errorf("stuck task = %q cleared by %q, want %q naming the relaunch", task.Status, task.ClearedBy, TaskTimedOut)
 	}
 	if HasInFlightTaskForRole(session, "review", "review") {
 		t.Error("sends to review must be unblocked after the restart clears the task")
@@ -225,7 +225,7 @@ func TestClearInFlightTasksForRole_LeavesOtherRolesAlone(t *testing.T) {
 	_ = CreateTask(session, toBuild, 600)
 
 	// Only the review agent is relaunching — build's task must survive.
-	if n := ClearInFlightTasksForRole(session, "review"); n != 1 {
+	if n := ClearInFlightTasksForRole(session, "review", "review relaunched (reason=reload)"); n != 1 {
 		t.Fatalf("cleared %d tasks, want 1 (build's task must be untouched)", n)
 	}
 	if bt, _ := ReadTask(session, toBuild.ID); bt.Status != TaskInFlight {
@@ -242,7 +242,7 @@ func TestClearInFlightTasksForRole_ClearsHostedRole(t *testing.T) {
 	toDocs := NewMessage("edit", "docs", "request", "update-docs", "write spec", "")
 	_ = CreateTask(session, toDocs, 600)
 
-	if n := ClearInFlightTasksForRole(session, "plan"); n != 1 {
+	if n := ClearInFlightTasksForRole(session, "plan", "plan relaunched (reason=reload)"); n != 1 {
 		t.Fatalf("cleared %d tasks, want 1 (plan hosts docs)", n)
 	}
 	if dt, _ := ReadTask(session, toDocs.ID); dt.Status != TaskTimedOut {

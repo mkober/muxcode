@@ -221,7 +221,7 @@ or the user narrowing the criterion. No follow-up defect has been filed — that
 - [MUX-152](./MUX-152-test-sh-hides-modules-after-first-failure.md) — `test.sh` hiding modules after
   the first failure; the summary this builds on came from MUX-174
 - [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) — the Codex test agent and the suite
-- [MUX-217](./MUX-217-agent-defs-reload-races-a-graph-dispatch-and-clears-it.md) — a test node of this
+- [MUX-217](../completed/MUX-217-agent-defs-reload-races-a-graph-dispatch-and-clears-it.md) — a test node of this
   spec's run failed without running the suite, when a watchdog reload cleared its dispatch
 
 ## Status

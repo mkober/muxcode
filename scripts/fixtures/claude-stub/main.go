@@ -27,6 +27,12 @@
 // test can switch between a resumable UUID and no scrapeable id without
 // relaunching the pane. Absent or empty, it is "0f3a" — not a UUID, so a
 // restart scrape misses and relaunches fresh, as MUX-136's test expects.
+//
+// A /exit waits the whole seconds named in CLAUDE_STUB_EXIT_DELAY_FILE, read
+// when /exit arrives (MUX-217's scripts/test-reload-defers-dispatch.sh): a
+// reload's GracefulStop then holds the reload marker that long, so a graph
+// dispatch can be placed inside the stop-to-relaunch window deterministically.
+// Absent, empty or 0, /exit is immediate.
 package main
 
 import (
@@ -35,6 +41,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -106,12 +113,24 @@ func main() {
 	for sc.Scan() {
 		line := strings.TrimSpace(strings.TrimLeft(sc.Text(), "\x1b"))
 		if line == "/exit" {
+			exitDelay()
 			teardown()
 			return
 		}
 		fmt.Print("❯ \n")
 	}
 	teardown()
+}
+
+// exitDelay holds a /exit — see the package doc.
+func exitDelay() {
+	b, err := os.ReadFile(os.Getenv("CLAUDE_STUB_EXIT_DELAY_FILE"))
+	if err != nil {
+		return
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > 0 {
+		time.Sleep(time.Duration(n) * time.Second)
+	}
 }
 
 // bannerSessionID is the id the exit banner offers — see the package doc.

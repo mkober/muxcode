@@ -1233,9 +1233,10 @@ func unverifiedHoldReleased(session string, run *GraphRun, nodeID string) bool {
 // agent answers the queued id, and a task keyed to the unsent id sits
 // in-flight forever (PR #38 Copilot finding).
 //
-// A spawn or map node whose run worker another node still holds stays ready
-// (deferDispatch) and is retried each tick; its start row is written on the
-// first attempt only, so a long wait does not flood the lifecycle log.
+// A spawn or map node whose run worker another node still holds, or a send node
+// whose role is being reloaded (roleReloading), stays ready (deferDispatch) and
+// is retried each tick; its start row is written on the first attempt only, so
+// a long wait does not flood the lifecycle log.
 func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) {
 	if n == nil {
 		return
@@ -1250,6 +1251,10 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	switch n.Type {
 	case NodeSend:
+		if roleReloading(session, n.Role) {
+			deferDispatch(session, run, n, st, fmt.Errorf("%w: %s", errRoleReloading, n.Role))
+			return
+		}
 		msg := seedVerdictToken(n.Action, interpolateGraphMessage(session, run, n.Message, ""))
 		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 		m.GraphRun, m.GraphNode = run.ID, n.ID
@@ -1399,8 +1404,40 @@ func deferDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, 
 	if errors.Is(err, errSpawnCap) {
 		LogLifecycle(session, "warn", "daemon", "spawn-cap-refused", fmt.Sprintf("%s: %s — %s", run.ID, n.ID, reason))
 	}
-	LogLifecycle(session, "info", "daemon", "graph-spawn-deferred",
-		fmt.Sprintf("%s: %s waits — %s", run.ID, n.ID, reason))
+	event := "graph-spawn-deferred"
+	if n.Type == NodeSend {
+		event = "graph-dispatch-deferred"
+	}
+	LogLifecycle(session, "info", "daemon", event, fmt.Sprintf("%s: %s waits — %s", run.ID, n.ID, reason))
+}
+
+// taskEndReason is a failed send node's output for a task that ended without
+// an answer. A task a relaunch cleared names that relaunch and how far into
+// its allowance it came: on 2026-11-13 a node read a bare "task timed-out"
+// three seconds into 600, hiding the reload that cleared it (MUX-217).
+func taskEndReason(task Task, now int64) string {
+	if task.ClearedBy == "" {
+		return "task " + task.Status
+	}
+	return fmt.Sprintf("dispatch cleared by a relaunch — %s, %ds into its %ds allowance, before any answer",
+		task.ClearedBy, now-task.SentAt, task.Timeout)
+}
+
+// errRoleReloading defers a send node while its role's agent is being reloaded.
+var errRoleReloading = errors.New("agent reload in progress")
+
+// roleReloading reports a live reload marker on role or its host window. A
+// dispatch sent between a reload's stop and its relaunch is cleared by the
+// relaunch with the node failing on it (MUX-217, MUX-196), so the executor
+// waits. A stale marker — a reload that died without cleaning up — never
+// holds a dispatch.
+func roleReloading(session, role string) bool {
+	for _, r := range []string{role, WindowForRole(role)} {
+		if IsReloading(session, r) && !IsReloadMarkerStale(session, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // splitMapItems parses a map node's item list (comma-separated literal).
@@ -1537,7 +1574,7 @@ func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *Gr
 			outcome, output := deriveSendOutcome(session, n, st, task)
 			finishNode(session, run, n, outcome, output)
 		case TaskTimedOut, TaskFailed:
-			finishNode(session, run, n, OutcomeFailure, "task "+task.Status)
+			finishNode(session, run, n, OutcomeFailure, taskEndReason(task, now))
 		default:
 			if TaskExpired(task, now) {
 				finishNode(session, run, n, OutcomeFailure, "task expired")

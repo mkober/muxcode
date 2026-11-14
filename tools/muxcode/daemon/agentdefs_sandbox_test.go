@@ -31,7 +31,7 @@ func sandboxWatch(t *testing.T, want map[string]string, safe *bool) (*Daemon, ch
 	d.agentAlive = func(_, _ string) bool { return true }
 	d.reloadSafe = func(_, _ string) (bool, string) { return *safe, "test" }
 	d.sandboxPrints = func(string, []string) (map[string]string, error) { return want, nil }
-	d.reloadAgent = func(_, role string) error { reloads <- role; return nil }
+	d.reloadAgent = func(_, role string, release func()) error { release(); reloads <- role; return nil }
 	return d, reloads
 }
 
@@ -324,6 +324,98 @@ func TestCheckAgentDefs_UnstampedCodexReloadedNonCodexSkipped(t *testing.T) {
 }
 
 // A busy agent's reload waits for the next safe check rather than being dropped.
+// MUX-217: a reload deferred because a graph run needs the role logs one
+// agent-defs-reload-deferred row naming the run and node however many checks
+// it waits, spends no budget, and fires on the first check after the run
+// releases the role. An unsafe reason that is not a graph's logs nothing.
+func TestCheckAgentDefs_GraphDeferralLoggedOnceThenReloads(t *testing.T) {
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	safe := false
+	d, reloads := sandboxWatch(t, map[string]string{"build": "installed-now"}, &safe)
+	deferred := func() []bus.LifecycleEntry {
+		rows, _ := bus.FilterLifecycleLog(d.session, bus.LifecycleFilterOpts{Event: "agent-defs-reload-deferred"})
+		return rows
+	}
+
+	tickAgentDefs(d)
+	expectReloads(t, reloads)
+	if rows := deferred(); len(rows) != 0 {
+		t.Errorf("a non-graph unsafe reason logged a graph deferral: %+v", rows)
+	}
+
+	reason := bus.GraphReloadDeferralPrefix + "r1 needs build as node build"
+	d.reloadSafe = func(_, _ string) (bool, string) {
+		if safe {
+			return true, ""
+		}
+		return false, reason
+	}
+	for i := 0; i < 3; i++ {
+		tickAgentDefs(d)
+		expectReloads(t, reloads)
+	}
+	if rows := deferred(); len(rows) != 1 || !strings.Contains(rows[0].Detail, "build: "+reason) {
+		t.Errorf("graph deferral rows = %+v, want exactly one naming run r1 and node build", rows)
+	}
+
+	safe = true
+	tickAgentDefs(d)
+	expectReloads(t, reloads, "build")
+}
+
+// MUX-217 review must-fix: the marker used to appear only once the reload
+// goroutine reached ReloadAgent, after the same poll iteration's graph tick had
+// dispatched. With the relaunch held before it does anything, the marker must
+// already be held when the check returns, and a graph step in that gap must
+// send the role nothing; once the reload releases it the dispatch goes out.
+func TestCheckAgentDefs_MarkerHeldBeforeRelaunchHoldsDispatch(t *testing.T) {
+	safe := true
+	d, _ := sandboxWatch(t, map[string]string{"build": "installed-now"}, &safe)
+	proceed := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-proceed:
+		default:
+			close(proceed)
+		}
+	})
+	d.reloadAgent = func(_, _ string, release func()) error {
+		<-proceed
+		release()
+		return nil
+	}
+	run, err := bus.CreateGraphRun(d.session, &bus.Graph{
+		Name:  "t",
+		Start: "b",
+		Nodes: []bus.Node{{ID: "b", Type: bus.NodeSend, Role: "build", Action: "build", Message: "go"}},
+	}, "t", "intent")
+	if err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+
+	tickAgentDefs(d)
+	if !bus.IsReloading(d.session, "build") {
+		t.Fatal("the reload marker was not held when the check returned")
+	}
+	if err := bus.StepGraphRun(d.session, run.ID); err != nil {
+		t.Fatalf("StepGraphRun: %v", err)
+	}
+	if msgs, _ := bus.Peek(d.session, "build"); len(msgs) != 0 {
+		t.Fatalf("a dispatch landed between the check and the relaunch: %+v", msgs)
+	}
+
+	close(proceed)
+	for i := 0; i < 40 && bus.IsReloading(d.session, "build"); i++ {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err := bus.StepGraphRun(d.session, run.ID); err != nil {
+		t.Fatalf("StepGraphRun: %v", err)
+	}
+	if msgs, _ := bus.Peek(d.session, "build"); len(msgs) != 1 {
+		t.Errorf("build inbox after the reload released: %d messages, want 1", len(msgs))
+	}
+}
+
 func TestCheckAgentDefs_UnsafeDefersSandboxReload(t *testing.T) {
 	safe := false
 	d, reloads := sandboxWatch(t, map[string]string{"build": "installed-now"}, &safe)

@@ -82,12 +82,22 @@ func ReadAgentDefHash(session, role string) string {
 	return string(data)
 }
 
+// GraphReloadDeferralPrefix begins AutoReloadSafe's reason when a graph run
+// needs the role, so the daemon can log that deferral once per run and node.
+const GraphReloadDeferralPrefix = "graph run "
+
 // AutoReloadSafe reports whether the daemon may restart role's agent without
 // cutting off work, with the reason when it may not: no reload under way, no
-// request waiting, no live task, and an idle pane. Idle is the provider's own
-// reading on Claude, whose ❯ prompt is reliable; elsewhere paneSafeToReload
-// reads the pane, because Codex's IsIdle is constantly false and gating on it
-// deferred every Codex reload forever.
+// request waiting, no live task, no running graph run about to use the role,
+// and an idle pane. Idle is the provider's own reading on Claude, whose ❯
+// prompt is reliable; elsewhere paneSafeToReload reads the pane, because
+// Codex's IsIdle is constantly false and gating on it deferred every Codex
+// reload forever.
+//
+// The graph clause closes MUX-217's window: the check ran in the same poll
+// iteration as the executor's dispatch but before it, so neither the inbox nor
+// the task clause could see a request the relaunch then cleared
+// (GraphNeedsRole).
 func AutoReloadSafe(session, role string) (bool, string) {
 	if IsReloading(session, role) {
 		return false, "reload in progress"
@@ -97,6 +107,9 @@ func AutoReloadSafe(session, role string) (bool, string) {
 	}
 	if hasLiveInFlightTask(session, role) {
 		return false, "in-flight task"
+	}
+	if runID, nodeID, ok := GraphNeedsRole(session, role); ok {
+		return false, fmt.Sprintf("%s%s needs %s as node %s", GraphReloadDeferralPrefix, runID, role, nodeID)
 	}
 	if IsClaudeTUI(ResolveProvider(role)) {
 		if !IsAgentIdle(session, role) {

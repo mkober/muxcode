@@ -27,7 +27,8 @@ func definitionDaemon(t *testing.T, verdicts map[string]bus.DefinitionProbe) (*D
 	}
 	d.capturePane = func(_ string, _ int) (string, error) { return "❯ ", nil }
 	reloads := make(chan string, 8)
-	d.reloadAgent = func(_, role string) error {
+	d.reloadAgent = func(_, role string, release func()) error {
+		release()
 		reloads <- role
 		return nil
 	}

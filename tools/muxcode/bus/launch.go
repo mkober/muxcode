@@ -1096,7 +1096,7 @@ func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 	// every new send of the same (to, action) via the dedup guard until the 600s
 	// TaskExpired grace. This is the durable fix for the crashed/restarted agent
 	// going silently undeliverable (a stuck chain task dropping re-sent requests).
-	if n := ClearInFlightTasksForRole(session, role); n > 0 {
+	if n := ClearInFlightTasksForRole(session, role, fmt.Sprintf("%s relaunched (reason=%s)", role, reason.logName())); n > 0 {
 		LogLifecycle(session, "info", "launch", "cleared-inflight-tasks",
 			fmt.Sprintf("%s: %d stale in-flight task(s) cleared on launch", role, n))
 	}
