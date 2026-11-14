@@ -658,6 +658,145 @@ func TestLongRunningNodesOutlastTheDefaultBudget(t *testing.T) {
 	}
 }
 
+// boundedSendDelegations lists the role:action pairs a builtin send may target
+// on the 600s default cap: delegations that answer well inside it. Adding a
+// pair claims that; work that can outrun the cap sets timeout_secs, and
+// open-ended agent work is a spawn, which carries no task clock (MUX-162).
+var boundedSendDelegations = map[string]bool{
+	"build:build": true, "test:test": true, "review:review": true,
+	"commit:checkout": true, "commit:commit": true, "commit:pr-read": true, "commit:comment": true,
+	"commit:pr-checkout": true, "commit:pr-diff": true, "commit:rebase": true, "commit:push": true,
+	"plan:verify-spec": true, "plan:close-spec": true, "plan:defect-select": true, "plan:defect-loop-done": true,
+	"plan:story-read": true, "plan:issue-read": true, "plan:update-docs": true,
+	"plan:jira-write": true, "plan:issue-write": true,
+	"deploy:deploy": true, "run:run": true, "watch:watch": true,
+}
+
+// unboundedSend reports whether n is a send left on the default cap that is not
+// a bounded delegation.
+func unboundedSend(n Node) bool {
+	return n.Type == NodeSend && n.TimeoutSec == 0 && !boundedSendDelegations[n.Role+":"+n.Action]
+}
+
+// On 2026-09-09 commit-pr-review-loop's fix step was a send to edit on the
+// default cap; it expired at 602s mid-fix and failed a run whose fix shipped.
+// Every builtin send is a bounded delegation or carries its own cap, and the
+// review fix is a clock-free spawn. The old shape is the negative control.
+func TestBuiltinSendNodesAreBoundedDelegations(t *testing.T) {
+	old := Node{ID: "c", Type: NodeSend, Role: "edit", Action: "edit", Message: "Address the PR review comments"}
+	if !unboundedSend(old) {
+		t.Fatal("the 2026-09-09 fix shape must read as unbounded — the rule below could never fail")
+	}
+	for name, src := range builtinGraphJSON {
+		g, err := ParseGraph([]byte(src))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, n := range g.Nodes {
+			if unboundedSend(n) {
+				t.Errorf("%s %s sends %s:%s on the 600s default — set timeout_secs, make it a spawn, or list it as bounded",
+					name, n.ID, n.Role, n.Action)
+			}
+		}
+	}
+	if fix := mustTemplate(t, "80-pr-review-fix").node("fix"); fix == nil || fix.Type != NodeSpawn || fix.TimeoutSec != 0 {
+		t.Errorf("80-pr-review-fix fix must be a spawn with no timeout_secs — it ends on its reply, not a clock; got %+v", fix)
+	}
+}
+
+// TestReviewFixOutlivesTheSendCap replays the 2026-09-09 timeline (MUX-162): a
+// review fix answered 700s after dispatch. The old send-on-the-default-cap
+// shape expires first and fails its run; 80-pr-review-fix's spawn has no clock,
+// so the same late reply completes it and dispatches build.
+func TestReviewFixOutlivesTheSendCap(t *testing.T) {
+	const fixSecs = 700
+
+	t.Run("a send on the default cap expires mid-fix", func(t *testing.T) {
+		g := &Graph{Name: "old-fix", Start: "c",
+			Nodes: []Node{{ID: "c", Type: NodeSend, Role: "edit", Action: "edit", Message: "Address the PR review comments"}}}
+		run := createTestRun(t, g)
+		step(t, runTestSession, run.ID)
+		st, err := ReadNodeStatus(runTestSession, run.ID, "c")
+		if err != nil || st.State != GraphNodeRunning {
+			t.Fatalf("c state %+v (%v), want running", st, err)
+		}
+		task, err := ReadTask(runTestSession, st.TaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.SentAt -= fixSecs
+		if err := writeTask(runTestSession, task); err != nil {
+			t.Fatal(err)
+		}
+		step(t, runTestSession, run.ID)
+
+		if st, _ = ReadNodeStatus(runTestSession, run.ID, "c"); st.Outcome != OutcomeFailure {
+			t.Errorf("c at %ds: state %q outcome %q, want failure — the default cap must expire", fixSecs, st.State, st.Outcome)
+		}
+		if r, _ := ReadGraphRun(runTestSession, run.ID); r.State != GraphRunFailed {
+			t.Errorf("run %q, want failed", r.State)
+		}
+	})
+
+	t.Run("the 80-pr-review-fix worker completes on its reply", func(t *testing.T) {
+		pinActor(t, "")
+		run := createTestRun(t, mustTemplate(t, "80-pr-review-fix"))
+		fakeLiveSpawns(t)
+		origAlive := spawnWorkerAliveFn
+		spawnWorkerAliveFn = func(string, SpawnEntry) bool { return true }
+		t.Cleanup(func() { spawnWorkerAliveFn = origAlive })
+
+		settle := func() {
+			for i := 0; i < 3; i++ {
+				step(t, runTestSession, run.ID)
+			}
+		}
+		step(t, runTestSession, run.ID)
+		completeSendNodeWithReply(t, runTestSession, run.ID, "find-pr", "commit", "PR-CONFIRMED #78 https://example.test/pull/78 EXIT=0")
+		settle()
+		completeSendNodeWithReply(t, runTestSession, run.ID, "read-comments", "commit",
+			"Unresolved: comment 2987 at bus/graph_exec.go:412 asks to stream the rollout scan EXIT=0")
+		settle()
+		if s := nodeState(t, runTestSession, run.ID, "fix-gate"); s != GraphNodeWaiting {
+			t.Fatalf("fix-gate state %q, want waiting", s)
+		}
+		if err := ApproveGraphGate(runTestSession, run.ID, "fix-gate"); err != nil {
+			t.Fatalf("approve: %v", err)
+		}
+		settle()
+
+		st, _ := ReadNodeStatus(runTestSession, run.ID, "fix")
+		if st.State != GraphNodeRunning {
+			t.Fatalf("fix state %q, want running", st.State)
+		}
+		e, ok := findSpawnByRole(runTestSession, st.TaskID)
+		if !ok {
+			t.Fatalf("no worker for fix (%s)", st.TaskID)
+		}
+		if _, err := ConsumeByID(runTestSession, st.TaskID, e.SeedMsgID); err != nil {
+			t.Fatalf("worker reads its seed: %v", err)
+		}
+		if err := MutateNodeStatus(runTestSession, run.ID, "fix", func(s *GraphNodeStatus) {
+			s.StartedAt = time.Now().Unix() - fixSecs
+		}); err != nil {
+			t.Fatal(err)
+		}
+		settle()
+		if s := nodeState(t, runTestSession, run.ID, "fix"); s != GraphNodeRunning {
+			t.Fatalf("fix %q at %ds, want running — a worker mid-fix has no clock to expire on", s, fixSecs)
+		}
+
+		answerSpawnWith(t, runTestSession, st.TaskID, "Comment 2987: streamed the rollout scan (bus/graph_exec.go:412). EXIT=0")
+		settle()
+		if st, _ = ReadNodeStatus(runTestSession, run.ID, "fix"); st.State != GraphNodeDone || st.Outcome != OutcomeSuccess {
+			t.Errorf("fix state %q outcome %q, want done/success on the reply", st.State, st.Outcome)
+		}
+		if s := nodeState(t, runTestSession, run.ID, "build"); s != GraphNodeRunning {
+			t.Errorf("build state %q, want running — the fix's reply proceeds to the build", s)
+		}
+	})
+}
+
 // Every PR-lookup node declares the EXIT convention and names the token its
 // condition branches on (see TestPRReviewFixQuestionNodesDeclareExitConvention).
 func TestWorkflowQuestionNodesDeclareExitConvention(t *testing.T) {
