@@ -214,6 +214,16 @@ These agents operate autonomously — they receive requests, execute uncondition
 
 **The build agent's lint step, and where `go vet` runs.** Before `./build.sh` the build agent runs its linters in check-only mode (`agents/code-builder.md`). For Go, modules are **found, not assumed**: it lists them with `git ls-files --cached --others --exclude-standard -- 'go.mod' '*/go.mod'` — tracked modules plus any not yet added to git, such as one being written, with ignored paths left out — skipping any under `testdata/` or `vendor/`, and runs `go -C <module dir> vet ./...` once per module, each as its own call — `go -C . vet ./...` for a module at the root, and nothing at a root that holds no `go.mod`. `go -C` keeps the agent at the project root, so its rule never to `cd` into subdirectories still holds. Before [MUX-214](requirements/completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) the lint table said only "detect `go.mod` → `go vet ./...`", with no directory: in a repository whose modules live under a subdirectory — this one — the agent ran it at the root, where it can never pass, on every build. A failing vet in the build pane now reaches edit as a **build** failure, not a test failure; see [Hooks → hook bash](hooks.md#hook-bash-bash-hook).
 
+**The test agent's failure reply, and where the log is.** A failing `./test.sh` names what failed ([MUX-215](requirements/backlog/MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md)). Each module's vet and test output is mirrored to `$MUXCODE_TEST_LOG_DIR/<YYYYmmdd-HHMMSS-pid>/<module>.log` (default root `/tmp/muxcode-test-logs`; if the directory cannot be made, nothing is logged and the summary carries no log line). In the closing summary a failed module's line is followed by indented detail lines:
+
+| Line | When | Bound |
+|------|------|-------|
+| `  log: <path>` | Any failed module | — |
+| `  FAIL <package>: <test>, <test>…` | A `go test` failure — one line per failing package, module path stripped, `[build failed]`/`[setup failed]` kept | Four packages, then `  ... N more failing package(s), see the log`; each line clipped to 120 characters |
+| `  vet <file:line: finding>` | A `go vet` failure | Three findings |
+
+A passing run prints no detail lines, and the `<module>: <status>` lines, the counts line and the exit codes are unchanged. The test agent's failure reply quotes the `FAIL`/`vet` lines and the `log:` path (`agents/test-runner.md`), and it does not rerun the suite to check for flakiness — a rerun that passes is how a failure went unnamed twice on 2026-11-13. The lines sit at the end of the output because that is what a history row keeps: hook capture takes the last 15 lines and, since MUX-215, the **last** 1000 bytes of them (`clipOutput`, `bus/hook.go`) — it used to keep the first 1000, which cut the summary off whenever long test lines preceded it. The log directory is under `/tmp`, so macOS removes logs untouched for three days.
+
 ### PR Reading (via commit agent)
 
 PR review analysis runs in the **commit window** via the git-manager agent. The edit agent delegates with action `pr-read`:

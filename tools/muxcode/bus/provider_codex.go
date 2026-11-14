@@ -871,7 +871,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom, lastRequestID, lastRequestFrom string
+	var lastFrom, lastRequestID, lastRequestTarget string
 	hasRequest := false
 	for _, msg := range batch {
 		// Skip messages from self — these are loop artifacts
@@ -888,7 +888,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		}
 		if msg.Type == "request" {
 			hasRequest = true
-			lastRequestID, lastRequestFrom = msg.ID, msg.From
+			lastRequestID, lastRequestTarget = msg.ID, ReplyTarget(msg)
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -901,10 +901,10 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 
 	// Append reply instruction — Codex agents don't have hooks so they must
 	// be explicitly told to reply via the bus after completing the task.
-	// The reply belongs to whoever asked, not whoever spoke last.
+	// The reply belongs to the request's reply target, not whoever spoke last.
 	replyTarget := NormalizeBusRole(lastFrom)
-	if lastRequestFrom != "" {
-		replyTarget = NormalizeBusRole(lastRequestFrom)
+	if lastRequestTarget != "" {
+		replyTarget = lastRequestTarget
 	}
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"

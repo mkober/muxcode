@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseToolEvent(t *testing.T) {
@@ -299,8 +300,34 @@ func TestGetOutput_Truncation(t *testing.T) {
 	if len(out) > 50 {
 		t.Errorf("GetOutput length %d > 50", len(out))
 	}
-	if !strings.HasSuffix(out, "...") {
-		t.Errorf("GetOutput should end with ...: %q", out)
+	if !strings.HasPrefix(out, "...") {
+		t.Errorf("GetOutput should start with ... (the clip keeps the end): %q", out)
+	}
+}
+
+// MUX-215: ./test.sh names a failing test only in its closing summary, and the
+// lines just above it can be long. The clip keeps the end, so the summary
+// survives; output under the limit is the negative control, returned whole.
+func TestGetOutput_ClipKeepsTheClosingSummary(t *testing.T) {
+	stdout := strings.Repeat("=== RUN   TestSomethingVerbose "+strings.Repeat("v", 120)+"\n", 3) +
+		"=== Summary ===\nmuxcode: failed (go test)\n  FAIL bus: TestFlaky\nmodules=2 ran=1 passed=0 failed=1 never-executed=1"
+	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"./test.sh"},"tool_response":{"stdout":%q}}`, stdout)))
+	out := ev.GetOutput(15, 300)
+	if !strings.Contains(out, "FAIL bus: TestFlaky") || !strings.HasSuffix(out, "never-executed=1") {
+		t.Errorf("the clip cut the closing summary: %q", out)
+	}
+	if !strings.HasPrefix(out, "...") || len(out) > 300 {
+		t.Errorf("want a clipped start and at most 300 bytes, got %d: %q", len(out), out)
+	}
+	short := "=== Summary ===\nmuxcode: passed"
+	ev, _ = ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"./test.sh"},"tool_response":{"stdout":%q}}`, short)))
+	if out := ev.GetOutput(15, 300); out != short {
+		t.Errorf("output under the limit was altered: %q", out)
+	}
+	multibyte := strings.Repeat("é", 40)
+	ev, _ = ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"x"},"tool_response":{"stdout":%q}}`, multibyte)))
+	if out := ev.GetOutput(15, 20); !utf8.ValidString(out) {
+		t.Errorf("the clip split a rune: %q", out)
 	}
 }
 
@@ -1563,17 +1590,17 @@ func TestProcessBashHook_SensitiveRoleCleanOutputUnchanged(t *testing.T) {
 }
 
 // A key straddling the maxChars clip is redacted whole: scrubbing after the
-// clip would leave "AKIAIOSFOD..." — half the key id, too short to match.
+// clip would leave "...NN7EXAMPLE" — the tail of the key id, too short to match.
 func TestGetScrubbedOutput_RedactsBeforeClip(t *testing.T) {
-	stdout := strings.Repeat("a", 30) + " AKIAIOSFODNN7EXAMPLE trailing"
+	stdout := "leading AKIAIOSFODNN7EXAMPLE " + strings.Repeat("a", 30)
 	ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":"env"},"tool_response":%q}`, stdout)))
 
-	if raw := ev.GetOutput(10, 44); !strings.HasSuffix(raw, " AKIAIOSFOD...") {
+	if raw := ev.GetOutput(10, 44); !strings.HasPrefix(raw, "...NN7EXAMPLE ") {
 		t.Fatalf("fixture must straddle the clip, GetOutput = %q", raw)
 	}
 	out := ev.GetScrubbedOutput("run", 10, 44)
-	if strings.Contains(out, "AKIAIOSFOD") {
-		t.Errorf("key prefix survived the clip: %q", out)
+	if strings.Contains(out, "NN7EXAMPLE") {
+		t.Errorf("key suffix survived the clip: %q", out)
 	}
 	if !strings.HasPrefix(out, "[muxcode pii-scrub:") {
 		t.Errorf("clip dropped the notice banner: %q", out)
@@ -1590,7 +1617,7 @@ func TestGetScrubbedOutput_CleanMatchesGetOutput(t *testing.T) {
 	}
 
 	want := ev.GetOutput(2, 44)
-	if !strings.HasSuffix(want, "...") || strings.Contains(want, "line_01") {
+	if !strings.HasPrefix(want, "...") || strings.Contains(want, "line_01") {
 		t.Fatalf("fixture must exercise both tail and clip, GetOutput = %q", want)
 	}
 	if got := ev.GetScrubbedOutput("run", 2, 44); got != want {

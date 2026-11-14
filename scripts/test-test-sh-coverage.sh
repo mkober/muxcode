@@ -12,6 +12,10 @@
 # failure rather than a shorter green report. Section 5 is the negative
 # control: the summary assertion must reject a summary missing a module.
 # Section 6 runs a tree with no module: exit 1, still ending with the summary.
+# MUX-215: a failing module's summary names its log, which holds the full
+# output, and the failure itself — "  FAIL <package>: <tests>" from the stub's
+# go-test-shaped output, or "  vet <finding>" — inside the last 15 lines a
+# history row keeps; a passing run's summary carries no detail lines.
 #
 # Hermetic: no daemon, no tmux, no muxcode binary; writes only to a temp dir.
 # Coverage floor: the exact pass count, tied to the two pinned modules.
@@ -20,7 +24,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 EXPECTED_MODULES="muxcode muxcode-llm-harness"
 EXPECTED_COUNT=2
-EXPECTED_PASS=25
+EXPECTED_PASS=31
 
 pass=0; fail=0
 ok()  { echo "  PASS  $*"; pass=$((pass + 1)); }
@@ -33,9 +37,17 @@ mkdir -p "$WORK/bin"
 cat > "$WORK/bin/go" <<'EOF'
 #!/usr/bin/env bash
 mod=$(basename "$PWD")
+modpath=$(awk '$1 == "module" { print $2; exit }' go.mod 2>/dev/null)
 echo "$mod $1" >> "$GO_STUB_LOG"
 case " ${GO_STUB_FAIL:-} " in
-  *" $mod:$1 "*) echo "go-stub: $mod go $1 forced failure" >&2; exit 2 ;;
+  *" $mod:$1 "*)
+    if [ "$1" = test ]; then
+      printf '=== RUN   TestStubForced\n--- FAIL: TestStubForced (0.00s)\n    stub_test.go:9: forced failure\nFAIL\nFAIL\t%s/stubpkg\t0.01s\n' "$modpath"
+    else
+      echo "stubpkg/a.go:3:2: stub vet finding" >&2
+    fi
+    echo "go-stub: $mod go $1 forced failure" >&2
+    exit 2 ;;
 esac
 echo "go-stub: $mod go $1 ok"
 EOF
@@ -45,7 +57,7 @@ chmod +x "$WORK/bin/go"
 # (the stub's `<module> <step>` lines, in call order).
 run_test_sh() {
   : > "$WORK/go.log"
-  OUT=$(GO_STUB_LOG="$WORK/go.log" GO_STUB_FAIL="$2" PATH="$WORK/bin:$PATH" bash "$1" 2>&1)
+  OUT=$(GO_STUB_LOG="$WORK/go.log" GO_STUB_FAIL="$2" MUXCODE_TEST_LOG_DIR="$WORK/logs" PATH="$WORK/bin:$PATH" bash "$1" 2>&1)
   RC=$?
   CALLS=$(cat "$WORK/go.log")
 }
@@ -64,6 +76,12 @@ summary_lists_all() {
 
 has_line() { printf '%s\n' "$OUT" | grep -qxF "$1"; }
 
+# summary_section prints the last summary's lines (after the header).
+summary_section() { printf '%s\n' "$OUT" | awk '/^=== Summary ===$/ { buf = ""; s = 1; next } s { buf = buf $0 "\n" } END { printf "%s", buf }'; }
+
+# log_path prints the path on the summary's "  log: " line.
+log_path() { summary_section | sed -n 's/^  log: //p' | head -1; }
+
 echo "=== test.sh coverage integration test ==="
 
 # --- 1. The pinned module list matches tools/ --------------------------------
@@ -81,6 +99,7 @@ done
 totals="modules=$EXPECTED_COUNT ran=$EXPECTED_COUNT passed=$EXPECTED_COUNT failed=0 never-executed=0"
 check "all passing: totals line" "$(has_line "$totals"; echo $?)"
 check "all passing: totals line is the last line" "$([ "$(printf '%s\n' "$OUT" | tail -1)" = "$totals" ]; echo $?)"
+check "all passing: the summary carries no detail lines (contract unchanged)" "$([ "$(summary_section | grep -c '^  ')" -eq 0 ]; echo $?)"
 calls_ok=0
 [ "$(printf '%s\n' "$CALLS" | grep -c .)" -eq $((EXPECTED_COUNT * 2)) ] || calls_ok=1
 for mod in $EXPECTED_MODULES; do
@@ -104,6 +123,8 @@ done
 check "first fails vet: summary still lists every pinned module" "$(summary_lists_all "$OUT"; echo $?)"
 check "first fails vet: totals line" "$(has_line "modules=$EXPECTED_COUNT ran=1 passed=0 failed=1 never-executed=$((EXPECTED_COUNT - 1))"; echo $?)"
 check "first fails vet: only '$FIRST vet' invoked (got: $(echo $CALLS))" "$([ "$CALLS" = "$FIRST vet" ]; echo $?)"
+check "first fails vet: the summary names the log, which holds the vet output ($(log_path))" "$([ -n "$(log_path)" ] && grep -q 'stub vet finding' "$(log_path)"; echo $?)"
+check "first fails vet: the summary names the finding" "$(has_line "  vet stubpkg/a.go:3:2: stub vet finding"; echo $?)"
 
 # --- 4. A test failure in the first module stops the run the same way --------
 run_test_sh "$REPO/test.sh" "$FIRST:test"
@@ -114,6 +135,9 @@ for mod in $OTHERS; do
 done
 check "first fails test: totals line" "$(has_line "modules=$EXPECTED_COUNT ran=1 passed=0 failed=1 never-executed=$((EXPECTED_COUNT - 1))"; echo $?)"
 check "first fails test: only '$FIRST' invoked" "$([ "$CALLS" = "$(printf '%s vet\n%s test' "$FIRST" "$FIRST")" ]; echo $?)"
+check "first fails test: the summary names the package and the test" "$(has_line "  FAIL stubpkg: TestStubForced"; echo $?)"
+check "first fails test: the summary names the log, which holds the full output ($(log_path))" "$([ -n "$(log_path)" ] && grep -q -- '--- FAIL: TestStubForced' "$(log_path)"; echo $?)"
+check "first fails test: the failing test is within the last 15 lines a history row keeps" "$(printf '%s\n' "$OUT" | tail -15 | grep -qxF "  FAIL stubpkg: TestStubForced"; echo $?)"
 
 # --- 5. Negative control: a summary missing a module must be rejected --------
 run_test_sh "$REPO/test.sh" ""

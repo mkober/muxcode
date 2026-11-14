@@ -154,6 +154,55 @@ func TestProcessMessages_SimpleResponse(t *testing.T) {
 	}
 }
 
+// MUX-216 finding A on the `muxcode agent` road: the loop replied to the
+// sender, so a test-chain review answered test. Negative control: a request
+// with no reply role is still answered to its sender.
+func TestProcessMessages_RepliesToReplyTarget(t *testing.T) {
+	savedAutoCC := autoCCLastSent
+	autoCCLastSent = make(map[string]int64)
+	t.Cleanup(func() { autoCCLastSent = savedAutoCC })
+
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(ChatResponse{Choices: []ChatChoice{{
+			Message:      ChatMessage{Role: "assistant", Content: "Review: 0 must-fix. EXIT=0"},
+			FinishReason: "stop",
+		}}})
+	}))
+	defer server.Close()
+
+	review := &ChainAction{SendTo: "review", Type: "request", Action: "review", Message: "Tests passed"}
+	for _, tc := range []struct {
+		msg       Message
+		want, not string
+	}{
+		{NewChainRequest("test", "test", review, "Tests passed"), "edit", "test"},
+		{NewMessage("build", "review", "request", "review", "review the build", ""), "build", ""},
+	} {
+		session := testSession(t)
+		cfg := AgentConfig{Role: "review", Session: session, Ollama: OllamaConfig{
+			BaseURL: server.URL, HTTPClient: server.Client(), Model: "test-model", Timeout: 10,
+		}}
+		processMessages(context.Background(), cfg, NewOllamaClient(cfg.Ollama), NewToolExecutor(cfg.Role),
+			BuildToolDefs(cfg.Role), "You are a test agent", []Message{tc.msg}, &agentState{})
+
+		var answered bool
+		for _, m := range mustPeek(t, session, tc.want) {
+			answered = answered || (m.Type == "response" && m.ReplyTo == tc.msg.ID)
+		}
+		if !answered {
+			t.Errorf("request from %s: no reply to %s in its inbox", tc.msg.From, tc.want)
+		}
+		if tc.not == "" {
+			continue
+		}
+		for _, m := range mustPeek(t, session, tc.not) {
+			if m.Type == "response" {
+				t.Errorf("request from %s with reply role %s was answered to %s", tc.msg.From, tc.msg.ReplyRole, tc.not)
+			}
+		}
+	}
+}
+
 func TestProcessMessages_WithToolCall(t *testing.T) {
 	session := fmt.Sprintf("test-agent-tc-%d", rand.Int())
 	memDir := t.TempDir()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // ToolEvent represents the JSON event received from a Claude Code or Codex
@@ -279,8 +280,11 @@ func (ev *ToolEvent) GetScrubbedOutput(role string, maxLines, maxChars int) stri
 	return out
 }
 
-// clipOutput keeps text's last maxLines lines, truncates them to maxChars and
-// abbreviates HOME to ~.
+// clipOutput keeps text's last maxLines lines, then the last maxChars bytes of
+// those ("..." marking the cut, never inside a rune), and abbreviates HOME to
+// ~. Both cuts keep the end, where a command prints its verdict: keeping the
+// first maxChars of the tail cut ./test.sh's closing summary — the one place a
+// failing test is named — whenever long output lines preceded it (MUX-215).
 func clipOutput(text string, maxLines, maxChars int) string {
 	lines := strings.Split(text, "\n")
 	if len(lines) > maxLines {
@@ -288,7 +292,11 @@ func clipOutput(text string, maxLines, maxChars int) string {
 	}
 	out := strings.Join(lines, "\n")
 	if len(out) > maxChars {
-		out = out[:maxChars-3] + "..."
+		cut := len(out) - (maxChars - 3)
+		for cut < len(out) && !utf8.RuneStart(out[cut]) {
+			cut++
+		}
+		out = "..." + out[cut:]
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		out = strings.ReplaceAll(out, home, "~")

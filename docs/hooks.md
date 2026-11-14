@@ -252,6 +252,14 @@ The last edge is the one the daemon fires, not `hook bash`: when a review reply 
 
 **A test-chain review answers edit, not the test agent.** The chain's request carries `reply_role: edit` (`bus.NewChainRequest`), so the reviewer's "To reply" line names edit and its one reply goes there, correlated by `--reply-to`. The test agent — whose own request was already answered — receives nothing to react to, and edit is told once rather than twice (the reply plus its auto-CC copy). Other chain requests (build→test, deploy, run) still answer their sender.
 
+**Three rules that close what MUX-213 left open** ([MUX-216](requirements/completed/MUX-216-test-chain-reply-target-shared-receipt-and-request-reuse.md)):
+
+| Rule | How | Why |
+|------|-----|-----|
+| One request stands behind at most one review | Before a test-success dispatch, `triggerChain` claims the request (`bus.ClaimRequestReview`, an exclusive marker under `<bus>/spent-requests/`, swept after two hours, failing open). A lost claim logs `chain-withheld` — "request `<id>` already dispatched its review" — and sends nothing; a dispatch that is not sent releases the claim. `OpenRequestFor` prefers an unspent open request and falls back to a spent one, so a second, distinct request still gets its own review while a rerun under the first is named. A failing run never claims and still notifies | The captured request id used to be discarded, so every test run started while one request stayed open requested a review |
+| A receipt is written only by the addressee's consume | `writeConsumeReceipt` (`bus/delivery.go`) writes one only when the consumer's window is the message's addressee's. An auto-CC copy shares its original's id; edit consuming its copy writes no receipt | The copy's consume used to overwrite `AckedBy`, so a genuine request read as received by edit and stood behind no run — and a copy consumed first hid the addressee's real delivery gap |
+| Every road replies to the reply target | OpenCode's and scrape-road Codex's injected reply command, and the `muxcode agent` loop's reply send, use `ReplyTarget`, as `FormatMessage` and the LLM harness already did | On those three roads a test-chain review still answered the test agent |
+
 Deploy commands are split into two categories:
 - **Deploy patterns** (`MUXCODE_DEPLOY_PATTERNS`): all deploy commands — logged to deploy history
 - **Deploy-apply patterns** (`MUXCODE_DEPLOY_APPLY_PATTERNS`): mutation-only commands (deploy, destroy, apply) — trigger the verify chain

@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -233,6 +234,164 @@ func TestRecordRunProvenance_OnlyTestCommandsWithAnID(t *testing.T) {
 	entries, _ = os.ReadDir(runProvenanceDir(session))
 	if len(entries) != 1 || strings.ContainsAny(entries[0].Name(), "/") {
 		t.Errorf("a test command with an id records one safely named entry, got %v", entries)
+	}
+}
+
+// sendWithAutoCC sends m through Send with a fresh auto-CC limiter (it is
+// package-level, one CC per role per 60s) and fails unless edit holds the copy.
+func sendWithAutoCC(t *testing.T, session string, m Message) {
+	t.Helper()
+	saved := autoCCLastSent
+	autoCCLastSent = make(map[string]int64)
+	t.Cleanup(func() { autoCCLastSent = saved })
+	if err := Send(session, m); err != nil {
+		t.Fatal(err)
+	}
+	for _, cc := range mustPeek(t, session, "edit") {
+		if cc.ID == m.ID {
+			return
+		}
+	}
+	t.Fatal("no auto-CC copy in edit's inbox — the test cannot prove anything")
+}
+
+// MUX-216 finding B, the Phase 1 pin inverted: an auto-CC copy shares its
+// original's id, and edit consuming it once rewrote the receipt's AckedBy, so
+// a request test had received no longer read as open. The receipt is the
+// addressee's alone — edit consuming its copy first must not make the request
+// read as received either, or a real delivery gap would be hidden.
+func TestOpenRequestFor_CCConsumeLeavesAddresseeReceipt(t *testing.T) {
+	ackDeliveryOn(t)
+	useTempBusDir(t)
+	session := testSession(t)
+	SetConfig(DefaultConfig())
+	defer SetConfig(nil)
+
+	req := NewMessage("build", "test", "request", "test", "run the suite", "")
+	sendWithAutoCC(t, session, req)
+	if _, err := Receive(session, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Receive(session, "edit"); err != nil {
+		t.Fatal(err)
+	}
+	if ds, err := ReadDeliveryStatus(session, req.ID); err != nil || ds.AckedBy != "test" {
+		t.Errorf("edit's CC consume rewrote the addressee's receipt: AckedBy %q (err %v)", ds.AckedBy, err)
+	}
+	if id, ok := OpenRequestFor(session, "test"); !ok || id != req.ID {
+		t.Errorf("after edit consumed its copy: (%q, %v), want (%q, true)", id, ok, req.ID)
+	}
+	MarkResponded(session, req.ID, "resp-1")
+
+	early := NewMessage("build", "test", "request", "test", "run it again", "")
+	sendWithAutoCC(t, session, early)
+	if _, err := Receive(session, "edit"); err != nil {
+		t.Fatal(err)
+	}
+	if _, acked := ReadReceipt(session, early.ID); acked {
+		t.Error("edit consuming its copy first receipted a request test has not read")
+	}
+	if id, ok := OpenRequestFor(session, "test"); ok {
+		t.Errorf("an unread request stood behind a run after edit read its copy: %q", id)
+	}
+}
+
+// MUX-216 finding C, the Phase 1 pin inverted: two runs started under one open
+// request both carry it, and only the first claims its review; a release lets
+// an unsent dispatch's request stand behind a later run. Negative control: a
+// second, distinct request is preferred over the spent one and claims its own.
+func TestClaimRequestReview_OneReviewPerRequest(t *testing.T) {
+	ackDeliveryOn(t)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	session := testSession(t)
+	req := NewMessage("edit", "test", "request", "test", "run the suite", "")
+	if err := SendNoCC(session, req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Receive(session, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	RecordRunProvenance(session, "test", provenanceEvent("toolu_first", "./test.sh 2>&1"))
+	RecordRunProvenance(session, "test", provenanceEvent("toolu_second", "./test.sh 2>&1"))
+	first := TakeTestRunOrigin(session, "test", "toolu_first")
+	second := TakeTestRunOrigin(session, "test", "toolu_second")
+	if !first.Requested || first.Request != req.ID || second.Request != req.ID {
+		t.Fatalf("both runs must carry the request: first %+v, second %+v", first, second)
+	}
+
+	if !ClaimRequestReview(session, first.Request) {
+		t.Fatal("the first run's review must claim the request")
+	}
+	if ClaimRequestReview(session, second.Request) {
+		t.Error("a second run under the same request claimed a second review")
+	}
+	ReleaseRequestReview(session, req.ID)
+	if !ClaimRequestReview(session, req.ID) {
+		t.Error("a released claim must be claimable again")
+	}
+
+	LogChainRequestSpent(session, "test", "./test.sh 2>&1", "test", req.ID)
+	if rows := chainWithheldRows(t, session); len(rows) != 1 || !strings.Contains(rows[0].Detail, "request "+req.ID) {
+		t.Errorf("chain-withheld rows = %+v, want one naming request %s", rows, req.ID)
+	}
+
+	other := NewMessage("edit", "test", "request", "test", "run the other change", "")
+	if err := SendNoCC(session, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Receive(session, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := OpenRequestFor(session, "test"); !ok || id != other.ID {
+		t.Fatalf("a distinct open request must be preferred over the spent one: (%q, %v), want %q", id, ok, other.ID)
+	}
+	if !ClaimRequestReview(session, other.ID) {
+		t.Error("a distinct request must claim its own review")
+	}
+	MarkResponded(session, other.ID, "resp-2")
+	if id, ok := OpenRequestFor(session, "test"); !ok || id != req.ID {
+		t.Errorf("with only the spent request open it is still named: (%q, %v), want %q", id, ok, req.ID)
+	}
+}
+
+// MUX-216 finding A: the listenerless roads typed a reply instruction built
+// from the sender, so a test-chain review answered test on OpenCode and
+// scrape-road Codex. Negative control: a request with no reply role still
+// answers its sender.
+func TestSendWakeUp_ReplyInstructionNamesReplyTarget(t *testing.T) {
+	review := &ChainAction{SendTo: "review", Type: "request", Action: "review", Message: "Tests passed"}
+	for _, tc := range []struct {
+		name     string
+		provider Provider
+		pane     string
+	}{
+		{"opencode", &OpenCodeProvider{}, "╭──────╮\n│ >    │\n╰──────╯"},
+		{"codex-scrape", &CodexProvider{}, codexIdleReviewFrame},
+	} {
+		for _, req := range []struct {
+			msg  Message
+			want string
+		}{
+			{NewChainRequest("test", "test", review, "Tests passed"), "muxcode send edit response"},
+			{NewMessage("build", "review", "request", "review", "review the build", ""), "muxcode send build response"},
+		} {
+			t.Run(tc.name+"/"+req.msg.From, func(t *testing.T) {
+				session := "mux216-reply-" + tc.name + "-" + req.msg.From
+				injectionTestSession(t, session)
+				calls := stubInjectionPane(t, tc.pane, nil)
+				if err := SendNoCC(session, req.msg); err != nil {
+					t.Fatal(err)
+				}
+				if err := tc.provider.SendWakeUp(session, "review", true); errors.Is(err, ErrInjectionSkipped) {
+					t.Fatalf("the wake must inject, got %v", err)
+				}
+				typed := strings.Join(sentKeys(*calls), "\n")
+				if !strings.Contains(typed, req.want+" ") || !strings.Contains(typed, "--reply-to "+req.msg.ID) {
+					t.Errorf("reply instruction must be %q correlated to %s, typed %q", req.want, req.msg.ID, typed)
+				}
+			})
+		}
 	}
 }
 

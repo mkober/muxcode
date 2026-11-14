@@ -38,6 +38,14 @@
 #   F  the live evaluation fails closed, run against a stub codex: a turn that
 #      exits non-zero, is killed by the watchdog, emits no turn.completed or
 #      emits turn.failed fails its case; only a completed turn is evidence
+#   G  (MUX-216) a build→test request auto-CC'd to edit: edit consuming its
+#      copy after test read the request leaves the receipt test's, and the run
+#      still yields one review
+#   H  (MUX-216) two runs under one open request: one review and one
+#      chain-withheld naming the request; a distinct second request still gets
+#      its own review; a failing run under spent requests still tells edit
+#      Tests FAILED, requests no review and is not withheld. H-neg: with the spent marker removed between runs the
+#      second review fires — the check can see it
 #
 # Live section (opt-in: --live or MUXCODE_UNREQUESTED_LIVE=1; spends model
 # usage; outside the floor): a real `codex exec` acting as the test agent —
@@ -56,7 +64,7 @@ PASS=0
 FAIL=0
 LIVE_PASS=0
 LIVE_FAIL=0
-EXPECTED_PASS=40
+EXPECTED_PASS=55
 LIVE=0
 if [ "${1:-}" = --live ] || [ "${MUXCODE_UNREQUESTED_LIVE:-}" = 1 ]; then
   LIVE=1
@@ -123,9 +131,11 @@ new_session() {
 
 N=0
 BETWEEN_HOOKS=""
-# run_suite REQUEST_ID REPLY_TARGET — one suite run by the test stub; the
+# run_suite REQUEST_ID REPLY_TARGET [EXIT] — one suite run by the test stub; the
 # reply (when there is a request to answer) lands before the async hook bash,
-# and $BETWEEN_HOOKS, when set, runs in that gap.
+# and $BETWEEN_HOOKS, when set, runs in that gap. A non-zero EXIT completes the
+# call as Claude does a failure: PostToolUseFailure, its error led by
+# "Exit code N".
 run_suite() {
   N=$((N + 1))
   local tid="toolu_mux213_$N" out
@@ -137,9 +147,16 @@ run_suite() {
       --type response --reply-to "$1" --no-notify >/dev/null 2>&1
   fi
   [ -n "$BETWEEN_HOOKS" ] && "$BETWEEN_HOOKS"
-  jq -nc --arg t "$tid" '{hook_event_name:"PostToolUse",tool_name:"Bash",tool_use_id:$t,tool_input:{command:"./test.sh"},
-      tool_response:{stdout:"=== Summary ===\nmodules=2 ran=2 passed=2 failed=0",stderr:"",interrupted:false}}' \
-    | AGENT_ROLE=test "$MUX" hook bash >/dev/null 2>&1
+  if [ "${3:-0}" = 0 ]; then
+    jq -nc --arg t "$tid" '{hook_event_name:"PostToolUse",tool_name:"Bash",tool_use_id:$t,tool_input:{command:"./test.sh"},
+        tool_response:{stdout:"=== Summary ===\nmodules=2 ran=2 passed=2 failed=0",stderr:"",interrupted:false}}' \
+      | AGENT_ROLE=test "$MUX" hook bash >/dev/null 2>&1
+  else
+    jq -nc --arg t "$tid" --arg e "Exit code $3"$'\n''=== Summary ===
+modules=2 ran=2 passed=1 failed=1' \
+      '{hook_event_name:"PostToolUseFailure",tool_name:"Bash",tool_use_id:$t,tool_input:{command:"./test.sh"},error:$e}' \
+      | AGENT_ROLE=test "$MUX" hook bash >/dev/null 2>&1
+  fi
 }
 
 # read_inbox ROLE — consume ROLE's inbox as its agent does, one TSV row per
@@ -349,6 +366,82 @@ grep '"event":"chain-suppressed"' "$LIFELOG" 2>/dev/null | grep -q "graph run $R
 [ "$(withheld_rows)" = 0 ] && ok "E: graph ownership, not the request gate, held the chain" \
   || fail "E: chain-withheld rows = $(withheld_rows)"
 kill "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=""
+
+spent_rows() { grep '"event":"chain-withheld"' "$LIFELOG" 2>/dev/null | grep -c "request $1 already dispatched its review"; }
+all_spent_rows() { grep '"event":"chain-withheld"' "$LIFELOG" 2>/dev/null | grep -c "already dispatched its review"; }
+take_request() { read_inbox test | head -1 | cut -f5; }
+
+# ── G: edit consumes the auto-CC copy before the run starts ────────
+echo "-- G: edit consumes its auto-CC copy of the request before the run starts"
+new_session g
+AGENT_ROLE=build "$MUX" send test test "Run ./test.sh and report" --no-notify >/dev/null 2>&1
+GID=$(jq -r 'select(.from == "build" and .to == "test") | .id' "$BUSDIR/log.jsonl" | head -1)
+jq -e --arg id "$GID" 'select(.id == $id)' "$BUSDIR/inbox/edit.jsonl" >/dev/null 2>&1 \
+  && ok "G: edit holds the auto-CC copy of build's request, under the same id" \
+  || fail "G: no auto-CC copy of $GID in edit's inbox — the section proves nothing"
+GROWS=$(read_inbox test)
+read_inbox edit >/dev/null
+[ "$(jq -r '.acked_by' "$BUSDIR/delivery/$GID.status" 2>/dev/null)" = test ] \
+  && ok "G: edit's consume left the receipt test's" \
+  || fail "G: receipt acked_by $(jq -r '.acked_by' "$BUSDIR/delivery/$GID.status" 2>/dev/null), want test"
+while IFS=$'\t' read -r _ _ _ target id; do run_suite "$id" "$target"; done <<<"$GROWS"
+review_turn fixed
+[ "$(runs)" = 1 ] && ok "G: one run" || fail "G: runs = $(runs), want 1"
+[ "$(review_reqs)" = 1 ] && ok "G: the requested run still requested one review" \
+  || fail "G: review requests = $(review_reqs), want 1"
+[ "$(withheld_rows)" = 0 ] && ok "G: no chain-withheld row — the request still stood behind the run" \
+  || fail "G: chain-withheld rows = $(withheld_rows)"
+
+# ── H: two runs under one open request ─────────────────────────────
+# The agent reruns the suite before replying; review answers between runs, so
+# its inbox holds no identical request that would mask a second dispatch.
+echo "-- H: two runs under one open request yield one review"
+new_session h
+ask_test
+HID=$(take_request)
+run_suite "" ""
+review_turn fixed
+run_suite "" ""
+review_turn fixed
+[ "$(runs)" = 2 ] && ok "H: two runs under request $HID" || fail "H: runs = $(runs), want 2"
+[ "$(review_reqs)" = 1 ] && ok "H: one review request for one test request" \
+  || fail "H: review requests = $(review_reqs), want 1"
+[ "$(spent_rows "$HID")" = 1 ] && ok "H: the second run logged chain-withheld naming request $HID" \
+  || fail "H: spent chain-withheld rows for $HID = $(spent_rows "$HID"), want 1"
+[ "$(withheld_rows)" = 0 ] && ok "H: neither run read as unrequested" \
+  || fail "H: no-request chain-withheld rows = $(withheld_rows)"
+# --force: edit's first request is still an in-flight task, which refuses a second test:test send.
+H2SEND=$(AGENT_ROLE=edit "$MUX" send test test "Run ./test.sh for the follow-up change and report" --no-notify --force 2>&1 | tr '\n' ' ')
+H2LOG=$(jq -c 'select(.to == "test") | [.from, .type, .action, .id]' "$BUSDIR/log.jsonl" 2>/dev/null | tail -2 | tr '\n' ' ')
+H2ID=$(take_request)
+run_suite "" ""
+[ -n "$H2ID" ] && [ "$H2ID" != "$HID" ] && [ "$(review_reqs)" = 2 ] \
+  && ok "H: a second, distinct request ($H2ID) still requested its own review" \
+  || fail "H: second request '$H2ID' (send: $H2SEND; log to test: $H2LOG), review requests = $(review_reqs), want 2; spent: $(ls "$BUSDIR/spent-requests" 2>/dev/null | tr '\n' ' '); rows: $(grep -E '"event":"(chain-[a-z]+|workflow[a-z-]*)"' "$LIFELOG" 2>/dev/null | tail -3 | jq -r '.event + " " + .detail' 2>/dev/null | tr '\n' '|')"
+# Failure control: every open request has now spent its review; a failing run
+# under them must still reach edit, and the spent-request guard must not see it.
+run_suite "" "" 3
+[ "$(count_log '.from == "test" and .to == "edit" and .action == "notify" and (.payload | contains("Tests FAILED (exit 3)"))')" = 1 ] \
+  && ok "H: a failing run under spent requests still told edit Tests FAILED (exit 3)" \
+  || fail "H: Tests FAILED (exit 3) notices to edit = $(count_log '.from == "test" and .to == "edit" and .action == "notify"')"
+[ "$(review_reqs)" = 2 ] && ok "H: the failing run requested no review" \
+  || fail "H: review requests = $(review_reqs) after the failing run, want 2"
+[ "$(all_spent_rows)" = 1 ] && ok "H: the failure was not withheld by the spent-request guard" \
+  || fail "H: spent-request chain-withheld rows = $(all_spent_rows), want 1 (run 2's alone)"
+
+# ── H negative control: the spent marker removed between runs ──────
+echo "-- H-neg: negative control — the spent-request marker removed between runs"
+new_session hn
+ask_test
+HNID=$(take_request)
+run_suite "" ""
+review_turn fixed
+rm -rf "$BUSDIR/spent-requests"
+run_suite "" ""
+[ "$(review_reqs)" = 2 ] && ok "H-neg: without the spent marker the second run requests a second review — the check can see it" \
+  || fail "H-neg: review requests = $(review_reqs), want 2 — the script cannot see a second dispatch"
+[ "$(spent_rows "$HNID")" = 0 ] && ok "H-neg: and no spent chain-withheld row" \
+  || fail "H-neg: spent rows = $(spent_rows "$HNID")"
 
 # ── Live: a real codex test agent ──────────────────────────────────
 lok()   { LIVE_PASS=$((LIVE_PASS + 1)); echo "  ok (live): $1"; }
