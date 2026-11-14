@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -20,9 +21,10 @@ func testSession(t *testing.T) string {
 
 func TestSendDropsSelfAddressed(t *testing.T) {
 	session := testSession(t)
-	// A self-addressed message (from == to) must never be delivered.
-	if err := Send(session, NewMessage("deploy", "deploy", "request", "verify", "self ping", "")); err != nil {
-		t.Fatalf("Send: %v", err)
+	// A self-addressed message (from == to) must never be delivered, and the
+	// drop must be reported, not returned as a send (MUX-155).
+	if err := Send(session, NewMessage("deploy", "deploy", "request", "verify", "self ping", "")); !errors.Is(err, ErrSelfSendDropped) {
+		t.Fatalf("Send = %v, want ErrSelfSendDropped", err)
 	}
 	if msgs, _ := Peek(session, "deploy"); len(msgs) != 0 {
 		t.Errorf("self-send should be dropped, inbox has %d message(s)", len(msgs))
@@ -117,8 +119,8 @@ func TestSelfAddressedReplyRecordsCorrelation(t *testing.T) {
 	}
 
 	noise := NewMessage("edit", "edit", "response", "response", "no reply-to", "")
-	if err := SendNoCC(session, noise); err != nil {
-		t.Fatalf("SendNoCC: %v", err)
+	if err := SendNoCC(session, noise); !errors.Is(err, ErrSelfSendDropped) {
+		t.Fatalf("SendNoCC = %v, want ErrSelfSendDropped", err)
 	}
 	if msgs, _ := Peek(session, "edit"); len(msgs) != 0 {
 		t.Error("a reply-less self-send must stay fully dropped (negative control)")

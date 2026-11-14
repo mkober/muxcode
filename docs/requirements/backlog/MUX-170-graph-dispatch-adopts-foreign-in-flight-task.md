@@ -43,7 +43,7 @@ dedup, `cmd/send.go:184–189` (`--track`) and `:191–197` (`--wait` reattach),
 
 **Does the fix have to cover worker sends?** Yes — a worker's delegation is lost silently and the
 worker reports someone else's task as its own. But that road is
-[MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md)'s, which already names
+[MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md)'s, which already names
 `cmd/send.go:184-189` and plans to add `from` to the `FindInFlightTask` / `HasInFlightTaskForRole`
 key. That one change fixes this case and narrows this spec's trigger; this spec's `dispatchNode`
 ownership check alone would **not** have prevented it. The two should ship together (they share
@@ -61,7 +61,7 @@ ownership check alone would **not** have prevented it. The two should ship toget
   is still open, attach to it — leaked into graph dispatch, where the open request can be anyone's.
 - The suppression path writes no lifecycle row and the adoption writes none, so the run's only
   visible events are the node start and, 297 s later, its failure.
-- Related but distinct: [MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md) — the send-side
+- Related but distinct: [MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md) — the send-side
   dedup keying on target rather than sender is why a foreign task could suppress the dispatch at
   all. Fixing MUX-155 narrows the trigger; this spec is about what the executor does when it fires.
 
@@ -132,7 +132,7 @@ claim what it refused.
   above.
 - Second case added 2026-09-28 on the user's instruction relayed by edit, verified against the
   worker's two reports, `log.jsonl` and `cmd/send.go:177–198`.
-- Related: [MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md) (the trigger);
+- Related: [MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md) (the trigger);
   [MUX-171](./MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) (found in the same hour, the
   other way a daemon mechanism written for one case fires on another);
   [MUX-112](./MUX-112-idle-task-rescue-closes-live-work.md) and

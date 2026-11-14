@@ -72,7 +72,7 @@ Candidates, none verified:
 - A FAILED notice or a must-fix finding about a tree mid-edit is indistinguishable, to edit, from one
   about finished work.
 - Each cycle occupies the test and review agents, so a graph node's real dispatch to either waits or
-  is suppressed as a duplicate ([MUX-155](../backlog/MUX-155-send-dedup-keys-on-target-not-sender.md),
+  is suppressed as a duplicate ([MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md),
   [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)).
 
 ## Requirements

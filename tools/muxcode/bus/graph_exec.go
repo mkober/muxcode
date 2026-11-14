@@ -1261,7 +1261,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
 				taskID := m.ID // suppressed = duplicate exists; adopt it — see doc comment
-				if t, found := FindInFlightTask(session, n.Role, n.Action); found {
+				if t, found := FindInFlightTask(session, n.Role, m.From, n.Action); found {
 					taskID = t.ID
 				} else if pm, found := FindPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload); found {
 					adopted := m // keyed to the queued duplicate's id — see doc comment

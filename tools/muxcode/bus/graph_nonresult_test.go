@@ -134,7 +134,10 @@ func TestExecSendNodeNonResultGenuineReplyWithoutSentinelHolds(t *testing.T) {
 func TestExecSendNodeNonResultFirstGenuineReplyWins(t *testing.T) {
 	run, taskID := chromeCompletedSendNode(t, ruleLine158())
 	first := replyToTask(t, taskID, "build broke. EXIT=1")
-	second := replyToTask(t, taskID, "fixed it. EXIT=0")
+	second := NewMessage("build", "edit", "response", "response", "fixed it. EXIT=0", taskID)
+	if err := Send(runTestSession, second); !errors.Is(err, ErrReplySuppressed) {
+		t.Errorf("the second reply must be reported suppressed, got %v", err)
+	}
 
 	if got := mustReadTask(t, taskID).ResponseID; got != first.ID {
 		t.Fatalf("task response = %s, want the first genuine reply %s", got, first.ID)
@@ -206,8 +209,8 @@ func TestClaimReplyOutsideTheGraph(t *testing.T) {
 			}
 
 			late := NewMessage(tc.target, tc.requester, "response", "response", "built again. EXIT=0", task.ID)
-			if err := Send(runTestSession, late); err != nil {
-				t.Fatal(err)
+			if err := Send(runTestSession, late); !errors.Is(err, ErrReplySuppressed) {
+				t.Fatalf("a late reply must be reported suppressed, got %v", err)
 			}
 			if got := mustReadTask(t, task.ID).ResponseID; got != genuine.ID {
 				t.Errorf("a late reply overwrote the answer: response = %s", got)
@@ -230,8 +233,8 @@ func TestClaimReplyRefusesStrangers(t *testing.T) {
 		NewMessage("build", "edit", "event", "notify", "built. EXIT=0", task.ID),
 	}
 	for _, m := range strangers {
-		if err := Send(runTestSession, m); err != nil {
-			t.Fatal(err)
+		if err := Send(runTestSession, m); !errors.Is(err, ErrReplySuppressed) {
+			t.Fatalf("%s from %s must be reported suppressed, got %v", m.Type, m.From, err)
 		}
 		if got := mustReadTask(t, task.ID).ResponseID; got != task.ResponseID {
 			t.Fatalf("%s %s from %s claimed the task", m.Type, m.Action, m.From)

@@ -338,7 +338,8 @@ echo "--- Phase 7: Dedup verification ---"
 # cannot stop the repeat first and stand in for the dedup under test.
 FIRST=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Dedup test: check http://localhost:$PORT/ for errors" 2>&1)
 sleep 1
-SECOND=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Dedup test: check http://localhost:$PORT/ for errors" 2>&1)
+# A suppressed send exits 1 (MUX-155), so the capture must not trip set -e.
+SECOND=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Dedup test: check http://localhost:$PORT/ for errors" 2>&1) || true
 
 if echo "$FIRST" | grep -q "Sent"; then
   log_pass "First browser-check message delivered"
