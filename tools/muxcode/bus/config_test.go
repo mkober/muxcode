@@ -56,6 +56,29 @@ func TestDefaultBusBase_IsolatedFromRealState(t *testing.T) {
 	}
 }
 
+// TestDefaultMemoryDir_IsolatedFromSourceTree pins TestMain's BUS_MEMORY_DIR:
+// MemoryDir's default is the relative .muxcode/memory, so Init(session, "") in
+// a test that pins nothing seeded shared.md into this package's source tree —
+// tools/muxcode/bus/.muxcode/memory held one (MUX-137). Removing the pin fails
+// this test.
+func TestDefaultMemoryDir_IsolatedFromSourceTree(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := MemoryDir()
+	if !filepath.IsAbs(dir) || pathWithin(dir, wd) {
+		t.Fatalf("MemoryDir() = %q resolves into the source tree %s; TestMain must pin BUS_MEMORY_DIR", dir, wd)
+	}
+	useTempBusDir(t)
+	if err := Init("test-memory-net", ""); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shared.md")); err != nil {
+		t.Errorf("Init(session, \"\") seeded no memory under the pinned %s: %v", dir, err)
+	}
+}
+
 // TestStateDir_Resolution: an absolute XDG_STATE_HOME wins, a relative one is
 // ignored for ~/.local/state, and the bus base sits beneath the state root.
 func TestStateDir_Resolution(t *testing.T) {

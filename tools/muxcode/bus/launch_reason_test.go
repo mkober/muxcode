@@ -11,10 +11,10 @@ import (
 // startup message PreLaunchSetup seeded.
 func autoStartupFor(t *testing.T, reason LaunchReason) Message {
 	t.Helper()
-	dir := t.TempDir()
+	dir := useTempBusDir(t)
 	session := "test-launch-reason"
-	t.Setenv("BUS_DIR_BASE", dir)
 	Init(session, dir)
+	assertIsolatedBus(t, session, dir)
 
 	PreLaunchSetup("auto", session, "claude", reason)
 
@@ -101,10 +101,10 @@ func TestPreLaunchSetup_AutoTaskOnlyOnUserReason(t *testing.T) {
 // unrelated request queued ahead of it survives.
 func TestPreLaunchSetup_RestartRetiresUnreadTask(t *testing.T) {
 	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
-	dir := t.TempDir()
+	dir := useTempBusDir(t)
 	session := "test-launch-retire"
-	t.Setenv("BUS_DIR_BASE", dir)
 	Init(session, dir)
+	assertIsolatedBus(t, session, dir)
 
 	other := NewMessage("edit", "auto", "request", "implement", "unrelated", "")
 	_ = SendNoCC(session, other)

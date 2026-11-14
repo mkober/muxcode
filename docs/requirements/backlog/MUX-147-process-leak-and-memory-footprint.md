@@ -41,7 +41,7 @@ reparented to launchd). Zero were correctly parented. Characteristics:
 Reaped by hand 2026-09-03 (`kill -TERM` filtered on `ppid == 1`), reclaiming ~243 MB. **The
 mechanism that created them is untouched**, so they will accumulate again.
 
-**Same family as [`MUX-137`](./MUX-137-test-bus-dir-leak.md)** — hermetic test scripts not
+**Same family as [`MUX-137`](../completed/MUX-137-test-bus-dir-leak.md)** — hermetic test scripts not
 cleaning up after themselves. MUX-137 leaks *directories*; this leaks *running processes*, which
 is strictly worse: they hold memory, consume CPU, and poll live bus inboxes indefinitely.
 

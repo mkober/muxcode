@@ -178,7 +178,7 @@ the authority to use it. The skill update is an acceptance criterion, not docume
 | Spec | Relationship |
 |------|--------------|
 | [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Same irreversible-partial-state class the batch receipts guard against |
-| [MUX-137](./MUX-137-test-bus-dir-leak.md) | Hermetic-test discipline — the stub Jira exists so this suite never touches a real tracker |
+| [MUX-137](../completed/MUX-137-test-bus-dir-leak.md) | Hermetic-test discipline — the stub Jira exists so this suite never touches a real tracker |
 
 ## Status
 

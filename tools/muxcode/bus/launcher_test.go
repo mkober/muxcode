@@ -565,13 +565,13 @@ func TestClassifyPane_BypassTakesPrecedence(t *testing.T) {
 }
 
 func TestNeedsWakeUp(t *testing.T) {
-	SetBusDirBase(t.TempDir())
-	defer ResetBusDirBase()
+	dir := useTempBusDir(t)
 
 	session := "test-needs-wakeup"
-	if err := Init(session, os.Getenv("BUS_DIR_BASE")); err != nil {
+	if err := Init(session, dir); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
+	assertIsolatedBus(t, session, dir)
 
 	// No messages — should not need wake-up
 	if NeedsWakeUp(session, "edit") {

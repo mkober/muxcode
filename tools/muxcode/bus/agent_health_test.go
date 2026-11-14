@@ -6,45 +6,35 @@ import (
 	"testing"
 )
 
+// TestAgentStoppedMarkerRoundTrip drives the `agent-health --stop`/`--start`
+// marker through its real API. It once wrote and statted its own file under a
+// BUS_DIR_PREFIX that nothing reads, so it exercised no production code
+// (MUX-137's phantom-variable class).
 func TestAgentStoppedMarkerRoundTrip(t *testing.T) {
-	// Use a temp directory for the bus dir
-	tmpDir := t.TempDir()
-	session := "test-health"
-	busDir := filepath.Join(tmpDir, "muxcode-bus-"+session)
-	lockDir := filepath.Join(busDir, "lock")
-	if err := os.MkdirAll(lockDir, 0755); err != nil {
+	dir := useTempBusDir(t)
+	const session = "test-health"
+	if err := os.MkdirAll(filepath.Join(BusDir(session), "lock"), 0755); err != nil {
 		t.Fatalf("failed to create lock dir: %v", err)
 	}
 
-	// Override BusDir for this test
-	origBusDir := os.Getenv("BUS_DIR_PREFIX")
-	os.Setenv("BUS_DIR_PREFIX", tmpDir+"/muxcode-bus-")
-	defer os.Setenv("BUS_DIR_PREFIX", origBusDir)
-
-	// Use the actual path directly since BusDir uses /tmp
-	stoppedPath := filepath.Join(lockDir, "build.stopped")
-
-	// Initially not stopped
-	if _, err := os.Stat(stoppedPath); err == nil {
-		t.Error("expected stopped marker to not exist initially")
+	if IsAgentStopped(session, "build") {
+		t.Error("expected build not stopped initially")
 	}
-
-	// Write marker
-	if err := os.WriteFile(stoppedPath, []byte("stopped"), 0644); err != nil {
-		t.Fatalf("failed to write stopped marker: %v", err)
+	if err := MarkAgentStopped(session, "build"); err != nil {
+		t.Fatalf("MarkAgentStopped: %v", err)
 	}
-
-	// Verify it exists
-	if _, err := os.Stat(stoppedPath); err != nil {
-		t.Error("expected stopped marker to exist after write")
+	if !IsAgentStopped(session, "build") {
+		t.Error("expected build stopped after MarkAgentStopped")
 	}
-
-	// Remove marker
-	os.Remove(stoppedPath)
-
-	// Verify removed
-	if _, err := os.Stat(stoppedPath); err == nil {
-		t.Error("expected stopped marker to not exist after remove")
+	if IsAgentStopped(session, "test") {
+		t.Error("a stop marker for build must not stop test")
+	}
+	if p := AgentStoppedPath(session, "build"); !pathWithin(p, dir) {
+		t.Errorf("marker %s is outside the test's bus directory %s", p, dir)
+	}
+	ClearAgentStopped(session, "build")
+	if IsAgentStopped(session, "build") {
+		t.Error("expected build not stopped after ClearAgentStopped")
 	}
 }
 
