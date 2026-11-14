@@ -858,7 +858,12 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 
 	// Deliver a bounded batch so a large inbox cannot build an argv that
 	// send-keys rejects outright; the remainder drains on later cycles.
-	batch := BoundWakeUpBatch(msgs)
+	keep, responses := splitWakeBatch(msgs)
+	notice := settleWakeResponses(session, role, responses)
+	if len(keep) == 0 && notice == "" {
+		return nil
+	}
+	batch := BoundWakeUpBatch(keep)
 	batchIDs := make(map[string]bool, len(batch))
 	for _, msg := range batch {
 		batchIDs[msg.ID] = true
@@ -895,7 +900,13 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	// uses the delivered-kind consume; self-sends are ignored by receipt readers).
 	if len(parts) == 0 {
 		_, _ = ReceiveDeliveredIDs(session, role, batchIDs)
-		return nil
+		if notice == "" {
+			return nil
+		}
+		batchIDs = map[string]bool{}
+	}
+	if notice != "" {
+		parts = append(parts, notice)
 	}
 	prompt := CodexRoleIdentity(SpawnBaseRole(session, role)) + " — " + strings.Join(parts, " | ")
 
@@ -909,11 +920,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"
 	}
-	// Prepend AND append reply instructions for request messages.
-	// Smaller models lose trailing instructions after long tool-use
-	// sequences, so the reply command appears both at the start (as a
-	// priority directive) and at the end (as a reminder).
-	// Response-only wake-ups skip this to avoid infinite echo loops.
+	// Reply instruction twice for a request — small models lose a trailing one; an event-only batch gets none.
 	if hasRequest {
 		replyCmd := buildReplyCommand(replyTarget, lastRequestID)
 		prompt = fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", replyCmd) + prompt

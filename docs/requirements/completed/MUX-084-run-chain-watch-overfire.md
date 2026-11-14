@@ -118,7 +118,7 @@ Invert the gate from denylist to allowlist using existing machinery:
 | Dependency | Note |
 |------------|------|
 | [`conditional-chains`](../completed/MUX-043-conditional-chains.md) | Condition framework this fix uses |
-| [`response-echo-chain-retrigger`](../backlog/MUX-009-response-echo-chain-retrigger.md) | Sibling chain-noise defect on non-hook agents |
+| [`response-echo-chain-retrigger`](./MUX-009-response-echo-chain-retrigger.md) | Sibling chain-noise defect on non-hook agents |
 
 ## Implementation
 

@@ -714,31 +714,31 @@ func HasMessages(session, role string) bool {
 }
 
 // HasActionableMessages returns true if the role's inbox contains at least one
-// message that requires action (i.e. a "request" type). Response and event
-// messages are informational — they don't require the agent to do anything.
-// Use this instead of HasMessages() for wake-up decisions to prevent echo loops
-// where agents keep acknowledging each other's responses.
+// request the role still owes work on. Response and event messages are
+// informational — they don't require the agent to do anything. Use this
+// instead of HasMessages() for wake-up decisions to prevent echo loops where
+// agents keep acknowledging each other's responses.
+//
+// A request does not count when:
+//   - it is accidentally self-addressed: the agent can't complete its own
+//     request, so a wake would loop forever (the startup self-send is exempt —
+//     see isLoopingSelfSend);
+//   - role is not its primary destination: auto-CC copies a request addressed
+//     to another agent verbatim into edit's inbox (To stays "review"), and
+//     counting it made the daemon re-wake edit indefinitely for a request it
+//     can never answer. WindowForRole matches sendMessage's routing, so a
+//     hosted request still counts;
+//   - it is already answered (IsResponded). MarkResponded drains an answered
+//     row, but a row it could not reach kept the daemon waking the agent for
+//     finished work — on 2026-08-17 each such wake re-fired build's chain
+//     (MUX-009).
 func HasActionableMessages(session, role string) bool {
 	msgs, err := Peek(session, role)
 	if err != nil || len(msgs) == 0 {
 		return false
 	}
 	for _, m := range msgs {
-		// Accidental self-addressed requests never warrant a wake-up — they
-		// would loop forever since the agent can't complete its own request.
-		// (The startup self-send is exempt — see isLoopingSelfSend.)
-		if m.Type != "request" || isLoopingSelfSend(m) {
-			continue
-		}
-		// A request is actionable for this role ONLY if the role is its primary
-		// destination. Auto-CC copies a request addressed to another agent (e.g.
-		// test→review) verbatim into edit's inbox — the copy keeps To="review".
-		// Such a CC is informational, not work edit can complete; counting it as
-		// actionable made the daemon re-wake edit indefinitely for a request it
-		// can never respond to. WindowForRole matches the delivery routing used
-		// in sendMessage, so a genuinely-addressed (or hosted) request still
-		// counts while a CC does not.
-		if WindowForRole(m.To) != role {
+		if m.Type != "request" || isLoopingSelfSend(m) || WindowForRole(m.To) != role || IsResponded(session, m.ID) {
 			continue
 		}
 		return true
