@@ -97,19 +97,21 @@ const GraphReloadDeferralPrefix = "graph run "
 // The graph clause closes MUX-217's window: the check ran in the same poll
 // iteration as the executor's dispatch but before it, so neither the inbox nor
 // the task clause could see a request the relaunch then cleared
-// (GraphNeedsRole).
+// (GraphNeedsRole). It is asked before the inbox and task clauses so a role a
+// run is using — its dispatch queued or in flight — is deferred with the run
+// and node named, which only that reason logs (PR #196 review).
 func AutoReloadSafe(session, role string) (bool, string) {
 	if IsReloading(session, role) {
 		return false, "reload in progress"
+	}
+	if runID, nodeID, ok := GraphNeedsRole(session, role); ok {
+		return false, fmt.Sprintf("%s%s needs %s as node %s", GraphReloadDeferralPrefix, runID, role, nodeID)
 	}
 	if HasActionableMessages(session, role) {
 		return false, "pending actionable inbox"
 	}
 	if hasLiveInFlightTask(session, role) {
 		return false, "in-flight task"
-	}
-	if runID, nodeID, ok := GraphNeedsRole(session, role); ok {
-		return false, fmt.Sprintf("%s%s needs %s as node %s", GraphReloadDeferralPrefix, runID, role, nodeID)
 	}
 	if IsClaudeTUI(ResolveProvider(role)) {
 		if !IsAgentIdle(session, role) {

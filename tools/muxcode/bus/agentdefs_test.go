@@ -164,6 +164,24 @@ func TestAutoReloadSafe_DefersWhileGraphNeedsRole(t *testing.T) {
 	}
 	wantDeferred("test running before its dispatch task exists")
 
+	// PR #196 review: with the dispatch queued and in flight the reason must
+	// still name the run and node, not the generic inbox or task clause.
+	dispatch := NewMessage(graphSender, "test", "request", "test", "run the suite", "")
+	if err := Send(runTestSession, dispatch); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(runTestSession, dispatch, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateNodeStatus(runTestSession, run.ID, "test", func(s *GraphNodeStatus) { s.TaskID = dispatch.ID }); err != nil {
+		t.Fatal(err)
+	}
+	wantDeferred("test's dispatch queued and in flight")
+
+	if _, err := Receive(runTestSession, "test"); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(runTestSession, dispatch.ID, "resp-1")
 	if err := TransitionGraphNode(runTestSession, run.ID, "test", GraphNodeDone,
 		func(s *GraphNodeStatus) { s.Outcome = OutcomeSuccess }); err != nil {
 		t.Fatalf("finish test: %v", err)
