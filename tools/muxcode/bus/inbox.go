@@ -475,10 +475,10 @@ func Receive(session, role string) ([]Message, error) {
 
 	_ = os.Remove(consuming)
 
-	// Write a receipt for each message — a positive signal of receipt keyed by
-	// message ID, advancing status to acked.
+	// Receipt each message addressed to role, advancing it to acked; an
+	// auto-CC copy is not receipted (writeConsumeReceipt).
 	for _, m := range msgs {
-		WriteReceipt(session, m.ID, role, ReceiptKindAck)
+		writeConsumeReceipt(session, m, role, ReceiptKindAck)
 	}
 
 	// Clear notification state — agent has consumed all messages, start fresh.
@@ -585,7 +585,7 @@ func receiveMatching(session, role, kind string, match func(Message) bool) ([]Me
 
 	if kind != "" {
 		for _, m := range matched {
-			WriteReceipt(session, m.ID, role, kind)
+			writeConsumeReceipt(session, m, role, kind)
 		}
 	}
 
@@ -665,10 +665,11 @@ func ConsumeByID(session, role, msgID string) (bool, error) {
 	// practice, but if a row were ever duplicated, keeping one back would leave
 	// the request actionable — precisely the lingering-row bug this exists to fix.
 	var found bool
+	var target Message
 	rest := make([]Message, 0, len(all))
 	for _, m := range all {
 		if m.ID == msgID {
-			found = true
+			found, target = true, m
 			continue
 		}
 		rest = append(rest, m)
@@ -693,7 +694,7 @@ func ConsumeByID(session, role, msgID string) (bool, error) {
 	}
 
 	if found {
-		WriteReceipt(session, msgID, role, ReceiptKindAck)
+		writeConsumeReceipt(session, target, role, ReceiptKindAck)
 	}
 	return found, nil
 }

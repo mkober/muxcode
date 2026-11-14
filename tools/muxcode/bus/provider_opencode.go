@@ -163,7 +163,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 	// the agent sends a response to itself, which triggers a wake-up,
 	// which injects the self-message, which triggers another response.
 	var parts []string
-	var lastFrom, lastRequestID, lastRequestFrom string
+	var lastFrom, lastRequestID, lastRequestTarget string
 	hasRequest := false
 	for _, m := range batch {
 		// Skip messages from self — these are loop artifacts
@@ -178,7 +178,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 		lastFrom = m.From
 		if m.Type == "request" {
 			hasRequest = true
-			lastRequestID, lastRequestFrom = m.ID, m.From
+			lastRequestID, lastRequestTarget = m.ID, ReplyTarget(m)
 		}
 	}
 	// If the whole batch was self-addressed, consume and discard it (daemon path
@@ -188,10 +188,10 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 		return nil
 	}
 	prompt := strings.Join(parts, " | ALSO: ")
-	// The reply belongs to whoever asked, not whoever spoke last.
+	// The reply belongs to the request's reply target, not whoever spoke last.
 	replyTarget := NormalizeBusRole(lastFrom)
-	if lastRequestFrom != "" {
-		replyTarget = NormalizeBusRole(lastRequestFrom)
+	if lastRequestTarget != "" {
+		replyTarget = lastRequestTarget
 	}
 	if replyTarget == "" || !IsKnownRole(replyTarget) {
 		replyTarget = "edit"

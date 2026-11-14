@@ -142,8 +142,11 @@ func hookScrub() {
 // the test→review→test loop (MUX-213) is that a test-chain success fires only
 // when a request stood behind the run as it started (captured by the guard
 // hook before the agent could reply) — a run started by a review reply, a wake
-// or a rerun after the reply is logged chain-withheld instead. A failure still
-// notifies, so no failing run is hidden.
+// or a rerun after the reply is logged chain-withheld instead. One request
+// stands behind at most one such dispatch (bus.ClaimRequestReview): a second
+// run under it is withheld naming the request, and a claim whose dispatch is
+// not sent is released (MUX-216). A failure still notifies, so no failing run
+// is hidden.
 func triggerChain(session, from, eventType, outcome, exitCode, command, toolUseID string, ctx *bus.ChainContext) {
 	state := bus.ReadWorkflowState(session).State
 	switch eventType {
@@ -189,12 +192,21 @@ func triggerChain(session, from, eventType, outcome, exitCode, command, toolUseI
 		return
 	}
 
+	spends := eventType == "test" && outcome == "success" && origin.Request != ""
+	if spends && !bus.ClaimRequestReview(session, origin.Request) {
+		bus.LogChainRequestSpent(session, from, command, eventType, origin.Request)
+		return
+	}
+
 	message := bus.ExpandMessageWithContext(action.Message, exitCode, command, ctx)
 	msg := bus.NewChainRequest(from, eventType, action, message)
 
 	// Atomic dedup check + send under file lock
 	sent, err := bus.SendNoCCIfNotDuplicate(session, msg)
 	if err != nil || !sent {
+		if spends {
+			bus.ReleaseRequestReview(session, origin.Request)
+		}
 		return
 	}
 	_ = bus.Notify(session, action.SendTo)

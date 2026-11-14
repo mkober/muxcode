@@ -223,7 +223,7 @@ func processMessages(ctx context.Context, cfg AgentConfig, client *OllamaClient,
 		finalResponse = finalResponse[:4000] + "\n... [truncated]"
 	}
 
-	replyMsg := NewMessage(cfg.busRole(), lastMsg.From, "response", lastMsg.Action, finalResponse, lastMsg.ID)
+	replyMsg := NewMessage(cfg.busRole(), ReplyTarget(lastMsg), "response", lastMsg.Action, finalResponse, lastMsg.ID)
 	if err := Send(cfg.Session, replyMsg); err != nil {
 		fmt.Fprintf(os.Stderr, "[agent] send response error: %v\n", err)
 	}

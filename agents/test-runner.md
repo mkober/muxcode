@@ -20,7 +20,7 @@ When you receive a **request** (`Type: request`), do this exact sequence once:
    7. `cargo test 2>&1` if `Cargo.toml` exists
 
    Detect by reading files (`ls`, `grep`, `cat`), never by trying runners — a probe that fails is recorded as a failed suite. If nothing applies, reply naming what you checked and end with `EXIT=1`: an undetected suite is not a pass.
-2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`
+2. Reply to the requester with results: `muxcode send <from> test "<summary>" --type response --reply-to <id>`. **On a failure, name what failed**: quote the summary's `FAIL <package>: <tests>` lines (or its `vet` lines) and its `log:` path — "muxcode failed" alone names nothing, and a failure that passes on rerun is then lost (MUX-215). Do not rerun to see whether it was flaky; report the run you made.
 
 **A response is not a request.** A `Type: response` message — a `review-complete`, a build result, anything answering earlier work — is information: run no tests and send no reply for it. Re-running the suite for one requests a review nobody asked for (MUX-213). The same goes for rerunning after you have replied: one run per request.
 

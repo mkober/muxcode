@@ -134,6 +134,20 @@ func WriteReceipt(session, msgID, ackedBy, kind string) {
 	_ = writeDeliveryStatus(session, ds)
 }
 
+// writeConsumeReceipt writes m's receipt for a consume by role, but only when
+// role is m's addressee — the inbox Send delivered it to. An auto-CC copy keeps
+// its original's id, which --reply-to correlation, FindMessageByID and
+// ConsumeByID's drain rely on, so the receipt belongs to the addressee alone:
+// edit consuming its copy used to rewrite AckedBy, hiding a request test had
+// received from OpenRequestFor, and to mark a message the addressee had not yet
+// read as received (MUX-216).
+func writeConsumeReceipt(session string, m Message, role, kind string) {
+	if WindowForRole(m.To) != WindowForRole(role) {
+		return
+	}
+	WriteReceipt(session, m.ID, role, kind)
+}
+
 // hasReceipt is the single definition of "this message was received", shared by
 // every read-side consumer (ReadReceipt, and through it ReceiptGap).
 //
