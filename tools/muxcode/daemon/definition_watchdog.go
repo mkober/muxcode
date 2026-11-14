@@ -130,6 +130,10 @@ func (d *Daemon) checkDefinitionless() {
 			continue
 		}
 
+		release, err := d.reserveReload(d.session, role)
+		if err != nil {
+			continue
+		}
 		d.definitionReloads[role]++
 		d.lastDefinitionReload[role] = now
 		delete(d.definitionSeen, role)
@@ -137,11 +141,11 @@ func (d *Daemon) checkDefinitionless() {
 			ts, role, d.definitionReloads[role], definitionReloadCap)
 		bus.LogLifecycle(d.session, "warn", "daemon", "definition-reload",
 			fmt.Sprintf("%s reload %d/%d", role, d.definitionReloads[role], definitionReloadCap))
-		go func(r string) {
-			if err := d.reloadAgent(d.session, r); err != nil {
+		go func(r string, release func()) {
+			if err := d.reloadAgent(d.session, r, release); err != nil {
 				fmt.Fprintf(os.Stderr, "  [watchdog] definition reload of %s failed: %v\n", r, err)
 			}
-		}(role)
+		}(role, release)
 	}
 }
 

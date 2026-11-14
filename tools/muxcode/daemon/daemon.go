@@ -127,6 +127,7 @@ type Daemon struct {
 	autoReloads        map[string]*autoReload // role → agent-defs reloads issued toward the installed state
 	reloadCooldownSecs int64                  // cooldown between those reloads
 	sandboxKnown       map[string]string      // role → last sandbox fingerprint the installed binary reported
+	graphDeferral      map[string]string      // role → graph deferral last logged for it
 	lastPaneSupervise  int64
 	paneRecycleDone    bool  // recycle-on-install decided (once per daemon start)
 	startedAt          int64 // daemon start time — recycle only panes that predate it
@@ -160,7 +161,8 @@ type Daemon struct {
 	probeDefinition   func(session, role string) bus.DefinitionProbe
 	capturePane       func(target string, lines int) (string, error)
 	denyApproval      func(target string) error
-	reloadAgent       func(session, role string) error
+	reserveReload     func(session, role string) (release func(), err error)
+	reloadAgent       func(session, role string, release func()) error
 	reloadSafe        func(session, role string) (bool, string)
 	sandboxPrints     sandboxProbe
 	snapshotAgentDown func(session, role string) (string, error)
@@ -254,6 +256,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		autoReloads:           make(map[string]*autoReload),
 		reloadCooldownSecs:    autoReloadCooldownSecs,
 		sandboxKnown:          make(map[string]string),
+		graphDeferral:         make(map[string]string),
 		lastPaneSupervise:     now, // skip first interval — the launcher owns launch-time pane creation; a sweep mid-launch sees half-built windows as pane-less and double-creates
 		startedAt:             now,
 		pollGapSince:          make(map[string]int64),
@@ -278,15 +281,14 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		frPaneGated: func(role string) bool {
 			return bus.ResolveProvider(role).SelfPollsInbox()
 		},
-		agentAlive:      bus.IsAgentAlive,
-		windowNames:     bus.TmuxListWindowNames,
-		forceDeliver:    bus.ForceDeliver,
-		probeDefinition: bus.ProbeAgentDefinition,
-		capturePane:     bus.TmuxCapturePaneLines,
-		denyApproval:    bus.DenyCodexApproval,
-		reloadAgent: func(session, role string) error {
-			return bus.ReloadAgent(session, role, "", "", false)
-		},
+		agentAlive:        bus.IsAgentAlive,
+		windowNames:       bus.TmuxListWindowNames,
+		forceDeliver:      bus.ForceDeliver,
+		probeDefinition:   bus.ProbeAgentDefinition,
+		capturePane:       bus.TmuxCapturePaneLines,
+		denyApproval:      bus.DenyCodexApproval,
+		reserveReload:     bus.ReserveReload,
+		reloadAgent:       bus.ReloadAgentReserved,
 		reloadSafe:        bus.AutoReloadSafe,
 		sandboxPrints:     backgroundProbe(bus.SandboxFingerprinter(time.Duration(autoReloadCooldownSecs) * time.Second)),
 		snapshotAgentDown: bus.SnapshotAgentDown,
@@ -1513,7 +1515,10 @@ const agentDefsCheckSecs int64 = 10
 // fingerprint together — draws on one budget, cooled down and capped
 // (reloadDue), whichever change triggered it: a reload that cannot land the new
 // stamps never loops. A reload also waits until bus.AutoReloadSafe passes, so a
-// running build or test is never interrupted. The orchestrator (edit) and
+// running build or test is never interrupted, nor a role a running graph run is
+// about to dispatch to (MUX-217) — that deferral is logged once per run and node
+// (agent-defs-reload-deferred) and spends no budget, so the reload fires on the
+// first check after the run releases the role. The orchestrator (edit) and
 // autonomous (auto) agents are never auto-reloaded — they drive everything
 // else. A dead agent picks up the new state when checkAgentHealth restarts it.
 // Opt out with MUXCODE_AGENTDEFS_WATCH_DISABLE=1.
@@ -1544,9 +1549,15 @@ func (d *Daemon) checkAgentDefs() {
 		if !d.reloadDue(role, target, now) || !d.agentAlive(d.session, role) {
 			continue
 		}
-		if ok, _ := d.reloadSafe(d.session, role); !ok {
+		if ok, reason := d.reloadSafe(d.session, role); !ok {
+			d.logGraphDeferral(role, reason)
 			continue
 		}
+		release, err := d.reserveReload(d.session, role)
+		if err != nil {
+			continue
+		}
+		delete(d.graphDeferral, role)
 		d.recordReload(role, target, now)
 
 		event, reason := "agent-defs-reload", "definition changed on disk"
@@ -1560,13 +1571,25 @@ func (d *Daemon) checkAgentDefs() {
 		fmt.Printf("  %s  Agent-defs watchdog: %s %s — auto-reloading\n", time.Now().Format("15:04:05"), role, reason)
 		bus.LogLifecycle(d.session, "info", "daemon", event, fmt.Sprintf("%s %s — auto-reload", role, reason))
 
-		// Blocks for seconds; the reload marker it sets keeps later cycles off this role.
-		go func(r string) {
-			if err := d.reloadAgent(d.session, r); err != nil {
+		// The marker is taken here, before this iteration's graph tick, so the
+		// executor holds any dispatch to the role until the relaunch is done.
+		go func(r string, release func()) {
+			if err := d.reloadAgent(d.session, r, release); err != nil {
 				fmt.Fprintf(os.Stderr, "  [watchdog] agent-defs auto-reload of %s failed: %v\n", r, err)
 			}
-		}(role)
+		}(role, release)
 	}
+}
+
+// logGraphDeferral writes one agent-defs-reload-deferred row when a pending
+// reload of role waits on a graph run, and again only when the run or node it
+// waits on changes; other unsafe reasons are not logged.
+func (d *Daemon) logGraphDeferral(role, reason string) {
+	if !strings.HasPrefix(reason, bus.GraphReloadDeferralPrefix) || d.graphDeferral[role] == reason {
+		return
+	}
+	d.graphDeferral[role] = reason
+	bus.LogLifecycle(d.session, "info", "daemon", "agent-defs-reload-deferred", role+": "+reason)
 }
 
 // installedSandbox returns the sandbox fingerprint role would launch with now,

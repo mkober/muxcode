@@ -111,6 +111,138 @@ func TestAutoReloadSafe_CodexPaneStates(t *testing.T) {
 	}
 }
 
+// buildThenTestRun creates a running build→test graph run with build running
+// and test next to dispatch, the test role an idle Codex pane with no inbox or
+// task — the daemon's view at the check on 2026-11-13 20:42:16.
+func buildThenTestRun(t *testing.T) *GraphRun {
+	t.Helper()
+	run := createTestRun(t, &Graph{
+		Name:  "t",
+		Start: "build",
+		Nodes: []Node{
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "test", Type: NodeSend, Role: "test", Action: "test", Message: "run the suite"},
+		},
+		Edges: []Edge{{From: "build", To: "test"}},
+	})
+	useEmptyShellConfig(t)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	t.Setenv("MUXCODE_TEST_CLI", "codex")
+	fakeReloadPane(t, codexIdlePane, nil)
+	if err := TransitionGraphNode(runTestSession, run.ID, "build", GraphNodeRunning, nil); err != nil {
+		t.Fatalf("transition build (the start node, already ready) to running: %v", err)
+	}
+	return run
+}
+
+// MUX-217, the Phase 1 pin inverted: the watchdog's check ran in the poll
+// iteration that dispatched test, before the dispatch, so only the graph can
+// say the role is about to be used. A role a running run dispatches to next,
+// and one whose send node runs before its dispatch task exists, defer with the
+// run and node named; once the run is done with the role the deferred reload
+// is safe again, so the definition change is not lost.
+func TestAutoReloadSafe_DefersWhileGraphNeedsRole(t *testing.T) {
+	run := buildThenTestRun(t)
+	wantDeferred := func(when string) {
+		t.Helper()
+		ok, reason := AutoReloadSafe(runTestSession, "test")
+		if ok || !strings.HasPrefix(reason, GraphReloadDeferralPrefix+run.ID) || !strings.HasSuffix(reason, "as node test") {
+			t.Errorf("%s: AutoReloadSafe = %v %q, want deferred naming %s and node test", when, ok, reason, run.ID)
+		}
+	}
+	wantDeferred("build running, test next")
+
+	// Routed: the executor fires build's edge before test can become ready.
+	if err := TransitionGraphNode(runTestSession, run.ID, "build", GraphNodeDone,
+		func(s *GraphNodeStatus) { s.Outcome, s.Routed = OutcomeSuccess, true }); err != nil {
+		t.Fatalf("finish build: %v", err)
+	}
+	for _, state := range []string{GraphNodeReady, GraphNodeRunning} {
+		if err := TransitionGraphNode(runTestSession, run.ID, "test", state, nil); err != nil {
+			t.Fatalf("transition test to %s: %v", state, err)
+		}
+	}
+	wantDeferred("test running before its dispatch task exists")
+
+	// PR #196 review: with the dispatch queued and in flight the reason must
+	// still name the run and node, not the generic inbox or task clause.
+	dispatch := NewMessage(graphSender, "test", "request", "test", "run the suite", "")
+	if err := Send(runTestSession, dispatch); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(runTestSession, dispatch, 600); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateNodeStatus(runTestSession, run.ID, "test", func(s *GraphNodeStatus) { s.TaskID = dispatch.ID }); err != nil {
+		t.Fatal(err)
+	}
+	wantDeferred("test's dispatch queued and in flight")
+
+	if _, err := Receive(runTestSession, "test"); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(runTestSession, dispatch.ID, "resp-1")
+	if err := TransitionGraphNode(runTestSession, run.ID, "test", GraphNodeDone,
+		func(s *GraphNodeStatus) { s.Outcome = OutcomeSuccess }); err != nil {
+		t.Fatalf("finish test: %v", err)
+	}
+	if ok, reason := AutoReloadSafe(runTestSession, "test"); !ok {
+		t.Errorf("the run is done with test: the deferred reload must be safe, got %q", reason)
+	}
+}
+
+// A loop re-entering build leaves check and test done and routed from the last
+// lap; build running again still defers test, found only by looking through
+// the routed condition. A feeder parked on a human gate does not —
+// a run waiting for approval must not hold a reload for hours.
+func TestGraphNeedsRole_LoopReentryAndParkedGate(t *testing.T) {
+	run := createTestRun(t, &Graph{
+		Name:  "t",
+		Start: "build",
+		Nodes: []Node{
+			{ID: "build", Type: NodeSend, Role: "build", Action: "build", Message: "go"},
+			{ID: "check", Type: NodeCondition, Conditions: map[string]any{"output_contains": "EXIT=0"}},
+			{ID: "test", Type: NodeSend, Role: "test", Action: "test", Message: "run"},
+			{ID: "gate", Type: NodeWaitHuman, Message: "approve"},
+			{ID: "review", Type: NodeSend, Role: "review", Action: "review", Message: "review"},
+		},
+		Edges: []Edge{{From: "build", To: "check"}, {From: "check", To: "test"}, {From: "test", To: "gate"}, {From: "gate", To: "review"}},
+	})
+	for _, id := range []string{"check", "test"} {
+		finish(t, run.ID, id, GraphNodeDone, OutcomeSuccess)
+		if err := MutateNodeStatus(runTestSession, run.ID, id, func(s *GraphNodeStatus) { s.Routed = true }); err != nil {
+			t.Fatalf("route prior-lap %s: %v", id, err)
+		}
+	}
+	if err := TransitionGraphNode(runTestSession, run.ID, "build", GraphNodeRunning, nil); err != nil {
+		t.Fatalf("re-enter build: %v", err)
+	}
+	if runID, nodeID, ok := GraphNeedsRole(runTestSession, "test"); !ok || runID != run.ID || nodeID != "test" {
+		t.Errorf("build re-running through a condition: GraphNeedsRole(test) = %q %q %v, want %s test true", runID, nodeID, ok, run.ID)
+	}
+
+	for _, state := range []string{GraphNodeReady, GraphNodeWaiting} {
+		if err := TransitionGraphNode(runTestSession, run.ID, "gate", state, nil); err != nil {
+			t.Fatalf("gate to %s: %v", state, err)
+		}
+	}
+	if _, nodeID, ok := GraphNeedsRole(runTestSession, "review"); ok {
+		t.Errorf("a feeder parked on a human gate deferred review's reload (node %s)", nodeID)
+	}
+}
+
+// The MUX-217 negative control, green before and after the fix: with no graph
+// run, no inbox and no task, an idle pane reads safe, so a definition change
+// still reloads.
+func TestAutoReloadSafe_IdleRoleWithNoRunIsSafe(t *testing.T) {
+	session := sandboxTestEnv(t)
+	t.Setenv("MUXCODE_TEST_CLI", "codex")
+	fakeReloadPane(t, codexIdlePane, nil)
+	if ok, reason := AutoReloadSafe(session, "test"); !ok {
+		t.Errorf("an idle role with no run and no pending work must reload, got unsafe %q", reason)
+	}
+}
+
 func TestAutoReloadSafe_PendingWorkBlocks(t *testing.T) {
 	cases := map[string]func(session string) error{
 		"pending request": func(s string) error {

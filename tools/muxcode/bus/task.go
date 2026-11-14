@@ -23,6 +23,7 @@ type Task struct {
 	Timeout    int    `json:"timeout"`
 	ResponseID string `json:"response_id"`
 	ResponseAt int64  `json:"response_at"`
+	ClearedBy  string `json:"cleared_by,omitempty"` // the relaunch that timed it out (ClearInFlightTasksForRole)
 }
 
 // Task status constants.
@@ -81,6 +82,11 @@ func TimeoutTask(session, taskID string) {
 // not. A task that does not exist, or has already left in-flight, is not
 // an error.
 func expireTask(session, taskID string) error {
+	return expireTaskBecause(session, taskID, "")
+}
+
+// expireTaskBecause is expireTask recording cause as the task's ClearedBy.
+func expireTaskBecause(session, taskID, cause string) error {
 	t, err := ReadTask(session, taskID)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -92,6 +98,7 @@ func expireTask(session, taskID string) error {
 		return nil
 	}
 	t.Status = TaskTimedOut
+	t.ClearedBy = cause
 	return writeTask(session, t)
 }
 
@@ -109,8 +116,11 @@ func expireTask(session, taskID string) error {
 // relaunch) unblocks delivery immediately instead of after a 10-minute stall.
 //
 // Matching is by WindowForRole so a relaunching host clears its hosted roles'
-// tasks too (e.g. plan clears docs, commit clears pr-read). Returns the count.
-func ClearInFlightTasksForRole(session, role string) int {
+// tasks too (e.g. plan clears docs, commit clears pr-read). Each cleared task
+// records cause as its ClearedBy, so a graph node failed on it names the
+// relaunch rather than a bare "task timed-out" seconds into its allowance
+// (MUX-217). Returns the count.
+func ClearInFlightTasksForRole(session, role, cause string) int {
 	tasks, err := ListTasks(session, TaskInFlight)
 	if err != nil {
 		return 0
@@ -119,7 +129,7 @@ func ClearInFlightTasksForRole(session, role string) int {
 	cleared := 0
 	for _, t := range tasks {
 		if WindowForRole(t.To) == host {
-			TimeoutTask(session, t.ID)
+			_ = expireTaskBecause(session, t.ID, cause)
 			cleared++
 		}
 	}

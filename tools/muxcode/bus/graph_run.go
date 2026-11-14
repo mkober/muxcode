@@ -107,7 +107,7 @@ type GraphNodeStatus struct {
 	MapNext     int             `json:"map_next,omitempty"`    // map: next unassigned item
 	MapResults  []MapItemResult `json:"map_results,omitempty"` // map: each item's recorded result, in item order
 	MapPending  []MapDispatch   `json:"map_pending,omitempty"` // map: lane dispatches persisted but not yet confirmed on a worker
-	DeferredOn  string          `json:"deferred_on,omitempty"` // ready spawn/map node waiting on the run's busy worker: why (MUX-195)
+	DeferredOn  string          `json:"deferred_on,omitempty"` // ready node held back: a spawn/map node on the run's busy worker (MUX-195), a send node on its role's reload (MUX-217)
 	// Branched marks a condition's false branch for JSON consumers —
 	// render-time only, never persisted; see ConditionTookBranch.
 	Branched bool `json:"branched,omitempty"`
@@ -504,6 +504,84 @@ func GraphOwnsRunningSendNode(session, role string) (runID, nodeID string, ok bo
 		}
 	}
 	return "", "", false
+}
+
+// GraphNeedsRole reports a running graph run's send node about to use role's
+// agent: one it owns now (GraphOwnsRunningSendNode), one ready to dispatch, or
+// one fed by a node that is ready or running, looking through condition and
+// join nodes, which resolve within a tick. The last is MUX-217's window: the
+// agent-defs watchdog reloaded test while build ran, the executor dispatched
+// test in the same poll iteration, and the relaunch cleared the dispatch. The
+// fed node's own state is not consulted, since a loop re-entering build leaves
+// test done from its last iteration. A feeder waiting on a human gate does not
+// count, so a parked run never defers a reload for hours. It defers reloads
+// (AutoReloadSafe); it never suppresses a chain.
+func GraphNeedsRole(session, role string) (runID, nodeID string, ok bool) {
+	if runID, nodeID, ok := GraphOwnsRunningSendNode(session, role); ok {
+		return runID, nodeID, true
+	}
+	if role == "" {
+		return "", "", false
+	}
+	for _, run := range ScanInFlightGraphRuns(session) {
+		g, err := ReadGraphRunGraph(session, run.ID)
+		if err != nil {
+			continue
+		}
+		statuses, err := ReadAllNodeStatuses(session, run.ID)
+		if err != nil {
+			continue
+		}
+		types := make(map[string]string, len(g.Nodes))
+		for _, n := range g.Nodes {
+			types[n.ID] = n.Type
+		}
+		for _, n := range g.Nodes {
+			if n.Type != NodeSend || n.Role != role {
+				continue
+			}
+			if st := statuses[n.ID]; st != nil && st.State == GraphNodeReady {
+				return run.ID, n.ID, true
+			}
+			if feederActive(g, types, statuses, n.ID, map[string]bool{}) {
+				return run.ID, n.ID, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// feederActive reports whether a node feeding id is ready, running, or
+// finished with its edges not yet routed, looking through condition and join
+// nodes. Unrouted counts because the executor routes finished nodes at the top
+// of its next tick: build→condition→test sits with both feeders done and test
+// pending for a whole poll iteration, and test dispatches in the one after.
+func feederActive(g *Graph, types map[string]string, statuses map[string]*GraphNodeStatus, id string, seen map[string]bool) bool {
+	for _, e := range g.Edges {
+		if e.To != id || seen[e.From] {
+			continue
+		}
+		seen[e.From] = true
+		if st := statuses[e.From]; st != nil && feederLive(st) {
+			return true
+		}
+		if t := types[e.From]; (t == NodeCondition || t == NodeJoin) && feederActive(g, types, statuses, e.From, seen) {
+			return true
+		}
+	}
+	return false
+}
+
+// feederLive excludes an unrouted unknown outcome: one held for approval stays
+// unrouted until a human acts, and must not defer a reload that long.
+func feederLive(st *GraphNodeStatus) bool {
+	switch st.State {
+	case GraphNodeReady, GraphNodeRunning:
+		return true
+	case GraphNodeDone, GraphNodeFailed:
+		return !st.Routed && st.Outcome != OutcomeUnknown
+	}
+	return false
 }
 
 // nodeWorkStillInFlight reports whether the dispatch a running node is waiting
