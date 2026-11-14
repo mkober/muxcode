@@ -240,13 +240,17 @@ The chain edges:
 
 ```
 Build success        → trigger test agent
-Test success         → trigger review agent
+Test success         → trigger review agent — only when a request stands behind the run; review answers edit
 Deploy-apply success → trigger verify (self-loop to deploy agent)
 Any failure          → notify edit agent
 Review reply         → plan verify-spec (daemon-driven, not a hook — see below)
 ```
 
 The last edge is the one the daemon fires, not `hook bash`: when a review reply reaches edit and a spec is active, the daemon reads the verdict from the reply's `EXIT=` sentinel and sends plan `verify-spec` only if `NotifyPlanOn` admits that outcome (default `["success"]`). A failing verdict, a reply with no sentinel, or `EXIT=0` beside a must-fix count is withheld with a `plan-verify-withheld` lifecycle row ([MUX-172](requirements/completed/MUX-172-plan-verify-gate-hardcodes-success.md)). See [Architecture → Spec verification](architecture.md#spec-verification-and-branch-time-recording-verify-spec).
+
+**A test success fires the review chain only for a run somebody requested** ([MUX-213](requirements/completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md)). The question is: is there a request addressed to this role that it has received (a delivery receipt), has not answered, and received within the last two hours (`bus.OpenRequestFor`)? Self-sends, the startup bootstrap and received *responses* do not count. It is asked **when the test command starts, not when it finishes**: the synchronous PreToolUse `hook guard` records the answer for a test command under its `tool_use_id` (`bus.RecordRunProvenance`, `<bus>/run-provenance/<id>.json`), and `triggerChain` reads and consumes that record (`bus.TakeTestRunOrigin`). The same record names the graph run and node that owned the test agent when the command started (`GraphOwnsRunningSendNode`), so a graph-owned test run is still suppressed — `chain-suppressed`, naming the run and node — when the run has already completed by the time the asynchronous hook fires and the live ownership check can no longer see it. The reason is ordering — Claude's `hook bash` is asynchronous, so a requested suite can finish and the agent can send its reply, which marks the request answered, before the hook runs; judged at completion, that legitimate run would look unrequested. With no record (no guard hook, or no `tool_use_id`) the question falls back to completion time. With none, the chain is withheld and a `chain-withheld` lifecycle row says why — `test chain not fired for <role> — no unanswered request stands behind this run: <command>` — the same event an unfinished call logs. A **failing** run still notifies edit; with delivery acknowledgement off there are no receipts to read and the check fails open. On 2026-11-13 a Codex test agent, woken by a review's reply, re-ran the suite eight times in 69 minutes, and five of those passing runs requested another review. Two consequences: a run a person starts by typing into the test pane, with no bus request, no longer requests a review; and a request answered without `--reply-to` is never marked responded, so it can vouch for a later run until the two-hour bound.
+
+**A test-chain review answers edit, not the test agent.** The chain's request carries `reply_role: edit` (`bus.NewChainRequest`), so the reviewer's "To reply" line names edit and its one reply goes there, correlated by `--reply-to`. The test agent — whose own request was already answered — receives nothing to react to, and edit is told once rather than twice (the reply plus its auto-CC copy). Other chain requests (build→test, deploy, run) still answer their sender.
 
 Deploy commands are split into two categories:
 - **Deploy patterns** (`MUXCODE_DEPLOY_PATTERNS`): all deploy commands — logged to deploy history
@@ -343,8 +347,8 @@ The chain is **hook-driven**, ensuring deterministic behavior:
 3. If exit code 0: hook sends `request:test` to test agent
 4. Test agent runs tests (a precheck such as `go vet`, run as its own call first, feeds the chain only when it fails — see [hook bash](#hook-bash-bash-hook))
 5. Hook detects test command completed
-6. If exit code 0: hook sends `request:review` to review agent
-7. Review agent reviews `git diff`, replies with findings
+6. If exit code 0 **and an unanswered request stands behind the run**: hook sends `request:review` to review agent, naming edit as the reply target. A passing run nobody requested sends nothing and logs `chain-withheld`
+7. Review agent reviews `git diff`, replies with findings — once, to edit
 8. The daemon — not a hook — reads that reply's `EXIT=` sentinel and, when `NotifyPlanOn` admits the outcome and a spec is active, sends plan `verify-spec`; a failing or unreadable verdict is withheld and logged (`plan-verify-withheld`). See [Architecture → Spec verification](architecture.md#spec-verification-and-branch-time-recording-verify-spec)
 
 On failure at any step, the hook notifies edit directly with the error details.
@@ -352,6 +356,8 @@ On failure at any step, the hook notifies edit directly with the error details.
 Each chain step also transitions the [workflow state machine](architecture.md#workflow-state-machine): build success → `testing` (with `build_outcome: success`), test success → `reviewing` (with `test_outcome: success`), failures → `build-failed` or `test-failed`. File edits during or after the chain regress the state to `editing` and clear all accumulated outcomes.
 
 **Key property:** Agents are NOT responsible for chaining. They only run their command and reply. The hook guarantees the chain fires deterministically based on exit codes.
+
+The workflow guard in `triggerChain` — which skips a chain already in or past its target state — cannot stop a repeated test success: `hook bash` moves the workflow to `testing` before the guard reads it, so a passing test never sees `reviewing` or `reviewed`. The request-behind-the-run rule above is what stops a test→review→test loop; the ordering was left alone because judging the guard on the pre-run state would also suppress a build→test chain requested after a review (MUX-213).
 
 ## Deploy-Run-Watch Chain
 

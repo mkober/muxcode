@@ -113,6 +113,15 @@ post() {
     | AGENT_ROLE="$1" "$MUX" hook bash >/dev/null 2>&1
 }
 
+# take_request LABEL — hand the test agent a request it has received and not
+# answered. A passing test run fires test→review only when one stands behind
+# it (MUX-213), as it does for a real test agent answering edit or the build
+# chain.
+take_request() {
+  AGENT_ROLE=edit "$MUX" send test test "run the suite: $1" --no-notify >/dev/null 2>&1
+  AGENT_ROLE=test "$MUX" inbox >/dev/null 2>&1
+}
+
 # post_fail ROLE COMMAND ERROR — a Claude PostToolUseFailure Bash event.
 post_fail() {
   jq -nc --arg c "$2" --arg e "$3" \
@@ -304,6 +313,7 @@ fi
 
 ST="cd packages/Kit && swift test"
 echo "-- classification: swift test and xcodebuild test on the test agent"
+take_request "swift test"
 post test "$ST"
 row=$(row_for test-history.jsonl "$ST")
 reviews=$(inbox_count review request review "Tests passed (" "swift test")
@@ -314,6 +324,7 @@ else
 fi
 "$MUX" workflow reset >/dev/null 2>&1
 XT="xcodebuild test -scheme App -destination 'platform=iOS Simulator,name=iPhone 16'"
+take_request "xcodebuild test"
 post test "$XT"
 row=$(row_for test-history.jsonl "$XT")
 reviews=$(inbox_count review request review "Tests passed (" "xcodebuild test")

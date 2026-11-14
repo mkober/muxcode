@@ -139,7 +139,7 @@ func Chain(args []string) {
 	message := bus.ExpandMessageWithContext(action.Message, exitCode, command, ctx)
 
 	// Send the chain message (no auto-CC — chain intermediates are redundant for edit)
-	msg := bus.NewMessage(from, action.SendTo, action.Type, action.Action, message, "")
+	msg := bus.NewChainRequest(from, eventType, action, message)
 	if err := bus.SendNoCC(session, msg); err != nil {
 		fmt.Fprintf(os.Stderr, "Error sending chain message: %v\n", err)
 		os.Exit(1)

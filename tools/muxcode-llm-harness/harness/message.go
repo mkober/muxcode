@@ -7,15 +7,27 @@ import (
 )
 
 // Message represents a bus message between agents.
+//
+// ReplyRole mirrors the bus field of the same name: when set, the role a reply
+// goes to instead of From — a test-chain review request names edit (MUX-213).
 type Message struct {
-	ID      string `json:"id"`
-	TS      int64  `json:"ts"`
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Type    string `json:"type"`
-	Action  string `json:"action"`
-	Payload string `json:"payload"`
-	ReplyTo string `json:"reply_to"`
+	ID        string `json:"id"`
+	TS        int64  `json:"ts"`
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Type      string `json:"type"`
+	Action    string `json:"action"`
+	Payload   string `json:"payload"`
+	ReplyTo   string `json:"reply_to"`
+	ReplyRole string `json:"reply_role,omitempty"`
+}
+
+// ReplyTarget is the role a reply to m is sent to: ReplyRole when set, else From.
+func (m Message) ReplyTarget() string {
+	if m.ReplyRole != "" {
+		return m.ReplyRole
+	}
+	return m.From
 }
 
 // ParseMessages parses JSONL output (one JSON object per line) into messages.
