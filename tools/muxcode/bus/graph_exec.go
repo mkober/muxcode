@@ -2518,7 +2518,7 @@ func deriveSendOutcome(session string, n *Node, st *GraphNodeStatus, task Task) 
 	claimed, claimFound := parseExitSentinel(output)
 	role := NormalizeBusRole(n.Role)
 
-	attributable := func(e ConsoleEntry) bool { return rowAttributesTo(n.Action, e) }
+	attributable := func(e ConsoleEntry) bool { return rowAttributesTo(session, role, n.Action, e) }
 	if row, ok := latestAuthoritativeRowFunc(session, role, st.StartedAt, attributable); ok {
 		if row.Outcome == OutcomeSuccess || row.Outcome == OutcomeFailure {
 			if claimFound && claimed != row.Outcome {
@@ -2583,11 +2583,16 @@ var actionsWithoutCommandEvidence = map[string]bool{
 	"edit": true, "spawn-task": true,
 }
 
-// rowAttributesTo reports whether an authoritative row can testify that a
-// node's dispatched action was carried out.
+// rowAttributesTo reports whether an authoritative row, read from role's
+// history, can testify that a node's dispatched action was carried out.
 //
 // Actions are matched on the command where a CommandType is too coarse to
-// separate them, on the type otherwise.
+// separate them, on the type otherwise. The type is staged for role through
+// StageForRole — the rule the hook used to choose the history file the row
+// sits in — so a build agent's failing `go vet`, filed as a build precheck,
+// testifies for its build node. Classified without the role it read as a test
+// precheck and was refused, leaving the node to the agent's claim even where
+// the row contradicted it (MUX-218).
 //
 // An action in neither table keeps the pre-attribution behaviour — the row
 // decides. That is deliberate: `run` and `watch` mint a row for ANY command
@@ -2595,12 +2600,12 @@ var actionsWithoutCommandEvidence = map[string]bool{
 // convert every such node into a permanent hold, and their agents are not
 // instructed to emit a token to hold onto instead. A fix that holds
 // everything is not a fix; the residual is recorded rather than closed here.
-func rowAttributesTo(action string, row ConsoleEntry) bool {
+func rowAttributesTo(session, role, action string, row ConsoleEntry) bool {
 	if globs, ok := actionEvidenceCommands[action]; ok {
 		return matchPatterns(stripCommandPrefix(row.Command), globs, true)
 	}
 	if types, ok := actionEvidenceTypes[action]; ok {
-		got := ClassifyCommand(row.Command)
+		got := StageForRole(session, role, ClassifyCommand(row.Command))
 		for _, t := range types {
 			if t == got {
 				return true

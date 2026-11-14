@@ -1083,7 +1083,7 @@ func TestLatestAuthoritativeRowFuncMixedRows(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			accept := func(e ConsoleEntry) bool { return rowAttributesTo("build", e) }
+			accept := func(e ConsoleEntry) bool { return rowAttributesTo(runTestSession, "build", "build", e) }
 			got, ok := latestAuthoritativeRowFunc(runTestSession, "build", since, accept)
 			if !ok {
 				t.Fatalf("no verdict, want %q", tc.want)
@@ -1263,6 +1263,66 @@ func TestDeriveSendOutcomeAttributesRowToAction(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("outcome = %q, want %q (action %q, row %q from %q)",
 					got, tc.want, tc.action, tc.row, tc.command)
+			}
+		})
+	}
+}
+
+// TestBuildNodeVetRowAttribution is MUX-218 end to end through
+// deriveSendOutcome. The hook files a build agent's failing
+// `go -C <module> vet ./...` as a build precheck in build history (StageForRole,
+// MUX-214); the executor once classified the row without the role, refused it
+// for the build node and let the agent's claim decide — EXIT=0 recorded success
+// beside the failing row, and no sentinel held the node untied. Read through
+// the same rule, the row decides: a contradicting claim holds as a
+// graph-outcome-conflict, and silence fails on the row. The last two cases are
+// negative controls unchanged by the fix.
+func TestBuildNodeVetRowAttribution(t *testing.T) {
+	const vet = "go -C tools/muxcode vet ./..."
+	cases := []struct {
+		name, role, action, command, row, reply, want string
+		conflict                                      bool
+	}{
+		{name: "EXIT=0 beside a failing vet row holds as a conflict", role: "build", action: "build",
+			command: vet, row: OutcomeFailure, reply: "Build done. EXIT=0", want: OutcomeUnknown, conflict: true},
+		{name: "no sentinel beside a failing vet row fails on the row", role: "build", action: "build",
+			command: vet, row: OutcomeFailure, reply: "vet reported a finding", want: OutcomeFailure},
+		{name: "a passing build.sh row decides a build node", role: "build", action: "build",
+			command: "./build.sh", row: OutcomeSuccess, reply: "built", want: OutcomeSuccess},
+		{name: "a vet row in test history decides a test node", role: "test", action: "test",
+			command: "go vet ./...", row: OutcomeFailure, reply: "vet broke", want: OutcomeFailure},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useTempBusDir(t)
+			if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+				t.Fatal(err)
+			}
+			code := "0"
+			if tc.row == OutcomeFailure {
+				code = "1"
+			}
+			entry := HookHistoryEntry{TS: time.Now().Unix(), Command: tc.command, ExitCode: code, Outcome: tc.row}
+			if err := WriteHookHistory(HistoryPath(runTestSession, tc.role), entry, 100); err != nil {
+				t.Fatal(err)
+			}
+			resp := NewMessage(tc.role, "edit", "response", "response", tc.reply, "")
+			if err := Send(runTestSession, resp); err != nil {
+				t.Fatal(err)
+			}
+
+			n := &Node{ID: "a", Role: tc.role, Action: tc.action}
+			st := &GraphNodeStatus{StartedAt: time.Now().Unix() - 1}
+			conflicts := func() int {
+				return len(cancelEvents(t, "graph-outcome-conflict", "a: observed failure ("+vet+")"))
+			}
+			before := conflicts()
+			if got, _ := deriveSendOutcome(runTestSession, n, st, Task{ResponseID: resp.ID}); got != tc.want {
+				t.Errorf("outcome = %q, want %q (%s row %q in %s history, reply %q)",
+					got, tc.want, tc.row, tc.command, tc.role, tc.reply)
+			}
+			if logged := conflicts() > before; logged != tc.conflict {
+				t.Errorf("graph-outcome-conflict logged = %v, want %v", logged, tc.conflict)
 			}
 		})
 	}
@@ -5068,11 +5128,43 @@ func TestRowAttributesTo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := rowAttributesTo(tc.action, ConsoleEntry{Command: tc.command})
+			got := rowAttributesTo(runTestSession, "", tc.action, ConsoleEntry{Command: tc.command})
 			if got != tc.want {
 				t.Errorf("rowAttributesTo(%q, %q) = %v, want %v", tc.action, tc.command, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestRowAttributesToStagesByRole pins MUX-218's one rule: a row is read under
+// the role whose history holds it, through the StageForRole the hook used to
+// file it. A build agent's or spawned build worker's vet is a build precheck
+// and testifies for a build node, never a test node; the test agent's vet stays
+// a test precheck and testifies for a test node, never a build node.
+func TestRowAttributesToStagesByRole(t *testing.T) {
+	useTempBusDir(t)
+	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpawnEntries(runTestSession, []SpawnEntry{
+		{ID: "1-spawn-b1d00001", Role: "build", SpawnRole: "spawn-b1d00001", Window: "spawn-b1d00001", Status: "running"},
+	}); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+	vet := ConsoleEntry{Command: "go -C tools/muxcode vet ./..."}
+	for _, tc := range []struct {
+		role, action string
+		want         bool
+	}{
+		{"build", "build", true},
+		{"spawn-b1d00001", "build", true},
+		{"build", "test", false},
+		{"test", "test", true},
+		{"test", "build", false},
+	} {
+		if got := rowAttributesTo(runTestSession, tc.role, tc.action, vet); got != tc.want {
+			t.Errorf("%s's vet row for a %s node = %v, want %v", tc.role, tc.action, got, tc.want)
+		}
 	}
 }
 
