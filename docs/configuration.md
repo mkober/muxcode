@@ -80,6 +80,7 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 | `XDG_STATE_HOME` | `~/.local/state` | When absolute, muxcode's state directory is `$XDG_STATE_HOME/muxcode` (`bus.StateDir`): the bus under `bus/`, spawn worktrees under `spawn/`. A home that cannot be resolved panics — there is no `/tmp` fallback |
 | `AGENT_ROLE` | (auto-detected) | Current agent's role name |
 | `BUS_MEMORY_DIR` | `.muxcode/memory/` | Path to persistent memory directory |
+| `BUS_GLOBAL_MEMORY_DIR` | (unset — `~/.config/muxcode/memory`) | Absolute directory replacing the global memory location (`bus.GlobalMemoryDir`). A relative value is ignored, never resolved against the working directory. It exists so each package `TestMain` can pin it — before MUX-224 every `go test` run created or read the developer's real global memory — and production normally leaves it unset. The Codex sandbox writable root (`muxcodeStateRoots`) follows `GlobalMemoryDir()`, so it grants the directory memory actually lives in: the real one when unset |
 | `MUXCODE_ROLES` | (empty) | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | `plan edit build test serve review deploy run commit watch` | See Window Layout above — also read by the bus binary for pane targeting |
 | `MUXCODE_DEDUP_WINDOW` | `30` | Dedup window in seconds for duplicate message suppression (set to 0 to disable) |

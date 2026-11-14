@@ -407,8 +407,22 @@ func MemoryArchivePath(role, date string) string {
 	return filepath.Join(MemoryArchiveDir(role), date+".md")
 }
 
-// GlobalMemoryDir returns the user-level global memory directory path.
+// GlobalMemoryDirEnv names the absolute directory that replaces the default
+// global memory location; a relative value is ignored.
+const GlobalMemoryDirEnv = "BUS_GLOBAL_MEMORY_DIR"
+
+// GlobalMemoryDir returns the user-level global memory directory path:
+// $BUS_GLOBAL_MEMORY_DIR when absolute, else ~/.config/muxcode/memory.
+//
+// The override exists so each package's TestMain can pin it: Init creates this
+// directory and ReadContext, search and AllMemoryEntriesWithArchives read it,
+// so before MUX-224 every `go test` run created or read the developer's real
+// global memory. A relative value is ignored rather than resolved against the
+// caller's working directory (the MUX-223 hazard).
 func GlobalMemoryDir() string {
+	if v := os.Getenv(GlobalMemoryDirEnv); filepath.IsAbs(v) {
+		return v
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "muxcode", "memory")
 }

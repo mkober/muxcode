@@ -187,7 +187,7 @@ Verified by plan against the tree, tests only. Last source edit 1794683273, then
 | Gap found: memory | `MemoryDir`'s default is relative to the working directory, so an unpinned test wrote into the package source tree. `BUS_MEMORY_DIR` is now pinned in the `bus`, `cmd` and `daemon` `TestMain`s (`main_test.go`) |
 | Left unpinned, deliberately | `tui` — its tests call no `Init` and write no memory or bus state. The root package has no bus tests |
 | Phantom-env audit | One real offender: `BUS_DIR_PREFIX` in `agent_health_test.go`, read by nothing. `TestAgentStoppedMarkerRoundTrip` never called production code; it is rewritten through `MarkAgentStopped`/`IsAgentStopped`/`ClearAgentStopped` with an unaffected-role control. The other hits are dynamic names or `env_set` fixtures |
-| Remaining gap, not changed | `GlobalMemoryDir` is still the real `~/.config/muxcode/memory` under test: `Init` creates it and tests read it. Outside this spec's criteria; filed as [MUX-224](../backlog/MUX-224-tests-use-the-real-global-memory-dir.md). The cwd-relative default that stranded the real `edit.md` summaries is [MUX-223](../backlog/MUX-223-project-memory-resolves-against-the-callers-cwd.md) |
+| Remaining gap, not changed | `GlobalMemoryDir` is still the real `~/.config/muxcode/memory` under test: `Init` creates it and tests read it. Outside this spec's criteria; filed as [MUX-224](./MUX-224-tests-use-the-real-global-memory-dir.md). The cwd-relative default that stranded the real `edit.md` summaries is [MUX-223](../backlog/MUX-223-project-memory-resolves-against-the-callers-cwd.md) |
 
 ### Phase 3: Sweep existing leaks
 

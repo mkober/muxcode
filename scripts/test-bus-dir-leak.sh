@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Integration test for test bus-directory and memory leaks (MUX-137).
+# Integration test for test bus-directory and memory leaks (MUX-137) and the
+# global memory directory (MUX-224).
 #
 # The PreLaunch tests once "isolated" through BUS_DIR_BASE, a variable nothing
 # reads, and five tests passed Init an empty memory dir, which seeds shared.md
@@ -25,17 +26,28 @@
 #        LEAK <work>/fake-state/muxcode/bus/muxcode-bus-test-prelaunch-auto
 #        LEAK <work>/tree/muxcode/bus/.muxcode/memory/shared.md
 #      so a green main pass proves the check can see a leak.
+#   3. Global memory (MUX-224): the main pass also requires the real
+#      ~/.config/muxcode/memory byte for byte unchanged (or still absent). That
+#      alone cannot fail where the directory already exists — Init's MkdirAll
+#      and the readers change no byte — so the full ./test.sh runs again under
+#      a scratch HOME holding no global memory, which must not be created.
+#   4. Negative control: a throwaway copy with every TestMain's
+#      BUS_GLOBAL_MEMORY_DIR pin removed, run under another scratch HOME, must
+#      create that HOME's global memory and fail TestGlobalMemoryDir_IsolatedFromHome
+#      naming the missing pin.
 #
 # The real tree and the real state directory are only read; the control's
-# leaks land in its own scratch copy and scratch state root.
+# leaks land in its own scratch copy and scratch state root. A live agent's
+# `muxcode memory write --global` during the run would fail section 1's global
+# memory check — rerun on a quiet session.
 #
 # REQUIRES: go, and a tree whose ./test.sh passes (a partial suite run proves
-# nothing about the tests it never reached). ~3-6 min, dominated by the suite.
+# nothing about the tests it never reached). ~6-12 min, two suite runs.
 #
 # Usage: bash scripts/test-bus-dir-leak.sh
 set -uo pipefail
 
-FLOOR=15
+FLOOR=22
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v go >/dev/null 2>&1 || { echo "  FAIL  go not available"; exit 1; }
 
@@ -70,6 +82,32 @@ manifest() { (cd "$1" && find . -type f | sort | xargs shasum 2>/dev/null); }
 # unchanged <dir> <manifest-file> — true when dir's files match the manifest.
 unchanged() { [ -d "$1" ] && diff -q <(manifest "$1") "$2" >/dev/null; }
 
+# gm_state <dir> — every entry and file checksum under a global memory dir,
+# or ABSENT; directories are listed so a created subdirectory shows too.
+gm_state() {
+  [ -d "$1" ] || { echo ABSENT; return; }
+  (cd "$1" && find . | sort | while IFS= read -r p; do
+    if [ -f "$p" ]; then shasum "$p"; else echo "dir $p"; fi
+  done)
+}
+
+# global_mem <home> — the global memory directory a home resolves to.
+global_mem() { echo "$1/.config/muxcode/memory"; }
+
+REAL_GOCACHE="$(go env GOCACHE)"; REAL_GOPATH="$(go env GOPATH)"; REAL_GOENV="$(go env GOENV)"
+GITCFG=""
+for f in "$HOME/.gitconfig" "${XDG_CONFIG_HOME:-$HOME/.config}/git/config"; do
+  [ -f "$f" ] && { GITCFG="$f"; break; }
+done
+
+# in_home <home> <cmd...> — run with HOME replaced and no inherited memory
+# override, keeping the real Go caches and git identity readable.
+in_home() {
+  local home="$1"; shift
+  env -u BUS_GLOBAL_MEMORY_DIR -u BUS_MEMORY_DIR HOME="$home" GOCACHE="$REAL_GOCACHE" \
+    GOPATH="$REAL_GOPATH" GOENV="$REAL_GOENV" ${GITCFG:+"GIT_CONFIG_GLOBAL=$GITCFG"} "$@"
+}
+
 # --- 1. Main pass: the full suite leaves nothing behind --------------------
 echo "--- 1. full ./test.sh run, uncached"
 STATE_BASE=""
@@ -93,7 +131,9 @@ nfiles="$(grep -c . "$WORK/sentinel.manifest")"
   || bad "sentinel seeded $nfiles files, want 7"
 
 snap "$STATE_BASE" "$REPO/tools" > "$WORK/main-before"
-(cd "$REPO" && MUXCODE_TEST_LOG_DIR="$WORK/test-logs" GOFLAGS="${GOFLAGS:+$GOFLAGS }-count=1" bash ./test.sh) > "$WORK/suite.log" 2>&1
+REAL_GMEM="$(global_mem "$HOME")"
+gm_state "$REAL_GMEM" > "$WORK/gmem-before"
+(cd "$REPO" && env -u BUS_GLOBAL_MEMORY_DIR MUXCODE_TEST_LOG_DIR="$WORK/test-logs" GOFLAGS="${GOFLAGS:+$GOFLAGS }-count=1" bash ./test.sh) > "$WORK/suite.log" 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && grep -q '^=== Summary ===' "$WORK/suite.log"; then
   ok "full suite ran to completion ($(grep -E '^modules=' "$WORK/suite.log" | tail -1))"
@@ -121,6 +161,14 @@ grep -q '/\.muxcode/memory/' "$WORK/main-leaks" \
 unchanged "$SENT" "$WORK/sentinel.manifest" \
   && ok "the sentinel live bus survived the suite byte for byte" \
   || { bad "the sentinel live bus changed during the suite:"; diff <(manifest "$SENT") "$WORK/sentinel.manifest" | sed 's/^/        /'; }
+gm_state "$REAL_GMEM" > "$WORK/gmem-after"
+if diff -q "$WORK/gmem-before" "$WORK/gmem-after" >/dev/null; then
+  if grep -qx ABSENT "$WORK/gmem-before"; then ok "real global memory $REAL_GMEM still absent after the suite"
+  else ok "real global memory $REAL_GMEM unchanged byte for byte ($(grep -c . "$WORK/gmem-before") entries)"; fi
+else
+  bad "the suite changed the real global memory $REAL_GMEM:"
+  diff "$WORK/gmem-before" "$WORK/gmem-after" | head -10 | sed 's/^/        /'
+fi
 
 # The preservation check must reject a bus whose directory survives but whose
 # files do not — a mutated file and a deleted one.
@@ -170,6 +218,48 @@ grep -qFx 'LEAK <work>/fake-state/muxcode/bus/muxcode-bus-test-prelaunch-auto' "
 grep -qFx 'LEAK <work>/tree/muxcode/bus/.muxcode/memory/shared.md' "$WORK/ctl-leaks" \
   && ok "control: the empty memory dir's shared.md is reported as a leak" \
   || bad "control: memory leak not reported"
+
+# --- 3. Global memory: the full suite under a scratch HOME creates none ------
+echo "--- 3. full ./test.sh run under a scratch HOME (MUX-224)"
+SHOME="$WORK/home"; mkdir -p "$SHOME"
+[ ! -e "$(global_mem "$SHOME")" ] && ok "scratch HOME holds no global memory before the run" \
+  || bad "scratch HOME already holds $(global_mem "$SHOME")"
+(cd "$REPO" && in_home "$SHOME" env MUXCODE_TEST_LOG_DIR="$WORK/home-test-logs" \
+  GOFLAGS="${GOFLAGS:+$GOFLAGS }-count=1" bash ./test.sh) > "$WORK/home-suite.log" 2>&1
+rc=$?
+hok="$(cat "$WORK"/home-test-logs/*/*.log 2>/dev/null | grep -c '^ok ')"
+hcached="$(cat "$WORK"/home-test-logs/*/*.log 2>/dev/null | grep -c '(cached)')"
+if [ "$rc" -eq 0 ] && grep -q '^=== Summary ===' "$WORK/home-suite.log" && [ "$hok" -ge 1 ] && [ "$hcached" -eq 0 ]; then
+  ok "full suite passed under the scratch HOME ($hok ok, 0 cached)"
+else
+  bad "scratch-HOME suite exit $rc, $hok ok, $hcached cached — a partial run proves nothing; last lines:"
+  tail -15 "$WORK/home-suite.log" | sed 's/^/        /'
+fi
+[ ! -e "$(global_mem "$SHOME")" ] \
+  && ok "the suite created no global memory under the scratch HOME" \
+  || bad "the suite created $(global_mem "$SHOME"): $(cd "$(global_mem "$SHOME")" && find . | tr '\n' ' ')"
+
+# --- 4. Negative control: global-memory pins removed -----------------------
+echo "--- 4. control: BUS_GLOBAL_MEMORY_DIR pins removed in a throwaway copy"
+GTREE="$WORK/gtree"
+mkdir -p "$GTREE" && cp -R "$REPO/tools/muxcode" "$GTREE/muxcode"
+for f in bus/main_test.go cmd/main_test.go daemon/main_test.go tui/main_test.go; do
+  perl -ni -e 'print unless /Setenv\((bus\.)?GlobalMemoryDirEnv,/' "$GTREE/muxcode/$f"
+done
+grep -l 'GlobalMemoryDirEnv,' "$GTREE"/muxcode/{bus,cmd,daemon,tui}/main_test.go >/dev/null 2>&1 \
+  && bad "global memory pins still present" || ok "removed: all four TestMains' BUS_GLOBAL_MEMORY_DIR pins"
+
+CHOME="$WORK/ctl-home"; mkdir -p "$CHOME" "$WORK/ctl-tmp"
+(cd "$GTREE/muxcode" && in_home "$CHOME" env TMPDIR="$WORK/ctl-tmp" \
+  go test ./bus -run '^(TestDefaultMemoryDir_IsolatedFromSourceTree|TestGlobalMemoryDir_IsolatedFromHome)$' -count=1 -v \
+  > "$WORK/gctl-test.log" 2>&1)
+[ -d "$(global_mem "$CHOME")" ] \
+  && ok "control: unpinned, Init created the scratch HOME's global memory — the detector sees it" \
+  || { bad "control: no global memory created with the pins removed — section 3's silence proves nothing"; tail -5 "$WORK/gctl-test.log" | sed 's/^/        /'; }
+grep -q -- '--- FAIL: TestGlobalMemoryDir_IsolatedFromHome' "$WORK/gctl-test.log" \
+  && grep -q 'TestMain must pin BUS_GLOBAL_MEMORY_DIR' "$WORK/gctl-test.log" \
+  && ok "control: TestGlobalMemoryDir_IsolatedFromHome fails naming the missing pin" \
+  || { bad "control: the pin's control test did not fail"; tail -5 "$WORK/gctl-test.log" | sed 's/^/        /'; }
 
 # --- Summary ---------------------------------------------------------------
 echo

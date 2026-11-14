@@ -26,6 +26,10 @@ import (
 // .muxcode/memory: an Init(session, "") or a memory write that pins nothing
 // otherwise lands in the package source tree (MUX-137).
 //
+// BUS_GLOBAL_MEMORY_DIR is redirected because Init creates the global memory
+// directory and ReadContext and search read it; unpinned, that is the real
+// ~/.config/muxcode/memory (MUX-224).
+//
 // The gate authority reads fixed paths (the cwd's .muxcode/config and the real
 // home config), so it is pinned to none: a user's own
 // MUXCODE_GATE_AUTHORITY_ROLES grant would otherwise flip every test that
@@ -40,6 +44,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("CODEX_HOME", filepath.Join(dir, "codex-home"))
 	os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	os.Setenv("BUS_MEMORY_DIR", filepath.Join(dir, "memory"))
+	os.Setenv(GlobalMemoryDirEnv, filepath.Join(dir, "global-memory"))
 
 	code := m.Run()
 

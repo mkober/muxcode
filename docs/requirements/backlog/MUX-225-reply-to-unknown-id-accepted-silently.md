@@ -26,12 +26,25 @@ Reported by edit; the rows below were re-read by plan in `log.jsonl` and the lif
 - `bus/delivery.go:93–107` `MarkResponded` — reads the delivery status for the id and skips silently when there is none; `FindMessageByID` likewise finds nothing, so nothing is drained.
 - `cmd/send.go:287–296` `responseAnswers` — a reply carrying a `ReplyTo` is matched on that id alone (`m.ReplyTo == msgID`); the unlinked fallback, which correlates by action, applies only when `ReplyTo` is empty. A wrong id is therefore worse than no id. Here the action was `response`, not the request's `test`, so the fallback would not have matched either.
 
-### Decisions owed — the user's
+### Decisions — recorded 2026-11-14
 
-| # | Decision | Options |
-|---|----------|---------|
-| 1 | What `send` does with an unknown `--reply-to` | (a) refuse, non-zero, naming the sender's open requests so the agent can retry; (b) accept, log and alert edit; (c) accept and fall back to the sender's single open request from that requester when exactly one exists, logging the repair. (a) relies on the agent retrying — a Codex agent that treats a failed send as final strands the reply entirely. (c) guesses, and a wrong guess closes the wrong task |
-| 2 | Whether a close match is repaired | The observed id differs from a real open request by a dropped substring. Repairing "nearest id" is a second guess on top of Decision 1 |
+Both were owed at filing. Edit relayed them on 2026-11-14 (`/tmp/decisions-223-225.md`) and plan
+recorded them here. Decision 1 is the user's. Decision 2 is **edit's reading, not separately stated
+by the user**, who may override it.
+
+| # | Decision | Options offered | Decided |
+|---|----------|-----------------|---------|
+| 1 | What `send` does with an unknown `--reply-to` | (a) refuse, non-zero, naming the sender's open requests so the agent can retry; (b) accept, log and alert edit; (c) accept and fall back to the sender's single open request from that requester when exactly one exists, logging the repair | **(c), with (a) as the fallback** — the user's, as below |
+| 2 | Whether a close match is repaired | Repairing "nearest id" is a second guess on top of Decision 1 | **No** nearest-id or fuzzy repair beyond Decision 1 — edit's reading; the single-open-request rule covers the unambiguous case |
+
+**Decision 1 — behaviour.**
+
+- **Exactly one open request** held by the sender from the reply's requester (`daemon` normalizes to edit): attach the reply to it, write `reply-to-repaired` naming the id given and the id repaired to, and tell edit once.
+- **Zero or several open requests**: refuse with a non-zero exit, print the correct ready-to-copy reply command for each open request, write `reply-to-unknown`, and tell edit once.
+- On the 2026-11-14 shape — one open request, a mangled id, action `response` — the node closes on the repair, well inside 600 s.
+
+**Optional guard, the implementer's call** (proposed by edit): repair only when the given id's
+leading unix timestamp equals the open request's. It did on 2026-11-14 (`1794683890`).
 
 Phase 1 needs neither decision; Phase 2 is Decision 1.
 
@@ -39,7 +52,7 @@ Phase 1 needs neither decision; Phase 2 is Decision 1.
 
 ### Acceptance criteria
 
-- [ ] An unknown `--reply-to` is never silent: it writes a `reply-to-unknown` lifecycle row naming the sender, the id given and the sender's open requests, and edit is told once
+- [ ] An unknown `--reply-to` is never silent: it writes a lifecycle row naming the sender, the id given and the sender's open requests — `reply-to-unknown` when refused, `reply-to-repaired` (also naming the id repaired to) when Decision 1 attaches it — and edit is told once
 - [ ] A known `--reply-to` behaves exactly as today (negative control)
 - [ ] A reply with no `--reply-to` behaves exactly as today (negative control)
 - [ ] The behaviour chosen in Decision 1 is implemented, and on the 2026-11-14 timeline the test node does not wait out its 600 s
@@ -71,9 +84,9 @@ branch Decision 1 selects. Open requests for the sender come from the receipts a
 
 ### Phase 2: The chosen behaviour
 
-- [ ] Record Decisions 1 and 2 in this spec before any code
+- [x] Record Decisions 1 and 2 in this spec before any code — recorded 2026-11-14, see "Decisions"; Decision 2 is edit's reading
 - [ ] Implement the chosen branch, with a test on the 2026-11-14 shape (an id with a dropped substring, action `response`)
-- [ ] Negative control for the branch: two open requests from the same requester never resolve by guess
+- [ ] Negative control for the branch: two open requests from the same requester never resolve by guess — the send is refused and prints a reply command for each; zero open requests is refused the same way
 
 ### Phase 3: Integration test
 
@@ -84,9 +97,10 @@ branch Decision 1 selects. Open requests for the sender come from the receipts a
 ## Notes
 
 - Filed 2026-11-14 by plan from `/tmp/defect-unmatched-reply.md` (edit), on the user's standing instruction to file defects found along the way.
-- Parked at filing: Phase 2 holds Decision 1, which is unrecorded.
+- Parked at filing: Phase 2 held Decision 1, which was unrecorded.
+- Unparked 2026-11-14: the user decided Decision 1 (relayed by edit); Decision 2 stands as edit's reading — no fuzzy repair — unless the user overrides it.
 - Related: [MUX-189](../completed/MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) (reply commands are delivered verbatim, one per request — the id is meant to be copied, not retyped); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) (a passing history row is not allowed to close a node on its own, which is why the green test row did not save this one).
 
 ## Status
 
-**Backlog** — 0/14. Filed 2026-11-14. Parked pending Decision 1.
+**Backlog** — 1/14. Filed 2026-11-14. Unparked 2026-11-14 with Decisions 1 and 2 recorded; eligible for the defect loop.
