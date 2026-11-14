@@ -31,14 +31,33 @@ Both are real session summaries written by an agent whose shell stood in `tools/
 Global memory (`GlobalMemoryDir`, `~/.config/muxcode/memory`) is absolute already and is not part of
 this defect. Test isolation of the two directories is
 [MUX-137](../completed/MUX-137-test-bus-dir-leak.md) and
-[MUX-224](./MUX-224-tests-use-the-real-global-memory-dir.md).
+[MUX-224](../completed/MUX-224-tests-use-the-real-global-memory-dir.md).
 
-### Decisions owed — the user's
+### Decisions — the user's, recorded 2026-11-14
 
-| # | Decision | Options |
-|---|----------|---------|
-| 1 | How project memory finds its root | (a) export an absolute `BUS_MEMORY_DIR` at launch, as `MUXCODE_BUS_DIR` is; (b) resolve from the session's project directory or the git toplevel inside `MemoryDir()`; (c) both, the export winning. A process started outside a session (a user's own shell) has no launcher export, which is what separates (a) from (b) |
-| 2 | What happens to memory already stranded | Report only; move into the root; or merge entry by entry. The stranded files are the user's own session history — **never deleted** by any option |
+Both were owed at filing. The user decided them on 2026-11-14; edit relayed the decisions
+(`/tmp/decisions-223-225.md`) and plan recorded them here.
+
+| # | Decision | Options offered | Decided |
+|---|----------|-----------------|---------|
+| 1 | How project memory finds its root | (a) export an absolute `BUS_MEMORY_DIR` at launch, as `MUXCODE_BUS_DIR` is; (b) resolve from the session's project directory or the git toplevel inside `MemoryDir()`; (c) both, the export winning | **(c)**, in the order below |
+| 2 | What happens to memory already stranded | Report only; move into the root; or merge entry by entry | **Merge entry by entry**, as below. The stranded files are the user's own session history — **never deleted** |
+
+**Decision 1 — resolution order.**
+
+1. An absolute `BUS_MEMORY_DIR`, exported at launch as `MUXCODE_BUS_DIR` is, wins.
+2. Else the **main checkout's** root found through git: the parent of `git rev-parse --git-common-dir`, not `--show-toplevel`, so a worktree worker shares the main checkout's memory.
+3. Else an error. Writes (`memory write`, `session compact`) fail naming `BUS_MEMORY_DIR` as the fix; reads return global memory only. Never a cwd-relative path.
+
+Implementation note from the decision: do **not** resolve by walking up to the nearest `.muxcode/`
+— from `tools/muxcode/bus` that walk would stop at the stranded `tools/muxcode/.muxcode`.
+
+**Decision 2 — merge.** Stranded memory is merged entry by entry into the root's memory:
+timestamped sections in time order, exact duplicates skipped, and the root file backed up before the
+merge. The stranded originals are kept after merging, not deleted — for example under
+`.muxcode/memory/stranded/<original-relative-path>/`. The two files named above
+(`tools/muxcode/.muxcode/memory/edit.md` with its `edit/` archive, and
+`tools/muxcode/bus/.muxcode/memory/edit.md`) are merged this way.
 
 ## Requirements
 
@@ -47,15 +66,18 @@ this defect. Test isolation of the two directories is
 - [ ] `muxcode session compact` and `muxcode memory write`, run from any subdirectory of a project, write to the project root's `.muxcode/memory`
 - [ ] `muxcode memory context` and session restore, run from any subdirectory, read the same directory the writes went to
 - [ ] An explicit `BUS_MEMORY_DIR` still wins (negative control: behaviour with it set is unchanged)
-- [ ] A process outside any project resolves somewhere defined and documented, never to an arbitrary relative path
+- [ ] A process outside any project resolves somewhere defined and documented, never to an arbitrary relative path — per Decision 1: writes fail naming `BUS_MEMORY_DIR`, reads return global memory only
 - [ ] Stranded memory directories under a project are found and reported, and handled as Decision 2 says; no summary is lost
 - [ ] The two stranded `edit.md` files in this repository are accounted for, by name, in this spec
 - [ ] `docs/configuration.md` and `docs/agent-bus.md` state how the memory directory is resolved
 
 ### Technical approach
 
-Follows Decision 1. Whichever is chosen, one function owns the answer (`MemoryDir`), every caller
-goes through it, and a spawned worker and a hosted role resolve the same root as their session.
+Follows Decision 1's order: the launch export, then the main checkout's root through
+`git rev-parse --git-common-dir`, then an error. One function owns the answer (`MemoryDir`), every
+caller goes through it, and a spawned worker and a hosted role resolve the same root as their
+session. `MemoryDir` returns a bare string today, so the error branch needs a seam its callers can
+read. Stranded directories are merged as Decision 2 says, originals kept.
 
 ### Key files
 
@@ -70,7 +92,7 @@ goes through it, and a spawned worker and a hosted role resolve the same root as
 
 ### Phase 1: One root for project memory
 
-- [ ] Record Decisions 1 and 2 in this spec before any code
+- [x] Record Decisions 1 and 2 in this spec before any code — recorded 2026-11-14, see "Decisions — the user's"
 - [ ] `MemoryDir` resolves the project root as decided; an explicit `BUS_MEMORY_DIR` still wins
 - [ ] Unit tests: a write from a subdirectory lands at the root; a read from a subdirectory finds it; outside a project the documented fallback applies
 
@@ -90,8 +112,9 @@ goes through it, and a spawned worker and a hosted role resolve the same root as
 ## Notes
 
 - Filed 2026-11-14 by plan from `/tmp/defect-memory-dirs.md` (edit).
-- Parked at filing: Decisions 1 and 2 are unrecorded, and Decision 2 acts on the user's own session history.
+- Parked at filing: Decisions 1 and 2 were unrecorded, and Decision 2 acts on the user's own session history.
+- Unparked 2026-11-14: the user decided both (relayed by edit); no other decision is open.
 
 ## Status
 
-**Backlog** — 0/17. Filed 2026-11-14. Parked pending Decisions 1 and 2.
+**Backlog** — 1/17. Filed 2026-11-14. Unparked 2026-11-14 with Decisions 1 and 2 recorded; eligible for the defect loop.

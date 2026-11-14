@@ -2527,6 +2527,7 @@ Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
 | `BUS_SESSION` | Session name for the bus directory |
 | `AGENT_ROLE` | Current agent's role name (auto-detected from tmux window if unset) |
 | `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
+| `BUS_GLOBAL_MEMORY_DIR` | Absolute directory replacing the global memory location (defaults to `~/.config/muxcode/memory`; a relative value is ignored). Pinned by each package `TestMain`; see [Configuration](configuration.md) |
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: plan edit build test review deploy run commit watch) |
 | `MUXCODE_LIFECYCLE_LOG_MAX` | Max entries per lifecycle log before rotation (default: 1000) |

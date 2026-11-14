@@ -79,6 +79,53 @@ func TestDefaultMemoryDir_IsolatedFromSourceTree(t *testing.T) {
 	}
 }
 
+// TestGlobalMemoryDir_IsolatedFromHome pins TestMain's BUS_GLOBAL_MEMORY_DIR:
+// Init creates the global memory directory and ReadContext reads it, so
+// unpinned every run reached the real ~/.config/muxcode/memory (MUX-224).
+// Removing the pin fails this test.
+func TestGlobalMemoryDir_IsolatedFromHome(t *testing.T) {
+	dir := GlobalMemoryDir()
+	root := filepath.Clean(os.TempDir()) + string(os.PathSeparator)
+	if !strings.HasPrefix(dir, root) {
+		t.Fatalf("GlobalMemoryDir() = %q is outside the run's temp root %s; TestMain must pin %s", dir, root, GlobalMemoryDirEnv)
+	}
+	useTempBusDir(t)
+	if err := Init("test-global-memory-net", ""); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Errorf("Init created no global memory directory at the pinned %s: %v", dir, err)
+	}
+}
+
+// TestGlobalMemoryDir_Resolution: an absolute override wins and its paths
+// follow it; unset or relative, the directory is ~/.config/muxcode/memory as
+// before MUX-224.
+func TestGlobalMemoryDir_Resolution(t *testing.T) {
+	home, override := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	def := filepath.Join(home, ".config", "muxcode", "memory")
+
+	for _, v := range []string{"", "relative/memory"} {
+		t.Setenv(GlobalMemoryDirEnv, v)
+		if got := GlobalMemoryDir(); got != def {
+			t.Errorf("%s=%q: GlobalMemoryDir() = %q, want %q", GlobalMemoryDirEnv, v, got, def)
+		}
+	}
+
+	t.Setenv(GlobalMemoryDirEnv, override)
+	for _, c := range []struct{ got, want string }{
+		{GlobalMemoryDir(), override},
+		{GlobalMemoryPath("shared"), filepath.Join(override, "shared.md")},
+		{GlobalMemoryPath("edit"), filepath.Join(override, "edit.md")},
+		{GlobalMemoryArchivePath("edit", "2026-11-14"), filepath.Join(override, "edit", "2026-11-14.md")},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
 // TestStateDir_Resolution: an absolute XDG_STATE_HOME wins, a relative one is
 // ignored for ~/.local/state, and the bus base sits beneath the state root.
 func TestStateDir_Resolution(t *testing.T) {

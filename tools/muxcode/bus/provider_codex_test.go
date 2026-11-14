@@ -621,6 +621,7 @@ func codexTestHome(t *testing.T) string {
 	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv(BusDirBaseEnv, "")
+	t.Setenv(GlobalMemoryDirEnv, "")
 	saved := busDirOverride
 	ResetBusDirBase()
 	t.Cleanup(func() { busDirOverride = saved })
