@@ -96,7 +96,7 @@ func hookBash() {
 		return
 	}
 	exitCode := ev.GetExitCode()
-	triggerChain(session, role, result.Chain, bus.HookOutcome(exitCode), exitCode, ev.ToolInput.Command, bus.BuildChainContext(ev))
+	triggerChain(session, role, result.Chain, bus.HookOutcome(exitCode), exitCode, ev.ToolInput.Command, ev.ToolUseID, bus.BuildChainContext(ev))
 }
 
 // hookScrub implements the synchronous Claude PostToolUse Bash hook (MUX-203):
@@ -131,12 +131,20 @@ func hookScrub() {
 // beside the graph's own parked nodes — the chain's test running in whatever
 // tree the agent sat in rather than the run's worktree. See
 // bus.GraphOwnsRunningSendNode for why the firing role, not the chain's
-// target, is the right provenance key.
+// target, is the right provenance key. For a test run, ownership recorded as
+// the command started counts too (bus.TakeTestRunOrigin): an async hook can
+// arrive after the reply closed the node's task, when the live check no
+// longer sees the run.
 //
 // The workflow guard at the top never re-fires a chain already in or past its
-// target state: it breaks the test→review→test loop where review completion
-// made the test agent re-run tests, which requested another review.
-func triggerChain(session, from, eventType, outcome, exitCode, command string, ctx *bus.ChainContext) {
+// target state. It cannot stop a test run's success, though: ProcessBashHook
+// has already moved the workflow to testing before this reads it. What breaks
+// the test→review→test loop (MUX-213) is that a test-chain success fires only
+// when a request stood behind the run as it started (captured by the guard
+// hook before the agent could reply) — a run started by a review reply, a wake
+// or a rerun after the reply is logged chain-withheld instead. A failure still
+// notifies, so no failing run is hidden.
+func triggerChain(session, from, eventType, outcome, exitCode, command, toolUseID string, ctx *bus.ChainContext) {
 	state := bus.ReadWorkflowState(session).State
 	switch eventType {
 	case "test":
@@ -157,9 +165,22 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 		}
 	}
 
-	if runID, nodeID, owned := bus.GraphOwnsRunningSendNode(session, from); owned {
+	origin := bus.TestRunOrigin{Requested: true}
+	if eventType == "test" {
+		origin = bus.TakeTestRunOrigin(session, from, toolUseID)
+	}
+	runID, nodeID, owned := bus.GraphOwnsRunningSendNode(session, from)
+	if !owned && origin.GraphRun != "" {
+		runID, nodeID, owned = origin.GraphRun, origin.GraphNode, true
+	}
+	if owned {
 		bus.LogLifecycle(session, "info", "hook", "chain-suppressed",
 			fmt.Sprintf("%s chain not fired — graph run %s owns %s as node %s", eventType, runID, from, nodeID))
+		return
+	}
+
+	if eventType == "test" && outcome == "success" && !origin.Requested {
+		bus.LogChainUnrequested(session, from, command, eventType)
 		return
 	}
 
@@ -169,7 +190,7 @@ func triggerChain(session, from, eventType, outcome, exitCode, command string, c
 	}
 
 	message := bus.ExpandMessageWithContext(action.Message, exitCode, command, ctx)
-	msg := bus.NewMessage(from, action.SendTo, action.Type, action.Action, message, "")
+	msg := bus.NewChainRequest(from, eventType, action, message)
 
 	// Atomic dedup check + send under file lock
 	sent, err := bus.SendNoCCIfNotDuplicate(session, msg)
@@ -272,6 +293,7 @@ func hookGuard() {
 			fmt.Sprintf("%s: %s — %s", role, ev.ToolName, firstLine(d.Reason, 160)))
 		return
 	}
+	bus.RecordRunProvenance(session, role, ev)
 	if answer, ok := bus.CodexScrubWrapAnswer(session, role, provider, ev); ok {
 		fmt.Println(answer)
 	}

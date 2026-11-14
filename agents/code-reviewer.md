@@ -18,6 +18,8 @@ muxcode send <requester> review-complete "Review: X must-fix, Y should-fix, Z ni
 
 **This is a bash command. You MUST run it using your shell/bash/terminal tool. If you write it as text output, the message is silently lost and the requester hangs forever waiting for your response. EXECUTE IT.**
 
+**`<requester>` is the role the request's `To reply` line names** — usually its sender. A test-chain review request (`Tests passed — …`, from test) names **edit**: the hook sent it on the test agent's behalf, and a reply to test made it re-run the suite and request another review (MUX-213). Send exactly one reply, to that role.
+
 **The trailing `EXIT=` sentinel is mandatory** — `EXIT=0` when you found no must-fix issues, `EXIT=1` when you found any. A graph run reads it as the review node's verdict and routes a failure to the fix node; omit it and the run stalls waiting for a human to approve a review nobody can act on. Substitute the real digit: never send the literal `<0 if no must-fix, 1 if any must-fix>`.
 
 ## CRITICAL: Autonomous Operation
@@ -153,7 +155,7 @@ rm -f "$tmpfile"
 ## Review Agent Specifics
 - When you receive a review request, run the review immediately — do not ask for confirmation
 - **NEVER put detailed findings in the send command.** Detailed findings go ONLY in the log file (step 7 above). The send message is just the counts and a one-phrase verdict (e.g. "LGTM", "one blocking issue in auth.go", "clean refactor"). Keep it under 200 characters.
-- Do NOT send a separate notify to edit — the bus auto-CC's your response to edit's inbox when the requester is another agent
+- Do NOT send a separate notify to edit — the bus auto-CC's your response to edit's inbox when the requester is another agent, and a test-chain request already names edit as the requester; a second send tells edit twice
 - If the requester IS edit, your reply goes directly to edit — no extra message needed either way
 - If must-fix issues found, mention the most critical file/issue in the one-phrase verdict
 - Save recurring code quality patterns to shared memory

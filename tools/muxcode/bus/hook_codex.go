@@ -246,6 +246,17 @@ const codexDeliveryPreamble = "New bus messages. Handle every request below now,
 	"\"To reply\" line says — run that muxcode command with your shell tool (do not print it), " +
 	"one reply per request. Never wait for a human.\n\n"
 
+// codexTestNoRequestPreamble frames a test agent's wake whose inbox holds no
+// request — a reply to earlier work, or a daemon notice such as a no-answer
+// timeout event. Under the request preamble a Codex test agent read a
+// review-complete reply as work and re-ran the suite, whose success requested
+// the next review (MUX-213), and it also started runs after timeout notices.
+// It is the test role's alone, and says only what the test role must not do:
+// an orchestrator must still act on the result of work it delegated, and other
+// roles have their own handling for events.
+const codexTestNoRequestPreamble = "New bus messages — none of them is a request. You run tests only for a " +
+	"request: run no tests and send no reply for these, then stop.\n\n"
+
 const codexNothingPendingContext = "Your bus inbox is empty: an earlier hook already delivered and consumed " +
 	"the messages behind this wake-up. Nothing is pending — reply briefly that there is nothing to do, then stop."
 
@@ -302,6 +313,9 @@ func CodexPromptSubmitContext(session, role, prompt string) (string, bool) {
 	d := ConsumeInboxForHook(session, role, false)
 	if d.Total == 0 {
 		return codexNothingPendingContext, true
+	}
+	if d.Requests == 0 && SpawnBaseRole(session, role) == "test" {
+		return codexTestNoRequestPreamble + d.Text, true
 	}
 	return codexDeliveryPreamble + d.Text, true
 }

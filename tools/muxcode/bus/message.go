@@ -25,6 +25,11 @@ import (
 // LaunchReason is set only on the startup request PreLaunchSetup seeds, and
 // records why that launch happened so a run the agent then starts can name its
 // trigger — see deriveRunTrigger.
+//
+// ReplyRole, when set, is the role the recipient is told to answer instead of
+// From (ReplyTarget). A hook-chain request sets it (NewChainRequest): the
+// sender is the hook, and nobody in that agent waits for the answer. Empty
+// means reply to From, as every message did before MUX-213.
 type Message struct {
 	ID      string `json:"id"`
 	TS      int64  `json:"ts"`
@@ -43,6 +48,21 @@ type Message struct {
 	OriginRunState  string `json:"origin_run_state,omitempty"`
 
 	LaunchReason string `json:"launch_reason,omitempty"`
+
+	ReplyRole string `json:"reply_role,omitempty"`
+}
+
+// ReplyTarget is the role a reply to m must be sent to: ReplyRole when the
+// sender named one, else From. Either is normalized, because non-agent sender
+// identities ("daemon" — graph executor dispatch, daemon requests) are not
+// valid send targets: an agent that followed a raw "muxcode send daemon ..."
+// instruction got "unknown role" and its response was never recorded.
+// Correlation runs on --reply-to, so routing the reply elsewhere loses nothing.
+func ReplyTarget(m Message) string {
+	if m.ReplyRole != "" {
+		return NormalizeBusRole(m.ReplyRole)
+	}
+	return NormalizeBusRole(m.From)
 }
 
 // NewMsgID generates a unique message ID: {unix_ts}-{from}-{4hex}.
@@ -90,12 +110,6 @@ func FormatMessage(m Message) string {
 	if m.ReplyTo != "" {
 		s += fmt.Sprintf("Reply to: %s\n", m.ReplyTo)
 	}
-	// The reply target is normalized because non-agent sender identities
-	// ("daemon" — graph executor dispatch, daemon requests) are not valid
-	// send targets: an agent that followed a raw "muxcode send daemon ..."
-	// instruction got "unknown role" and its response was never recorded.
-	// Response correlation runs on --reply-to, so routing the reply to the
-	// normalized role (daemon → edit) loses nothing.
-	s += fmt.Sprintf("To reply: muxcode send %s <action> \"<message>\" --type response --reply-to %s\n", NormalizeBusRole(m.From), m.ID)
+	s += fmt.Sprintf("To reply: muxcode send %s <action> \"<message>\" --type response --reply-to %s\n", ReplyTarget(m), m.ID)
 	return s
 }

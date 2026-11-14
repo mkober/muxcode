@@ -561,10 +561,10 @@ sendResponse:
 		finalResponse = finalResponse[:4000] + "\n... [truncated]"
 	}
 
-	sink.Emit(Event{Kind: EventBatchComplete, Time: time.Now(), Message: fmt.Sprintf("Response (%d bytes, success=%v) → %s", len(finalResponse), batchSuccess, lastMsg.From)})
+	sink.Emit(Event{Kind: EventBatchComplete, Time: time.Now(), Message: fmt.Sprintf("Response (%d bytes, success=%v) → %s", len(finalResponse), batchSuccess, lastMsg.ReplyTarget())})
 	tracer.BatchEnd(batchSuccess, fmt.Sprintf("response_bytes=%d", len(finalResponse)))
 
-	if err := bus.Send(lastMsg.From, lastMsg.Action, finalResponse, "response", lastMsg.ID); err != nil {
+	if err := bus.Send(lastMsg.ReplyTarget(), lastMsg.Action, finalResponse, "response", lastMsg.ID); err != nil {
 		sink.Emit(Event{Kind: EventError, Time: time.Now(), Message: fmt.Sprintf("send error: %v", err)})
 	}
 

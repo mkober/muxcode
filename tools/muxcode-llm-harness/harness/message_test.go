@@ -117,3 +117,25 @@ func TestFormatTask_Empty(t *testing.T) {
 		t.Errorf("empty messages should return empty string, got %q", result)
 	}
 }
+
+// MUX-213: a test-chain review request names edit as its reply target, so a
+// harness reviewer must answer edit, not the test agent that would re-run the
+// suite on the reply. A message without reply_role still answers its sender.
+func TestReplyTarget_HonoursReplyRole(t *testing.T) {
+	input := `{"id":"1","ts":1,"from":"test","to":"review","type":"request","action":"review","payload":"Tests passed","reply_to":"","reply_role":"edit"}
+{"id":"2","ts":2,"from":"edit","to":"review","type":"request","action":"review","payload":"review it","reply_to":""}`
+	msgs, err := ParseMessages(input)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("ParseMessages = %d, %v", len(msgs), err)
+	}
+	if got := msgs[0].ReplyTarget(); got != "edit" {
+		t.Errorf("chain request reply target = %q, want edit", got)
+	}
+	if got := msgs[1].ReplyTarget(); got != "edit" || msgs[1].ReplyRole != "" {
+		t.Errorf("plain request reply target = %q (reply_role %q), want its sender", got, msgs[1].ReplyRole)
+	}
+	plain := Message{From: "build"}
+	if got := plain.ReplyTarget(); got != "build" {
+		t.Errorf("no reply_role: target = %q, want the sender build", got)
+	}
+}
