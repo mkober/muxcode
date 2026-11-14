@@ -79,8 +79,11 @@ func UpgradeDaemons(args []string) {
 			fmt.Printf("  %s: %s — would restart\n", r.Session, r.VersionDelta())
 		default:
 			detail := "daemon restarted"
-			if r.MonitorRestarted {
+			switch {
+			case r.DaemonRestarted && r.MonitorRestarted:
 				detail = "daemon + monitor restarted"
+			case r.MonitorRestarted:
+				detail = "monitor restarted"
 			}
 			fmt.Printf("  %s: %s — %s\n", r.Session, r.VersionDelta(), detail)
 		}

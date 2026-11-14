@@ -87,6 +87,7 @@ func sessionStatus() {
 
 	if meta == nil {
 		fmt.Println("Session: not started")
+		fmt.Println(bus.DaemonBuildStatus(session))
 		return
 	}
 
@@ -103,4 +104,5 @@ func sessionStatus() {
 	}
 
 	fmt.Print(bus.FormatSessionStatus(meta, role, msgCount))
+	fmt.Println(bus.DaemonBuildStatus(session))
 }

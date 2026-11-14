@@ -550,6 +550,13 @@ func startDetachedProcess(name string, args ...string) (int, error) {
 // while supervising a session for repo B — and anything it resolves from cwd
 // (git branch, repo identity) then describes the wrong repository.
 func startDetachedProcessIn(dir, name string, args ...string) (int, error) {
+	return startDetachedProcessLogged(dir, "", name, args...)
+}
+
+// startDetachedProcessLogged is startDetachedProcessIn with the child's
+// stdout and stderr appended to logPath (discarded when empty), so a child
+// that dies at startup leaves its reason behind.
+func startDetachedProcessLogged(dir, logPath, name string, args ...string) (int, error) {
 	binPath, err := exec.LookPath(name)
 	if err != nil {
 		return 0, err
@@ -557,8 +564,14 @@ func startDetachedProcessIn(dir, name string, args ...string) (int, error) {
 	cmd := exec.Command(binPath, args...)
 	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	if logPath != "" {
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return 0, err
+		}
+		defer f.Close()
+		cmd.Stdout, cmd.Stderr = f, f
+	}
 	if err := cmd.Start(); err != nil {
 		return 0, err
 	}

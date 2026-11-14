@@ -276,7 +276,7 @@ no `--expect-tag`) still restarts every session on the machine, as above.
 | Spec | Relationship |
 |------|--------------|
 | [MUX-139](./MUX-139-claude-agent-auto-resume.md) Phase 5 | The `Restart Agents` modal — the precedent for a menu-launched TUI that runs a bus operation and reports per row; also the follow-up this upgrade points the user at |
-| [MUX-161](../backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) | Why `build.sh`'s own `upgrade-daemons` fails from the build agent; this feature runs it from the user's popup instead |
+| [MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) | Why `build.sh`'s own `upgrade-daemons` fails from the build agent; this feature runs it from the user's popup instead |
 | [MUX-108](./MUX-108-control-pane.md) | The control-pane recycle on daemon restart, relied on unchanged |
 | [MUX-020](../backlog/MUX-020-cli-help-command.md) | `muxcode upgrade --check` is the kind of command a help listing should surface |
 

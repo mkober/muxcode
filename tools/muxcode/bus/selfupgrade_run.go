@@ -86,7 +86,7 @@ func ResolveUpgradePaths(opts SelfUpgradeOptions) (root, bin, config string, err
 }
 
 // upgradeDaemonSessionsFn is how a confirmed run finds daemons started since
-// its confirm; a seam over ps, so a test sets the sessions it sees.
+// its confirm; a seam over daemon discovery, so a test sets the sessions it sees.
 var upgradeDaemonSessionsFn = UpgradeDaemonSessions
 
 // UpgradeDaemonSessions lists, sorted, the sessions with a daemon or monitor

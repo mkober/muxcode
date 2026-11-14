@@ -9,11 +9,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -304,31 +302,21 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 	}
 }
 
-// acquireDaemonLock ensures only one daemon runs per session.
-// Uses flock on a lock file for race-free single-instance enforcement.
+// acquireDaemonLock ensures only one daemon runs per session — the flock on
+// daemon.lock every version takes — and publishes it as the owner of
+// daemon.owner, whose record lock `upgrade-daemons` asks the kernel about when
+// ps cannot run (bus.AcquireInstanceLock). Nothing else in the daemon may open
+// daemon.owner: closing any descriptor of it releases the record lock.
 // Returns an unlock function, or an error if another daemon is already running.
 func acquireDaemonLock(session string) (func(), error) {
-	lockPath := filepath.Join(bus.BusDir(session), "lock", "daemon.lock")
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	unlock, err := bus.AcquireInstanceLock(bus.DaemonLockPath(session), bus.DaemonOwnerPath(session))
+	if errors.Is(err, bus.ErrLockHeld) {
+		return nil, fmt.Errorf("another daemon is already running for session %s", session)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot open daemon lock: %w", err)
 	}
-
-	// Non-blocking exclusive lock — fails immediately if another daemon holds it
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("another daemon is already running for session %s", session)
-	}
-
-	// Write our PID for diagnostics (the flock is the real guard, not the PID)
-	_ = f.Truncate(0)
-	_, _ = f.Seek(0, 0)
-	_, _ = f.WriteString(strconv.Itoa(os.Getpid()))
-
-	return func() {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-	}, nil
+	return unlock, nil
 }
 
 // Run starts the main daemon loop. It never returns under normal operation.
@@ -385,6 +373,7 @@ func (d *Daemon) Run() error {
 	fmt.Println()
 
 	for {
+		d.checkRestartRequest()
 		d.touchKeepalive()
 		d.checkActiveSpec()
 		d.checkInboxes()
@@ -424,6 +413,22 @@ func (d *Daemon) Run() error {
 		d.checkPromptAgent()
 		d.checkBranchTime()
 		time.Sleep(d.pollInterval)
+	}
+}
+
+// checkRestartRequest re-execs this daemon's own executable on an
+// `upgrade-daemons` restart request (bus.TakeRestartTarget) — the road by
+// which a rollout that cannot run ps cycles it without signalling it. On
+// success it does not return; a failed exec is logged and the daemon carries
+// on, on the build it has.
+func (d *Daemon) checkRestartRequest() {
+	binary, ok := bus.TakeRestartTarget(bus.DaemonRestartRequestPath(d.session))
+	if !ok {
+		return
+	}
+	bus.LogLifecycle(d.session, "info", "daemon", "daemon-reexec", "re-exec "+binary+" on an upgrade-daemons restart request")
+	if err := bus.ReexecForRestart(binary); err != nil {
+		bus.LogLifecycle(d.session, "error", "daemon", "daemon-reexec-failed", err.Error())
 	}
 }
 

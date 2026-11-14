@@ -130,7 +130,7 @@ demands **positive absence** — the server answered and the name was not listed
 2026-09-08 a sandboxed probe read every live session as stale and an attached session lost its bus
 dir repeatedly. Killing is less reversible than deleting; the reaper holds that bar or higher. And
 `ListDaemonProcs` is `ps`, which the Codex build sandbox cannot exec
-([MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md)) — a `ps`-only reaper inherits
+([MUX-161](../completed/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md)) — a `ps`-only reaper inherits
 that blindness, which is one reason the pid records above matter.
 
 ### Blast radius
@@ -143,7 +143,7 @@ that blindness, which is one reason the pid records above matter.
 
 - [MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — the harness family. Its Phases 2–3 (reaper design; *"may a daemon reap another session's processes?"*) are this spec's Phases 2–3 restricted to one family; its footprint half is untouched here.
 - [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — the listener family. Its listener-side self-exit and receipt attribution stay there; its daemon-side census is this reaper.
-- [MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) — `ps` is unavailable to a Codex build agent; any reaper on the `ps` road shares it.
+- [MUX-161](../completed/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) — `ps` is unavailable to a Codex build agent; any reaper on the `ps` road shares it.
 - [MUX-008](./MUX-008-unverified-daemon-auto-restart.md) — the fire-and-hope relaunch; bears on whether a reaped daemon stays reaped.
 - [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) — one way an integration script dies mid-run; whether that is how the `escabs` servers lost their trap is not established.
 
