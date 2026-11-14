@@ -330,7 +330,7 @@ first step below without the second.
   `TestMain` (`bus`, `cmd`, `daemon`, `tui`) pins `XDG_STATE_HOME` to its run's temp root, so a test
   resolving a bus dir without `SetBusDirBase` never reaches the real `~/.local/state/muxcode`;
   `TestDefaultBusBase_IsolatedFromRealState` fails if the pin is removed. No MUX-137 leak test
-  exists; [MUX-137](../backlog/MUX-137-test-bus-dir-leak.md)'s dead `BUS_DIR_BASE` tests now land in
+  exists; [MUX-137](./MUX-137-test-bus-dir-leak.md)'s dead `BUS_DIR_BASE` tests now land in
   the temp root, and their own fix stays MUX-137's. Verified via the run agent
   (`/tmp/mux208-step9-verify.sh`): full `go test` exit 0, the real state dir and
   `/tmp/muxcode-bus-*` unchanged across the run
@@ -394,7 +394,7 @@ cancel section and floor 52; re-run 15:08 the same day: **53 passed, 0 failed, f
 
 ## Related
 
-- [MUX-137](../backlog/MUX-137-test-bus-dir-leak.md) — tests leaking real bus directories into `/tmp`; the
+- [MUX-137](./MUX-137-test-bus-dir-leak.md) — tests leaking real bus directories into `/tmp`; the
   same namespace from the other side
 - [MUX-160](../backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md) — the `/tmp` caches the
   disk-pressure sweep counts; what stays in `/tmp` after this spec

@@ -823,14 +823,13 @@ func TestResolveTaskFile_EmptyFile(t *testing.T) {
 }
 
 func TestPreLaunchSetup_AutoStartupMessage(t *testing.T) {
-	dir := t.TempDir()
+	dir := useTempBusDir(t)
 	session := "test-prelaunch-auto"
-	os.Setenv("BUS_DIR_BASE", dir)
-	defer os.Unsetenv("BUS_DIR_BASE")
 	t.Setenv("MUXCODE_AUTO_STARTUP_TASK", "")
 
 	// Init the bus directory so inbox paths exist
 	Init(session, dir)
+	assertIsolatedBus(t, session, dir)
 
 	// Run PreLaunchSetup for auto role
 	PreLaunchSetup("auto", session, "claude", LaunchReasonUser)
@@ -863,12 +862,11 @@ func TestPreLaunchSetup_AutoStartupMessage(t *testing.T) {
 }
 
 func TestPreLaunchSetup_EditStartupMessage(t *testing.T) {
-	dir := t.TempDir()
+	dir := useTempBusDir(t)
 	session := "test-prelaunch-edit"
-	os.Setenv("BUS_DIR_BASE", dir)
-	defer os.Unsetenv("BUS_DIR_BASE")
 
 	Init(session, dir)
+	assertIsolatedBus(t, session, dir)
 
 	PreLaunchSetup("edit", session, "claude", LaunchReasonUser)
 
@@ -902,12 +900,11 @@ func TestPreLaunchSetup_AllRolesGetStartupMessage(t *testing.T) {
 	roles := []string{"build", "test", "commit", "review", "deploy", "plan", "run", "watch", "serve"}
 	for _, role := range roles {
 		t.Run(role, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := useTempBusDir(t)
 			session := "test-prelaunch-" + role
-			os.Setenv("BUS_DIR_BASE", dir)
-			defer os.Unsetenv("BUS_DIR_BASE")
 
 			Init(session, dir)
+			assertIsolatedBus(t, session, dir)
 
 			PreLaunchSetup(role, session, "claude", LaunchReasonRestart)
 
@@ -1046,8 +1043,7 @@ func TestResolveExecPath_NotFound(t *testing.T) {
 }
 
 func TestRunAgentLaunch_ExecArgs(t *testing.T) {
-	SetBusDirBase(t.TempDir())
-	defer ResetBusDirBase()
+	dir := useTempBusDir(t)
 
 	// Clear env to get defaults
 	t.Setenv("AGENT_ROLE", "")
@@ -1058,7 +1054,8 @@ func TestRunAgentLaunch_ExecArgs(t *testing.T) {
 	t.Setenv("BUS_SESSION", "test-run-agent-launch")
 
 	// Init bus directory
-	Init("test-run-agent-launch", os.Getenv("BUS_DIR_BASE"))
+	Init("test-run-agent-launch", dir)
+	assertIsolatedBus(t, "test-run-agent-launch", dir)
 
 	// Capture the exec call instead of actually exec-ing
 	var capturedPath string
@@ -1163,15 +1160,15 @@ func TestRunAgentLaunch_VenvActivation(t *testing.T) {
 }
 
 func TestRunAgentLaunch_SetsAgentRole(t *testing.T) {
-	SetBusDirBase(t.TempDir())
-	defer ResetBusDirBase()
+	dir := useTempBusDir(t)
 
 	t.Setenv("AGENT_ROLE", "")
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_COMMIT_CLI", "")
 	t.Setenv("BUS_SESSION", "test-role-env")
 
-	Init("test-role-env", os.Getenv("BUS_DIR_BASE"))
+	Init("test-role-env", dir)
+	assertIsolatedBus(t, "test-role-env", dir)
 
 	origExec := execSyscall
 	execSyscall = func(path string, argv []string, env []string) error {
@@ -1189,15 +1186,15 @@ func TestRunAgentLaunch_SetsAgentRole(t *testing.T) {
 }
 
 func TestRunAgentLaunch_LegacyRoleNormalization(t *testing.T) {
-	SetBusDirBase(t.TempDir())
-	defer ResetBusDirBase()
+	dir := useTempBusDir(t)
 
 	t.Setenv("AGENT_ROLE", "")
 	t.Setenv("MUXCODE_AGENT_CLI", "")
 	t.Setenv("MUXCODE_RUN_CLI", "")
 	t.Setenv("BUS_SESSION", "test-legacy-role")
 
-	Init("test-legacy-role", os.Getenv("BUS_DIR_BASE"))
+	Init("test-legacy-role", dir)
+	assertIsolatedBus(t, "test-legacy-role", dir)
 
 	origExec := execSyscall
 	execSyscall = func(path string, argv []string, env []string) error {
@@ -1215,8 +1212,7 @@ func TestRunAgentLaunch_LegacyRoleNormalization(t *testing.T) {
 }
 
 func TestRunAgentLaunch_PresetAgentRolePreserved(t *testing.T) {
-	SetBusDirBase(t.TempDir())
-	defer ResetBusDirBase()
+	dir := useTempBusDir(t)
 
 	// Simulate spawn agent: AGENT_ROLE is pre-set to the spawn identity
 	t.Setenv("AGENT_ROLE", "spawn-edit-1")
@@ -1224,7 +1220,8 @@ func TestRunAgentLaunch_PresetAgentRolePreserved(t *testing.T) {
 	t.Setenv("MUXCODE_EDIT_CLI", "")
 	t.Setenv("BUS_SESSION", "test-spawn-role")
 
-	Init("test-spawn-role", os.Getenv("BUS_DIR_BASE"))
+	Init("test-spawn-role", dir)
+	assertIsolatedBus(t, "test-spawn-role", dir)
 
 	origExec := execSyscall
 	execSyscall = func(path string, argv []string, env []string) error {

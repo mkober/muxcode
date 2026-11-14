@@ -22,6 +22,10 @@ import (
 // SetBusDirBase lands in this temp root, never the real ~/.local/state/muxcode
 // (MUX-208) — the same leak MUX-137 found against /tmp.
 //
+// BUS_MEMORY_DIR is redirected because MemoryDir's default is the relative
+// .muxcode/memory: an Init(session, "") or a memory write that pins nothing
+// otherwise lands in the package source tree (MUX-137).
+//
 // The gate authority reads fixed paths (the cwd's .muxcode/config and the real
 // home config), so it is pinned to none: a user's own
 // MUXCODE_GATE_AUTHORITY_ROLES grant would otherwise flip every test that
@@ -35,6 +39,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", dir)
 	os.Setenv("CODEX_HOME", filepath.Join(dir, "codex-home"))
 	os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	os.Setenv("BUS_MEMORY_DIR", filepath.Join(dir, "memory"))
 
 	code := m.Run()
 
