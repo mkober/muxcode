@@ -95,25 +95,25 @@ demand. Each keeps its Defects rank.
 | 13 | 1 | [`MUX-160`](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The `/tmp` Go caches the disk-pressure sweep counts but cannot clear | High | — |
 | 14 | 1 | [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) | Messages route to a role with no window; diagnose prescribes an impossible fix; reload reports a phantom hang | Medium | — |
 | 15 | 1 | [`MUX-150`](./MUX-150-verify-spec-names-last-routed-batch.md) | `verify-spec` names the last routed batch, not the change set | Medium | — |
-| 16 | 1 | [`MUX-221`](./MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The dead-agent diagnose test is uncontrolled; a hosted role's remediation names a command that refuses | Medium | — |
-| 17 | 1 | [`MUX-224`](./MUX-224-tests-use-the-real-global-memory-dir.md) | The test suite creates and reads the user's real global memory directory | Low | — |
-| 18 | 2 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two agents trade acknowledgements every 4–5 s and nothing brakes it | Medium | — |
-| 19 | 2 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | `muxcode send` drops a message because another agent's task is in flight | High | — |
-| 20 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
-| 21 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
-| 22 | 2 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An orphaned inbox listener consumes messages into the void | High | — |
-| 23 | 2 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an agent expires its in-flight graph dispatch and fails the node | High | — |
-| 24 | 2 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The wake batch drops a listenerless role's own delegation reply, and may re-inject an answered request | High | — |
-| 25 | 2 | [`MUX-223`](./MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project memory resolves against the caller's working directory, stranding session summaries | High | — |
-| 26 | 2 | [`MUX-225`](./MUX-225-reply-to-unknown-id-accepted-silently.md) | A reply whose `--reply-to` names no message is accepted silently; the task waits out its cap | High | — |
-| 27 | 2 | [`MUX-219`](./MUX-219-graph-run-review-fires-verify-spec-twice.md) | A graph run's review fires `verify-spec` twice — the daemon's review chain and the run's `update-spec` node | Low | — |
-| 28 | 3 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-record GC permanently strands a long spawn iteration | High | — |
-| 29 | 3 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | — |
-| 30 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | — |
-| 31 | 4 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | — |
-| 32 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
-| 33 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
-| 34 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
+| 16 | 1 | [`MUX-224`](./MUX-224-tests-use-the-real-global-memory-dir.md) | The test suite creates and reads the user's real global memory directory | Low | — |
+| 17 | 2 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two agents trade acknowledgements every 4–5 s and nothing brakes it | Medium | — |
+| 18 | 2 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | `muxcode send` drops a message because another agent's task is in flight | High | — |
+| 19 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
+| 20 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
+| 21 | 2 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An orphaned inbox listener consumes messages into the void | High | — |
+| 22 | 2 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an agent expires its in-flight graph dispatch and fails the node | High | — |
+| 23 | 2 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The wake batch drops a listenerless role's own delegation reply, and may re-inject an answered request | High | — |
+| 24 | 2 | [`MUX-223`](./MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project memory resolves against the caller's working directory, stranding session summaries | High | — |
+| 25 | 2 | [`MUX-225`](./MUX-225-reply-to-unknown-id-accepted-silently.md) | A reply whose `--reply-to` names no message is accepted silently; the task waits out its cap | High | — |
+| 26 | 2 | [`MUX-219`](./MUX-219-graph-run-review-fires-verify-spec-twice.md) | A graph run's review fires `verify-spec` twice — the daemon's review chain and the run's `update-spec` node | Low | — |
+| 27 | 3 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-record GC permanently strands a long spawn iteration | High | — |
+| 28 | 3 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | — |
+| 29 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | — |
+| 30 | 4 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | — |
+| 31 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
+| 32 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
+| 33 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
+| 34 | 5 | [`MUX-227`](./MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) | `muxcode reload` of a hosted role replaces the host agent instead of refusing | High | — |
 | 35 | 6 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | — |
 | 36 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
 | 37 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
@@ -141,7 +141,6 @@ demand. Each keeps its Defects rank.
 | [`MUX-223`](./MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project Memory Resolves Against the Caller's Working Directory, Stranding Session Summaries | High | — |
 | [`MUX-224`](./MUX-224-tests-use-the-real-global-memory-dir.md) | The Test Suite Creates and Reads the User's Real Global Memory Directory | Low | — |
 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The Wake Batch Drops a Listenerless Role's Own Delegation Reply, and May Re-Inject an Answered Request | High | — |
-| [`MUX-221`](./MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The Dead-Agent Diagnose Test Is Uncontrolled, and a Hosted Role's Remediation Names a Command That Refuses | Medium | — |
 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` Fails, Passes on Rerun, and Nothing Recorded Which Test Failed | High | ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` Fails — a Stale Spinner in Scrollback Pins the Pane Busy | Medium | — |
 | [`MUX-226`](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` Runs on the User's Real tmux Server and May Mix In the Installed Binary | Medium | — |
@@ -194,6 +193,7 @@ demand. Each keeps its Defects rank.
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-227`](./MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) | `muxcode reload <hosted-role>` Replaces the Host Agent Instead of Refusing | High | — |
 | [`MUX-222`](./MUX-222-command-runner-executes-one-request-and-replies-to-all.md) | The Run Agent's Definition Executes One Request of a Batch and Replies to All of Them | Medium | — |
 | [`MUX-157`](./MUX-157-role-boundary-an-agent-can-ignore.md) | A Role Boundary an Agent Can Ignore Is Not a Boundary | High | — |
 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard Rules and the Local-LLM Allowlist Are Bypassable by Command Shape | Medium | — |
@@ -385,6 +385,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-162`](../completed/MUX-162-pr-review-fix-node-600s-send-cap.md) | The PR-Review Fix Node Dies on the 600 s Send Cap |
 | [`MUX-137`](../completed/MUX-137-test-bus-dir-leak.md) | PreLaunch Tests Leak Real Bus Directories Into `/tmp` |
 | [`MUX-218`](../completed/MUX-218-build-agent-vet-failure-row-rejected-as-build-evidence.md) | A Build Agent's Failing Vet Row Is Filed as Build Evidence but Rejected as Build Evidence |
+| [`MUX-221`](../completed/MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The Dead-Agent Diagnose Test Is Uncontrolled, and a Hosted Role's Remediation Names a Command That Refuses |
 
 ## Ideas without specs
 

@@ -1172,14 +1172,24 @@ func checkAgentDown(report *DiagnosticReport) *DiagnosticFinding {
 // agent is live, and `muxcode reload` for every other provider, which resume
 // refuses. Never `agent-health --start`: it clears a stop marker and launches
 // nothing, and a crashed agent carries no marker.
+//
+// A hosted role (docs, pr-read) runs in its host's pane, so the command names
+// the host and branches on the host's provider: `muxcode resume docs` refuses,
+// and `muxcode reload docs` would relaunch plan's pane as the doc-writer agent
+// (MUX-221).
 func relaunchCommand(report *DiagnosticReport, live bool) string {
-	if report.AgentState.Provider != "claude" {
-		return fmt.Sprintf("muxcode reload %s", report.Role)
+	role, provider := report.Role, report.AgentState.Provider
+	if IsHostedRole(role) {
+		role = WindowForRole(role)
+		provider = ResolveProvider(role).Name()
+	}
+	if provider != "claude" {
+		return fmt.Sprintf("muxcode reload %s", role)
 	}
 	if live {
-		return fmt.Sprintf("muxcode resume %s --force", report.Role)
+		return fmt.Sprintf("muxcode resume %s --force", role)
 	}
-	return fmt.Sprintf("muxcode resume %s", report.Role)
+	return fmt.Sprintf("muxcode resume %s", role)
 }
 
 // checkResumableSession reports, as info, that a dead agent's pane still

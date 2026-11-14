@@ -1350,6 +1350,37 @@ func TestRunDiagnostics_DeadAgentVerdict(t *testing.T) {
 	}
 }
 
+// TestCheckAgentDown_HostedRoleNamesTheHost pins MUX-221. A hosted role runs in
+// its host's pane: `muxcode resume docs` refuses, and `muxcode reload docs`
+// would relaunch plan's pane as the doc-writer agent. The relaunch names the
+// host and branches on the host's provider, which each hosted role here is
+// pinned to disagree with. Negative control: a non-hosted role's remediation
+// is unchanged on both branches.
+func TestCheckAgentDown_HostedRoleNamesTheHost(t *testing.T) {
+	t.Setenv("BUS_SESSION", "")
+	t.Setenv("MUXCODE_AGENT_CLI", "")
+	t.Setenv("MUXCODE_PLAN_CLI", "claude")
+	t.Setenv("MUXCODE_DOCS_CLI", "opencode")
+	t.Setenv("MUXCODE_COMMIT_CLI", "codex")
+	t.Setenv("MUXCODE_PR_READ_CLI", "claude")
+	for _, tc := range []struct{ role, provider, want string }{
+		{"docs", "opencode", "Relaunch: muxcode resume plan"},
+		{"pr-read", "claude", "Relaunch: muxcode reload commit"},
+		{"build", "claude", "Relaunch: muxcode resume build"},
+		{"build", "codex", "Relaunch: muxcode reload build"},
+	} {
+		report := &DiagnosticReport{Role: tc.role, AgentState: AgentStateEvidence{Provider: tc.provider},
+			DaemonState: DaemonStateEvidence{IsAlive: true, KeepaliveAge: 2}}
+		if f := checkAgentDown(report); f == nil || f.Remediation[0] != tc.want {
+			t.Errorf("dead %s (%s): remediation %+v, want %q", tc.role, tc.provider, f, tc.want)
+		}
+	}
+	docs := &DiagnosticReport{Role: "docs", AgentState: AgentStateEvidence{Provider: "opencode"}}
+	if got := relaunchCommand(docs, true); got != "muxcode resume plan --force" {
+		t.Errorf("a live hosted role's restart = %q, want muxcode resume plan --force", got)
+	}
+}
+
 // TestCheckAgentDown_ExpectedAbsences: a stopped or reloading agent is down on
 // purpose. Without these the check would fire during every hot reload.
 func TestCheckAgentDown_ExpectedAbsences(t *testing.T) {
