@@ -95,43 +95,43 @@ demand. Each keeps its Defects rank.
 | 13 | 1 | [`MUX-160`](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The `/tmp` Go caches the disk-pressure sweep counts but cannot clear | High | — |
 | 14 | 1 | [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) | Messages route to a role with no window; diagnose prescribes an impossible fix; reload reports a phantom hang | Medium | — |
 | 15 | 1 | [`MUX-150`](./MUX-150-verify-spec-names-last-routed-batch.md) | `verify-spec` names the last routed batch, not the change set | Medium | — |
-| 16 | 1 | [`MUX-218`](./MUX-218-build-agent-vet-failure-row-rejected-as-build-evidence.md) | A build agent's failing vet row is filed as build evidence but rejected as build evidence by the graph executor | Medium | [MUX-214](../completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) |
-| 17 | 1 | [`MUX-221`](./MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The dead-agent diagnose test is uncontrolled; a hosted role's remediation names a command that refuses | Medium | — |
-| 18 | 1 | [`MUX-224`](./MUX-224-tests-use-the-real-global-memory-dir.md) | The test suite creates and reads the user's real global memory directory | Low | — |
-| 19 | 2 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two agents trade acknowledgements every 4–5 s and nothing brakes it | Medium | — |
-| 20 | 2 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | `muxcode send` drops a message because another agent's task is in flight | High | — |
-| 21 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
-| 22 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
-| 23 | 2 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An orphaned inbox listener consumes messages into the void | High | — |
-| 24 | 2 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an agent expires its in-flight graph dispatch and fails the node | High | — |
-| 25 | 2 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The wake batch drops a listenerless role's own delegation reply, and may re-inject an answered request | High | — |
-| 26 | 2 | [`MUX-223`](./MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project memory resolves against the caller's working directory, stranding session summaries | High | — |
-| 27 | 2 | [`MUX-225`](./MUX-225-reply-to-unknown-id-accepted-silently.md) | A reply whose `--reply-to` names no message is accepted silently; the task waits out its cap | High | — |
-| 28 | 2 | [`MUX-219`](./MUX-219-graph-run-review-fires-verify-spec-twice.md) | A graph run's review fires `verify-spec` twice — the daemon's review chain and the run's `update-spec` node | Low | — |
-| 29 | 3 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-record GC permanently strands a long spawn iteration | High | — |
-| 30 | 3 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | — |
-| 31 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | — |
-| 32 | 4 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | — |
-| 33 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
-| 34 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
-| 35 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
-| 36 | 6 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | — |
-| 37 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
-| 38 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
-| 39 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
-| 40 | 6 | [`MUX-032`](./MUX-032-loop-detector-granularity.md) | Loop detector too coarse to act on | Medium | — |
-| 41 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | No force-terminate for a hung-but-alive agent | Medium | — |
-| 42 | 6 | [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Orphaned harness processes are never reaped | Medium | — |
-| 43 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
-| 44 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
-| 45 | 6 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` does not exist; `log-watcher.md` and `dev-server.md` tell their agents to call it | Low | — |
-| 46 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
-| 47 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 48 | 6 | [`MUX-209`](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md) | `test-force-respond.sh` fails: a non-forced `deliver` no longer surfaces the in-flight skip | Medium | — |
-| 49 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
-| 50 | 6 | [`MUX-211`](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) | An OpenCode edit agent is told a PreToolUse hook enforces its delegation rules — the definition rewrite no longer matches | Medium | ⇄ [MUX-201](./MUX-201-non-hook-prompt-and-generated-body-drift.md) |
-| 51 | 6 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` fails: a stale spinner in scrollback pins the pane busy | Medium | — |
-| 52 | 6 | [`MUX-222`](./MUX-222-command-runner-executes-one-request-and-replies-to-all.md) | The run agent's definition executes one request of a batch and replies to all of them | Medium | — |
+| 16 | 1 | [`MUX-221`](./MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The dead-agent diagnose test is uncontrolled; a hosted role's remediation names a command that refuses | Medium | — |
+| 17 | 1 | [`MUX-224`](./MUX-224-tests-use-the-real-global-memory-dir.md) | The test suite creates and reads the user's real global memory directory | Low | — |
+| 18 | 2 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two agents trade acknowledgements every 4–5 s and nothing brakes it | Medium | — |
+| 19 | 2 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | `muxcode send` drops a message because another agent's task is in flight | High | — |
+| 20 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
+| 21 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
+| 22 | 2 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An orphaned inbox listener consumes messages into the void | High | — |
+| 23 | 2 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an agent expires its in-flight graph dispatch and fails the node | High | — |
+| 24 | 2 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The wake batch drops a listenerless role's own delegation reply, and may re-inject an answered request | High | — |
+| 25 | 2 | [`MUX-223`](./MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project memory resolves against the caller's working directory, stranding session summaries | High | — |
+| 26 | 2 | [`MUX-225`](./MUX-225-reply-to-unknown-id-accepted-silently.md) | A reply whose `--reply-to` names no message is accepted silently; the task waits out its cap | High | — |
+| 27 | 2 | [`MUX-219`](./MUX-219-graph-run-review-fires-verify-spec-twice.md) | A graph run's review fires `verify-spec` twice — the daemon's review chain and the run's `update-spec` node | Low | — |
+| 28 | 3 | [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Delivery-record GC permanently strands a long spawn iteration | High | — |
+| 29 | 3 | [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Spawned workers never receive their seeded task | High | — |
+| 30 | 3 | [`MUX-112`](./MUX-112-idle-task-rescue-closes-live-work.md) | Idle-task rescue closes tasks still running | High | — |
+| 31 | 4 | [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | Spec phase parsing: two definitions of complete, matched document-wide | High | — |
+| 32 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) |
+| 33 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
+| 34 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
+| 35 | 6 | [`MUX-123`](./MUX-123-stall-watchdog-selective-misses.md) | Stall watchdog fires routinely, still misses live stalls | High | — |
+| 36 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
+| 37 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
+| 38 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
+| 39 | 6 | [`MUX-032`](./MUX-032-loop-detector-granularity.md) | Loop detector too coarse to act on | Medium | — |
+| 40 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | No force-terminate for a hung-but-alive agent | Medium | — |
+| 41 | 6 | [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Orphaned harness processes are never reaped | Medium | — |
+| 42 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
+| 43 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
+| 44 | 6 | [`MUX-191`](./MUX-191-bus-dir-subcommand-does-not-exist-but-agents-are-told-to-use-it.md) | `muxcode bus-dir` does not exist; `log-watcher.md` and `dev-server.md` tell their agents to call it | Low | — |
+| 45 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
+| 46 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 47 | 6 | [`MUX-209`](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md) | `test-force-respond.sh` fails: a non-forced `deliver` no longer surfaces the in-flight skip | Medium | — |
+| 48 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
+| 49 | 6 | [`MUX-211`](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) | An OpenCode edit agent is told a PreToolUse hook enforces its delegation rules — the definition rewrite no longer matches | Medium | ⇄ [MUX-201](./MUX-201-non-hook-prompt-and-generated-body-drift.md) |
+| 50 | 6 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` fails: a stale spinner in scrollback pins the pane busy | Medium | — |
+| 51 | 6 | [`MUX-222`](./MUX-222-command-runner-executes-one-request-and-replies-to-all.md) | The run agent's definition executes one request of a batch and replies to all of them | Medium | — |
+| 52 | 6 | [`MUX-226`](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` runs on the user's real tmux server and may mix in the installed binary | Medium | — |
 
 ### Reliability & observability
 
@@ -142,9 +142,9 @@ demand. Each keeps its Defects rank.
 | [`MUX-224`](./MUX-224-tests-use-the-real-global-memory-dir.md) | The Test Suite Creates and Reads the User's Real Global Memory Directory | Low | — |
 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The Wake Batch Drops a Listenerless Role's Own Delegation Reply, and May Re-Inject an Answered Request | High | — |
 | [`MUX-221`](./MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The Dead-Agent Diagnose Test Is Uncontrolled, and a Hosted Role's Remediation Names a Command That Refuses | Medium | — |
-| [`MUX-218`](./MUX-218-build-agent-vet-failure-row-rejected-as-build-evidence.md) | A Build Agent's Failing Vet Row Is Filed as Build Evidence but Rejected as Build Evidence | Medium | [MUX-214](../completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) |
 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` Fails, Passes on Rerun, and Nothing Recorded Which Test Failed | High | ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` Fails — a Stale Spinner in Scrollback Pins the Pane Busy | Medium | — |
+| [`MUX-226`](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` Runs on the User's Real tmux Server and May Mix In the Installed Binary | Medium | — |
 | [`MUX-209`](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md) | `test-force-respond.sh` Fails — a Non-Forced `deliver` No Longer Surfaces the In-Flight Skip | Medium | — |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
@@ -384,6 +384,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-161`](../completed/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) | `upgrade-daemons` Cannot See the Daemons From a Codex Build Agent |
 | [`MUX-162`](../completed/MUX-162-pr-review-fix-node-600s-send-cap.md) | The PR-Review Fix Node Dies on the 600 s Send Cap |
 | [`MUX-137`](../completed/MUX-137-test-bus-dir-leak.md) | PreLaunch Tests Leak Real Bus Directories Into `/tmp` |
+| [`MUX-218`](../completed/MUX-218-build-agent-vet-failure-row-rejected-as-build-evidence.md) | A Build Agent's Failing Vet Row Is Filed as Build Evidence but Rejected as Build Evidence |
 
 ## Ideas without specs
 
