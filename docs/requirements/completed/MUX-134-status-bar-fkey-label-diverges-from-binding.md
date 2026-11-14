@@ -63,7 +63,7 @@ The status bar is the only affordance telling a user which key reaches a window.
 confidently wrong is worse than no label: the user presses it, nothing happens, and the natural
 inference is that spawn switching is broken rather than that the label lied. Same family as
 [`MUX-124`](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md) and
-[`MUX-006`](../backlog/MUX-006-diagnose-false-clean-verdict.md) — *the instrument misreports its own subject*.
+[`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md) — *the instrument misreports its own subject*.
 
 Related: [`MUX-128`](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md) covers F-key navigation for spawn
 windows generally; this is the label half specifically.

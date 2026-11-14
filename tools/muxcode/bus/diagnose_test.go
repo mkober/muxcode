@@ -1284,6 +1284,72 @@ func TestCheckAgentDown_Detected(t *testing.T) {
 	}
 }
 
+// TestRunDiagnostics_DeadAgentVerdict pins MUX-006 at the verdict rather than
+// the detector: the 2026-08-13 plan report — dead, 2 of 3 messages actionable,
+// no notified IDs, daemon healthy — printed "State: dead" and then "No issues
+// detected", exit 0. Through the registry, the report formatter and the --all
+// summary line, a dead agent must lead with a critical agent-down finding that
+// names it dead and its restart, so dropping checkAgentDown from
+// diagnosticChecks fails here even though the detector's own tests pass.
+// Negative control: the same report alive and idle with an empty inbox stays clean.
+func TestRunDiagnostics_DeadAgentVerdict(t *testing.T) {
+	report := &DiagnosticReport{
+		Role:        "plan",
+		AgentState:  AgentStateEvidence{IsAlive: false, Provider: "claude"},
+		InboxState:  InboxStateEvidence{MessageCount: 3, ActionableCount: 2, OldestMessageAge: 600},
+		NotifyState: NotifyStateEvidence{NotifiedIDCount: 0},
+		DaemonState: DaemonStateEvidence{IsAlive: true, KeepaliveAge: 2},
+	}
+	RunDiagnostics(report)
+
+	if len(report.Findings) == 0 {
+		t.Fatal("false clean verdict: a dead agent produced no findings")
+	}
+	lead := report.Findings[0]
+	if lead.FailureMode != "agent-down" || lead.Severity != "critical" {
+		t.Fatalf("a dead agent must lead with a critical agent-down finding, got %s/%s (all: %+v)", lead.FailureMode, lead.Severity, report.Findings)
+	}
+	if !strings.Contains(lead.Summary, "dead") {
+		t.Errorf("the finding must name the agent dead: %q", lead.Summary)
+	}
+	if !strings.Contains(strings.Join(lead.Evidence, "\n"), "2 actionable message(s) waiting") {
+		t.Errorf("the evidence must count the actionable work the dead agent holds: %v", lead.Evidence)
+	}
+	remedy := strings.Join(lead.Remediation, "\n")
+	if !strings.Contains(remedy, "Relaunch: muxcode resume plan\n") || !strings.Contains(remedy, "survives") {
+		t.Errorf("remediation must name a relaunch and state the inbox survives: %v", lead.Remediation)
+	}
+	if strings.Contains(remedy, "agent-health --start") {
+		t.Errorf("agent-health --start only clears a stop marker a crashed agent does not carry: %v", lead.Remediation)
+	}
+	report.AgentState.Provider = "opencode"
+	if f := checkAgentDown(report); f == nil || f.Remediation[0] != "Relaunch: muxcode reload plan" {
+		t.Errorf("resume refuses a non-Claude agent, so its relaunch is reload: %+v", f)
+	}
+	if out := FormatDiagnosticReport(report); strings.Contains(out, "No issues detected") {
+		t.Error("the report concluded 'No issues detected' for a dead agent")
+	}
+	if line := StripANSI(FormatDiagnosticSummary(report)); !strings.Contains(line, "dead") || !strings.Contains(line, "critical") {
+		t.Errorf("the --all summary must show the agent dead and critical: %q", line)
+	}
+
+	healthy := &DiagnosticReport{
+		Role:        "plan",
+		AgentState:  AgentStateEvidence{IsAlive: true, IsIdle: true, Provider: "claude"},
+		DaemonState: DaemonStateEvidence{IsAlive: true, KeepaliveAge: 2},
+	}
+	RunDiagnostics(healthy)
+	if len(healthy.Findings) != 0 {
+		t.Errorf("a live idle agent with an empty inbox must have no findings, got %+v", healthy.Findings)
+	}
+	if !strings.Contains(FormatDiagnosticReport(healthy), "No issues detected") {
+		t.Error("a healthy agent's report must conclude 'No issues detected'")
+	}
+	if line := StripANSI(FormatDiagnosticSummary(healthy)); !strings.Contains(line, "healthy") {
+		t.Errorf("the --all summary must show a live agent healthy: %q", line)
+	}
+}
+
 // TestCheckAgentDown_ExpectedAbsences: a stopped or reloading agent is down on
 // purpose. Without these the check would fire during every hot reload.
 func TestCheckAgentDown_ExpectedAbsences(t *testing.T) {

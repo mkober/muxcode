@@ -126,9 +126,9 @@ When an agent appears stuck or unresponsive:
 | Agent idle with pending inbox | Notification missed | Force-deliver: `muxcode deliver {role}` |
 | Agent has messages marked notified but never processed them | Dropped send-keys / Enter | `muxcode deliver {role} --force` (clears stale notified markers) |
 | Wake-up text sits in input box, Enter not registering | TUI input-state race | `muxcode deliver {role} --force` (clears parked input, robust Enter path) |
-| Agent active for too long | Stuck in tool execution | Check pane for errors, may need restart: `muxcode agent-health --start {role}` |
+| Agent active for too long | Stuck in tool execution | Check pane for errors, may need restart: `muxcode resume {role} --force` (Claude; exits the live one first) or `muxcode reload {role}` (other providers) |
 | Agent shows "permission" prompt | Waiting for user approval | Approve/reject in the agent's tmux window |
-| Agent shows bash `$` prompt | Claude Code crashed | Restart: `muxcode agent-health --start {role}` |
+| Agent shows bash `$` prompt | Claude Code crashed | Relaunch into its conversation: `muxcode resume {role}` — `agent-health --start` only clears a stop marker and relaunches nothing |
 | Message sent but no response | Agent may not have received | Run `muxcode diagnose {role}`, then `muxcode deliver {role} --force` if delivery is the issue |
 
 ### Capture multiple agents at once

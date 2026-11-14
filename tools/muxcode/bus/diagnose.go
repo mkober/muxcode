@@ -911,7 +911,7 @@ func checkReloadMarkerStuck(report *DiagnosticReport) *DiagnosticFinding {
 		},
 		Remediation: []string{
 			fmt.Sprintf("Remove stale reload marker: rm %s", ReloadMarkerPath(report.Session, report.Role)),
-			fmt.Sprintf("Restart agent: muxcode agent-health --start %s", report.Role),
+			"If the agent is down once the marker is gone: " + relaunchCommand(report, false),
 		},
 	}
 }
@@ -1112,7 +1112,7 @@ func checkActiveWithStaleMessages(report *DiagnosticReport) *DiagnosticFinding {
 			"Agent may be genuinely busy — check the pane before forcing",
 			"If stuck, check pane for permission prompts or errors",
 			fmt.Sprintf("Force-deliver pending inbox: muxcode deliver %s --force", report.Role),
-			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
+			"If wedged, restart it: " + relaunchCommand(report, true),
 		},
 	}
 }
@@ -1148,17 +1148,38 @@ func checkAgentDown(report *DiagnosticReport) *DiagnosticFinding {
 		evidence = append(evidence, fmt.Sprintf("Pane last line: %q", report.AgentState.PaneLastLine))
 	}
 
+	remediation := []string{"Relaunch: " + relaunchCommand(report, false)}
+	if report.Role != "edit" {
+		remediation = append(remediation,
+			"Or wait: the daemon's health sweep relaunches a dead agent itself (third strike, at most 3 restarts)")
+	}
+	remediation = append(remediation,
+		"Check why it exited: muxcode lifecycle show --event agent-down",
+		"Inbox is on disk and survives — messages redeliver after restart")
+
 	return &DiagnosticFinding{
 		Severity:    "critical",
 		FailureMode: "agent-down",
-		Summary:     "Agent process is not running and was not stopped or reloaded",
+		Summary:     "Agent is dead: its process is not running and it was not stopped or reloaded",
 		Evidence:    evidence,
-		Remediation: []string{
-			fmt.Sprintf("Restart: muxcode agent-health --start %s", report.Role),
-			"Check why it exited: muxcode lifecycle show --event agent-down",
-			"Inbox is on disk and survives — messages redeliver after restart",
-		},
+		Remediation: remediation,
 	}
+}
+
+// relaunchCommand names the command that actually brings the role's agent
+// back: `muxcode resume` for Claude — into the session its exit banner offers,
+// else a fresh flagged launch, and edit's only road — with --force when the
+// agent is live, and `muxcode reload` for every other provider, which resume
+// refuses. Never `agent-health --start`: it clears a stop marker and launches
+// nothing, and a crashed agent carries no marker.
+func relaunchCommand(report *DiagnosticReport, live bool) string {
+	if report.AgentState.Provider != "claude" {
+		return fmt.Sprintf("muxcode reload %s", report.Role)
+	}
+	if live {
+		return fmt.Sprintf("muxcode resume %s --force", report.Role)
+	}
+	return fmt.Sprintf("muxcode resume %s", report.Role)
 }
 
 // checkResumableSession reports, as info, that a dead agent's pane still
