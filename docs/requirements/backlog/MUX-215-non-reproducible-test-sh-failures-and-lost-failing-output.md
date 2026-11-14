@@ -127,7 +127,7 @@ this spec is about.
 
 - [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) —
   overlapping and mid-edit runs, one candidate cause
-- [MUX-214](./MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) — the false alarms; this
+- [MUX-214](../completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) — the false alarms; this
   spec is about the real failures
 - [MUX-152](./MUX-152-test-sh-hides-modules-after-first-failure.md) — `test.sh` hiding modules after
   the first failure; the summary this builds on came from MUX-174

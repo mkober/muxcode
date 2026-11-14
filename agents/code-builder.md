@@ -40,13 +40,15 @@ Run linters **before** the build in **check-only mode**. Detect the project type
 | Detect | Linter | Check command |
 |--------|--------|--------------|
 | `go.mod` | gofmt | `gofmt -l .` (list only, no `-w`) |
-| `go.mod` | go vet | `go vet ./...` |
+| `go.mod` | go vet | `go -C <module dir> vet ./...` — once per module, its own call (see below) |
 | `.eslintrc*` or `eslint.config.*` | ESLint | `npx eslint .` (no `--fix`) |
 | `.prettierrc*` or `prettier` in package.json | Prettier | `npx prettier --check .` |
 | `pyproject.toml` with ruff | Ruff | `ruff check .` (no `--fix`) |
 | `pyproject.toml` with black | Black | `black --check .` |
 | `Cargo.toml` | clippy | `cargo clippy` (no `--fix`) |
 | `Cargo.toml` | rustfmt | `cargo fmt --check` (no write) |
+
+**Go modules are found, not assumed.** List them first — `git ls-files --cached --others --exclude-standard -- 'go.mod' '*/go.mod'`, which includes a module not yet added to git (the one being written) and leaves out ignored paths; skip any under `testdata/` or `vendor/` — and run `go vet` once per listed module, naming its directory: `go -C tools/muxcode vet ./...`, or `go -C . vet ./...` for a module at the root. `go -C` keeps you at the project root, so no `cd` is needed. Never run `go vet ./...` at a root that holds no `go.mod`: it vets nothing and fails every time — on 2026-11-13 it told edit "Tests FAILED" after ten builds that had passed (MUX-214). A failing module vet reaches edit as a build-stage failure naming the command, so the module is in the notice.
 
 **Lint rules:**
 - **NEVER modify files** — the build agent is read-only for source code. Only the edit agent may change files.

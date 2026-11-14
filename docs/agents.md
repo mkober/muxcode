@@ -212,6 +212,8 @@ These agents operate autonomously — they receive requests, execute uncondition
 2. Execute their command
 3. Reply to requester: `muxcode send <from> <action> "<result>" --type response --reply-to <id>`
 
+**The build agent's lint step, and where `go vet` runs.** Before `./build.sh` the build agent runs its linters in check-only mode (`agents/code-builder.md`). For Go, modules are **found, not assumed**: it lists them with `git ls-files --cached --others --exclude-standard -- 'go.mod' '*/go.mod'` — tracked modules plus any not yet added to git, such as one being written, with ignored paths left out — skipping any under `testdata/` or `vendor/`, and runs `go -C <module dir> vet ./...` once per module, each as its own call — `go -C . vet ./...` for a module at the root, and nothing at a root that holds no `go.mod`. `go -C` keeps the agent at the project root, so its rule never to `cd` into subdirectories still holds. Before [MUX-214](requirements/completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) the lint table said only "detect `go.mod` → `go vet ./...`", with no directory: in a repository whose modules live under a subdirectory — this one — the agent ran it at the root, where it can never pass, on every build. A failing vet in the build pane now reaches edit as a **build** failure, not a test failure; see [Hooks → hook bash](hooks.md#hook-bash-bash-hook).
+
 ### PR Reading (via commit agent)
 
 PR review analysis runs in the **commit window** via the git-manager agent. The edit agent delegates with action `pr-read`:
