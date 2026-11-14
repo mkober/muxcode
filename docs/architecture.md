@@ -613,6 +613,31 @@ Core code: `bus/graph.go` (model + validation), `bus/graph_templates.go` (13 bui
 `daemon/daemon.go` (`checkGraphRuns()`). CLI reference:
 [Agent Bus CLI](agent-bus.md#muxcode-graph).
 
+#### Node time limits
+
+A `send` node is dispatched as a tracked task, and a tracked task has a clock: the node's
+`timeout_secs` (`Node.TimeoutSec`) when set, else **600 s** — the task store's own default
+(`nodeTimeoutSecs`, `bus/graph_exec.go`; `taskTimeoutSecs`, `bus/task.go`).
+
+| Node type | Clock | Ends on |
+|-----------|-------|---------|
+| `send` | `timeout_secs`, else 600 s | The agent's reply; expiry (node failure "task expired", the daemon sweep logs `task-timeout`); or undeliverable after `graphRedriveMax` (3) redrives of an un-receipted dispatch |
+| `spawn`, `map` | None | The worker's reply to its seed; a lost worker is replaced (`replaceLostWorkers`) or resumed (`resumeDeadWorkers`), sharing the redrive cap; a seed never consumed is undeliverable after 3 redrives |
+| `wait_human`, `wait_event` | None — `timeout_secs` is not read | Approval, or the named event. Both wait in `harvestWaitingNode`, which has no timeout check, so a gate can wait indefinitely |
+| `condition`, `join` | None — evaluated at dispatch | Evaluation, synchronously |
+| A `send`, `spawn` or `map` with `timeout_secs` set | That value | A hard node timeout in `harvestRunningNode` ("node timeout") — the only road that reads it, so only running nodes honor it. On a `spawn` or `map` a worker stop still owed (`retryPendingStops`) outranks it |
+
+**The rule: a `send` is for a bounded delegation** — a build, a test run, a review, a commit, a
+plan doc action. **Open-ended agent work is a `spawn`.** The 600 s default is a backstop for a
+delegation that has gone silent, not a budget for work whose normal duration exceeds it. On
+2026-09-09 a PR-review fix step was a `send` to edit on the default cap; it expired at 602 s while
+two build-test-review rounds were still running, the run failed "no live edge", and the fix shipped
+anyway ([MUX-162](requirements/completed/MUX-162-pr-review-fix-node-600s-send-cap.md)). Its successor,
+`80-pr-review-fix`, does the fix as a `spawn`. Two tests pin the rule:
+`TestBuiltinSendNodesAreBoundedDelegations` (every builtin send is a listed bounded role:action or
+sets `timeout_secs`) and `TestReviewFixOutlivesTheSendCap`. The per-template table is in
+[Agent Bus CLI](agent-bus.md#node-time-limits).
+
 #### Sequential multi-phase runs (design)
 
 `50-spec-to-pr` (`req-code-pr` until 2026-09-02 and `spec-to-pr` until 2026-09-24 — the names

@@ -1859,6 +1859,39 @@ muxcode graph ui --render-once --width 100 <run-id>
 muxcode graph ui --gates --render-once
 ```
 
+#### Node time limits
+
+A `send` node runs on a clock — its `timeout_secs` when set, else the **600 s** default — and ends
+on the agent's reply or on expiry (`task-timeout`, node failure "task expired"). A `spawn` or `map`
+node has no clock unless it sets one, and ends on its worker's reply. `timeout_secs` is checked only
+while a node is running — a `send`, `spawn` or `map` — so it also bounds a spawn that sets it
+("node timeout"). A `wait_human` or `wait_event` node never reads it and can wait indefinitely;
+`condition` and `join` complete at dispatch.
+
+Builtin nodes that are not on the default (every `send` node not listed runs on 600 s):
+
+| Template | Node | Type | Cap | Ends on |
+|----------|------|------|-----|---------|
+| `50-spec-to-pr` | `implement`, `fix`, `criteria` | spawn | none | worker reply |
+| `55-defect-backlog-loop` | `implement`, `fix`, `criteria`, `pr-fix` | spawn | none | worker reply |
+| `55-defect-backlog-loop` | `ci-watch` | send (watch) | 3600 s | reply or expiry |
+| `60-integration-suite` | `suite` | send (run) | 5400 s | reply or expiry |
+| `60-integration-suite` | `fix` | spawn | none | worker reply |
+| `80-pr-review-fix` | `fix` | spawn | none | worker reply |
+| `90-ci-fix` | `fix` | spawn | none | worker reply |
+| `110-pr-merge` | `ci-watch` | send (watch) | 3600 s | reply or expiry |
+| every other `send` node in every builtin | — | send | 600 s default | reply or expiry |
+
+Known to sit on the default where the work may outrun it: `120-deploy-verify`'s `deploy`
+(`deploy:deploy`) and `watch` (`watch:watch`) — a long CDK deploy or log tail can exceed 600 s.
+Documented, not changed.
+
+**Authoring rule.** A `send` is a bounded delegation. Set `timeout_secs` for bounded work that is
+long (a full integration suite, a CI wait). Open-ended agent work — a fix that runs its own
+build→test→review rounds — is a `spawn`. See
+[Architecture](architecture.md#node-time-limits) for the mechanism and the 2026-09-09 incident
+([MUX-162](requirements/completed/MUX-162-pr-review-fix-node-600s-send-cap.md)).
+
 #### Branch-derived intent
 
 `muxcode graph run <template>` with **no intent** derives one from the branch. A branch whose
