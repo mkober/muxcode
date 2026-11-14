@@ -1649,6 +1649,96 @@ func TestProcessBashHook_TestPrecheck(t *testing.T) {
 	}
 }
 
+// MUX-214: the build agent's lint `go vet` failing in the build pane told edit
+// "Tests FAILED … check test window", wrote a test-history row and moved the
+// workflow to test-failed mid-build. Run by build, a vet is a build precheck:
+// a failure is a build-history row naming the module and the build chain; a
+// pass is nothing. The test agent's own vet is the negative control.
+func TestProcessBashHook_BuildRoleVetIsABuildPrecheck(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-build-vet"
+	t.Setenv("BUS_SESSION", session)
+	busDir := BusDir(session)
+	os.MkdirAll(busDir, 0755)
+	event := func(command string, exit int) *ToolEvent {
+		ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":%q},"exit_code":%d,"tool_response":{"stdout":"out"}}`, command, exit)))
+		return ev
+	}
+	vet := "go -C tools/muxcode vet ./..."
+
+	pass := ProcessBashHook(session, "build", event(vet, 0))
+	if pass.CommandType != CmdBuildPrecheck || pass.Chain != "" || pass.Logged {
+		t.Fatalf("passing build vet = %+v, want CmdBuildPrecheck, no chain, not logged", pass)
+	}
+
+	fail := ProcessBashHook(session, "build", event(vet, 1))
+	if fail.CommandType != CmdBuildPrecheck || fail.Chain != "build" || !fail.Logged {
+		t.Fatalf("failing build vet = %+v, want CmdBuildPrecheck, build chain, logged", fail)
+	}
+	if st := ReadWorkflowState(session).State; st != StateBuilding {
+		t.Errorf("state after a build-pane vet = %v, want StateBuilding", st)
+	}
+	build, _ := os.ReadFile(filepath.Join(busDir, "build-history.jsonl"))
+	if !strings.Contains(string(build), `"command":"go -C tools/muxcode vet ./...","exit_code":"1","outcome":"failure"`) {
+		t.Errorf("build-history lacks the failing vet naming its module: %q", build)
+	}
+	if _, err := os.Stat(filepath.Join(busDir, "test-history.jsonl")); !os.IsNotExist(err) {
+		t.Error("a build-pane vet wrote a test-history row")
+	}
+
+	testVet := ProcessBashHook(session, "test", event("go vet ./...", 1))
+	if testVet.CommandType != CmdTestPrecheck || testVet.Chain != "test" {
+		t.Errorf("the test agent's failing vet = %+v, want CmdTestPrecheck and the test chain", testVet)
+	}
+}
+
+func TestStageForRole(t *testing.T) {
+	cases := []struct {
+		role string
+		in   CommandType
+		want CommandType
+	}{
+		{"build", CmdTestPrecheck, CmdBuildPrecheck},
+		{"test", CmdTestPrecheck, CmdTestPrecheck},
+		{"edit", CmdTestPrecheck, CmdTestPrecheck},
+		{"build", CmdTest, CmdTest},
+		{"build", CmdBuild, CmdBuild},
+	}
+	for _, c := range cases {
+		if got := StageForRole("", c.role, c.in); got != c.want {
+			t.Errorf("StageForRole(%q, %d) = %d, want %d", c.role, c.in, got, c.want)
+		}
+	}
+}
+
+// A spawned worker runs as spawn-<id>; its stage must follow its base role, or
+// a spawned build worker's module vet is a test precheck again (review
+// must-fix). A spawned test worker is the control: its vet stays a test check.
+func TestProcessBashHook_SpawnedWorkerVetFollowsBaseRole(t *testing.T) {
+	session := testSession(t)
+	t.Setenv("BUS_SESSION", session)
+	entries := []SpawnEntry{
+		{ID: "1-spawn-b1d00001", Role: "build", SpawnRole: "spawn-b1d00001", Window: "spawn-b1d00001", Status: "running"},
+		{ID: "1-spawn-7e570001", Role: "test", SpawnRole: "spawn-7e570001", Window: "spawn-7e570001", Status: "running"},
+	}
+	if err := WriteSpawnEntries(session, entries); err != nil {
+		t.Fatalf("WriteSpawnEntries: %v", err)
+	}
+	event := func(command string, exit int) *ToolEvent {
+		ev, _ := ParseToolEvent([]byte(fmt.Sprintf(`{"tool_input":{"command":%q},"exit_code":%d,"tool_response":{"stdout":"out"}}`, command, exit)))
+		return ev
+	}
+
+	build := ProcessBashHook(session, "spawn-b1d00001", event("go -C tools/muxcode vet ./...", 1))
+	if build.CommandType != CmdBuildPrecheck || build.Chain != "build" {
+		t.Errorf("spawned build worker's failing vet = %+v, want CmdBuildPrecheck and the build chain", build)
+	}
+	test := ProcessBashHook(session, "spawn-7e570001", event("go vet ./...", 1))
+	if test.CommandType != CmdTestPrecheck || test.Chain != "test" {
+		t.Errorf("spawned test worker's failing vet = %+v, want CmdTestPrecheck and the test chain", test)
+	}
+}
+
 func TestChainEvent(t *testing.T) {
 	cases := []struct {
 		role    string

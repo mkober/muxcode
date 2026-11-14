@@ -64,6 +64,11 @@ mkdir -p "$REPO/docs/requirements/drafts"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"
+# MUXCODE_CONFIG does not reach muxcode.json (LoadConfig: the cwd's
+# .muxcode/muxcode.json, then $MUXCODE_CONFIG_DIR's): an inherited
+# notify_plan_on would decide case A. Pin both — the daemon starts in $WORK.
+mkdir -p "$WORK/config-dir"
+export MUXCODE_CONFIG_DIR="$WORK/config-dir"
 export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
@@ -189,7 +194,7 @@ git -C "$REPO" rev-parse -q HEAD >/dev/null 2>&1 \
   || bad "spec set failed for the fixture"
 
 # --- Daemon ----------------------------------------------------------------
-"$MUX" watch "$BUS_SESSION" --poll 1 >"$WORK/daemon.log" 2>&1 &
+(cd "$WORK" && exec "$MUX" watch "$BUS_SESSION" --poll 1) >"$WORK/daemon.log" 2>&1 &
 DPID=$!
 sleep 1
 kill -0 "$DPID" 2>/dev/null && ok "scratch daemon running (pid $DPID)" \

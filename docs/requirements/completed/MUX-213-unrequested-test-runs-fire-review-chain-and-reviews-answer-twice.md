@@ -475,7 +475,7 @@ Closed out 2026-11-13 by `55-defect-backlog-loop` run `1794608375`, which activa
   test run started without a bus request, including one a person types into the test pane, no
   longer requests a review.
 - **Not fixed here** — the build agent's root `go vet` false alarms
-  ([MUX-214](../backlog/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md)) and the
+  ([MUX-214](../completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md)) and the
   unnameable `./test.sh` failures
   ([MUX-215](../backlog/MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md)).
 

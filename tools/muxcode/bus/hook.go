@@ -1075,6 +1075,24 @@ func ChainEvent(role string, cmdType CommandType, outcome string) string {
 	return ""
 }
 
+// StageForRole files a test precheck the build agent runs as a build
+// precheck. ClassifyCommand reads the command alone, so the build agent's lint
+// `go vet` was a test precheck: a failure wrote a test-history row, moved the
+// workflow to testing and test-failed mid-build, and sent edit "Tests FAILED …
+// check test window" for a run that tested nothing — ten times on 2026-11-13,
+// each about a root that is not a Go module (MUX-214). As a build precheck it
+// keeps the precheck rule (a pass writes nothing and fires nothing) and fails
+// on the build chain, naming the build window. Every other role keeps the
+// command's own classification. The stage follows the base role, so a spawned
+// build worker (AGENT_ROLE=spawn-<id>, SpawnBaseRole build) is the build agent
+// here too.
+func StageForRole(session, role string, t CommandType) CommandType {
+	if t == CmdTestPrecheck && WindowForRole(SpawnBaseRole(session, role)) == "build" {
+		return CmdBuildPrecheck
+	}
+	return t
+}
+
 // precheckPassed reports the classified calls that are not evidence: a build
 // or test precheck that succeeded. See ChainEvent.
 func precheckPassed(cmdType CommandType, outcome string) bool {
@@ -1102,7 +1120,7 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		return HookBashResult{}
 	}
 
-	cmdType := ClassifyCommand(command)
+	cmdType := StageForRole(session, role, ClassifyCommand(command))
 	if cmdType == CmdBus {
 		return HookBashResult{}
 	}
