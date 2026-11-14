@@ -47,7 +47,7 @@ branch, visually identical. An operator scanning for trouble is trained to ignor
 in exactly the situation where a real failure is most likely to appear alongside it.
 
 Same family as [`MUX-124`](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md) and
-[`MUX-006`](../backlog/MUX-006-diagnose-false-clean-verdict.md): *the instrument misreports its own subject.*
+[`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md): *the instrument misreports its own subject.*
 
 ## Decision (maintainer, 2026-09-01): option A shipped first
 

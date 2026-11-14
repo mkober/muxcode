@@ -161,7 +161,7 @@ one reported success (`Agent plan restarted successfully`), emitted `agent-recov
 unconstrained agent wearing a privileged role's name. Every guarantee the architecture documents for
 `plan` — docs-only writes, gated Atlassian authority, no git mutations — was unenforced, and the only
 notice was a line of prose inside a pane nobody was reading. Same family as
-[`MUX-006`](../backlog/MUX-006-diagnose-false-clean-verdict.md): **the system reported health it did not have.**
+[`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md): **the system reported health it did not have.**
 
 ## Requirements
 
@@ -654,7 +654,7 @@ found-to-be-broken must never render identically.
 
 Building the fixture exposed the pane-scrape liveness heuristic reading **alive** for agents that are
 dead. Both are the spec's own theme — *the system reporting health it does not have*
-([`MUX-006`](../backlog/MUX-006-diagnose-false-clean-verdict.md)) — arriving from a new direction:
+([`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md)) — arriving from a new direction:
 
 1. **The heuristic reads only the pane's last rows.** A dead agent whose shell prompt sits *mid-screen*
    with blank rows below it — a pane that never filled — reads as "assume alive", and the health sweep

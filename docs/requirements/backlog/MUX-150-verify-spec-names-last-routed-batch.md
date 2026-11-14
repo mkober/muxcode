@@ -73,7 +73,7 @@ last**. `LastFiles` was built for the workflow display — `bus/workflow.go:255-
 |------|----------|
 | [`MUX-007`](../completed/MUX-007-verify-spec-stale-review-refire.md) | Orthogonal. That gate fixed *how many times* `verify-spec` fires per review completion — it now fires the right number of times with the wrong file list |
 | [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) | Consequence 2 lands in the inbox that spec describes |
-| [`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md), [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | Same family — an instrument misreports its own subject |
+| [`MUX-006`](../completed/MUX-006-diagnose-false-clean-verdict.md), [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | Same family — an instrument misreports its own subject |
 
 ## Requirements
 

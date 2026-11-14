@@ -138,7 +138,7 @@ guard protects against every dead-pane case, not only this one.
 - Related: [MUX-159](../completed/MUX-159-codex-hooks-provider.md) (the codex hook road, whose
   `injectWakeSentence` is one of the guarded paths); [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)
   (a codex role accepting work it cannot do — same family of "the launcher believed the pane");
-  [MUX-006](../backlog/MUX-006-diagnose-false-clean-verdict.md) (the refusal row exists so diagnose
+  [MUX-006](./MUX-006-diagnose-false-clean-verdict.md) (the refusal row exists so diagnose
   can explain a silent wake-up).
 - 2026-09-09 10:59 verify-spec (daemon 1788965750, after the 10:56 review): implementation in the
   tree — `provider.go` 10:52:51, `provider_codex.go` 10:53:14, `provider_opencode.go` 10:53:16,
