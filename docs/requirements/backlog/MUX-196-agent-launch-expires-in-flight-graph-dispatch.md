@@ -73,7 +73,7 @@ receipt is still in the inbox and will be delivered to the new instance; leave i
 In the executor, keep the `TaskTimedOut` branch for the task's own expiry, and give a launch-cleared
 task a distinct cause so the node can be re-dispatched (it is an executor-owned send) instead of
 failed. Neither change touches the dedup guard itself
-([MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md)).
+([MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md)).
 
 ### Key files
 
@@ -111,7 +111,7 @@ failed. Neither change touches the dedup guard itself
 ## Related
 
 - [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) and
-  [MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md) — the `(to, action)` dedup the
+  [MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md) — the `(to, action)` dedup the
   launch-time clearing was written to unblock; narrowing that key reduces the pressure to clear at all.
 - [MUX-162](../completed/MUX-162-pr-review-fix-node-600s-send-cap.md) — another node failed by a clock rather
   than by its work.

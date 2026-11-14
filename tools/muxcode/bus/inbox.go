@@ -21,6 +21,17 @@ import (
 // of ErrInjectionSkipped). Match with errors.Is.
 var ErrSendSuppressed = errors.New("send suppressed as duplicate")
 
+// ErrReplySuppressed reports that a reply was not recorded because the task it
+// answers is already answered. Before MUX-155 the path returned nil and the CLI
+// printed "Sent response:…" for a message written nowhere, which twice sent
+// plan looking for a delivery that never happened. Match with errors.Is.
+var ErrReplySuppressed = errors.New("reply suppressed: its task is already answered")
+
+// ErrSelfSendDropped reports that an accidental self-addressed message (see
+// isLoopingSelfSend) was dropped undelivered. It is an error for the reason
+// ErrReplySuppressed is: a nil return reads as a delivery (MUX-155).
+var ErrSelfSendDropped = errors.New("self-addressed message dropped")
+
 // ErrSendChrome reports that a payload was a provider's rendered pane
 // furniture and was not delivered.
 //
@@ -56,7 +67,9 @@ func shouldAutoCC(from string) bool {
 
 // Send appends a message to the recipient's inbox and the session log.
 // Messages from build, test, and review are automatically CC'd to edit.
-// A duplicate-suppressed request returns ErrSendSuppressed, never nil.
+// Nothing undelivered returns nil: a duplicate-suppressed request returns
+// ErrSendSuppressed, a reply to an answered task ErrReplySuppressed, an
+// accidental self-send ErrSelfSendDropped and provider chrome ErrSendChrome.
 func Send(session string, m Message) error {
 	return sendMessage(session, m, true, false, false)
 }
@@ -156,8 +169,9 @@ func FilterLoopingSelfSends(msgs []Message) []Message {
 // target: under a session-wide claim lock, the reply is stored first and only
 // then recorded on the task, so a failed write never points the task at a
 // message that does not exist, and a second, contradicting reply is suppressed
-// rather than racing the graph's next tick. The claim error is returned — a
-// caller told "sent" must be able to trust the task moved. Only a task that
+// rather than racing the graph's next tick, returning ErrReplySuppressed. The
+// claim error is returned — a caller told "sent" must be able to trust the
+// task moved. Only a task that
 // does not exist is read as "not a tracked reply"; any other read error fails
 // closed, since an unreadable task could be an answered one.
 func acceptReply(session string, m Message, record func() error) error {
@@ -184,7 +198,7 @@ func acceptReply(session string, m Message, record func() error) error {
 	if !sendResponseIsNonResult(session, t) || m.Type != "response" ||
 		NormalizeBusRole(m.From) != NormalizeBusRole(t.To) {
 		fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate reply to already-completed task %s from %s\n", m.ReplyTo, m.From)
-		return nil
+		return fmt.Errorf("%s→%s reply to %s: %w", m.From, m.To, m.ReplyTo, ErrReplySuppressed)
 	}
 	if err := record(); err != nil {
 		return err
@@ -265,7 +279,7 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 		}
 		fmt.Fprintf(os.Stderr, "  [send] dropping self-addressed message %s→%s:%s (self-sends are not delivered)\n",
 			m.From, m.To, m.Action)
-		return nil
+		return fmt.Errorf("%s→%s:%s: %w", m.From, m.To, m.Action, ErrSelfSendDropped)
 	}
 
 	if dropsAsProviderChrome(m) {
@@ -341,7 +355,8 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 	//
 	// Two checks:
 	// 1. Inbox check: is the same (from, action) request already pending?
-	// 2. Task check: is the agent already working on a task with same (to, action)?
+	// 2. Task check: is the agent already working on this sender's task with
+	//    the same (to, action)? Another sender's task never counts (MUX-155).
 	//
 	// Skipped for system actions (loop-detected, compact-recommended, etc.)
 	// which naturally repeat and should never be suppressed.
@@ -353,7 +368,7 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 				m.From, m.To, m.Action)
 			return fmt.Errorf("%s→%s:%s identical request already in inbox: %w", m.From, m.To, m.Action, ErrSendSuppressed)
 		}
-		if HasInFlightTaskForRole(session, m.To, m.Action) {
+		if HasInFlightTaskForRole(session, m.To, m.From, m.Action) {
 			fmt.Fprintf(os.Stderr, "  [send] suppressing duplicate request %s→%s:%s (in-flight task exists)\n",
 				m.From, m.To, m.Action)
 			return fmt.Errorf("%s→%s:%s in-flight task exists: %w", m.From, m.To, m.Action, ErrSendSuppressed)

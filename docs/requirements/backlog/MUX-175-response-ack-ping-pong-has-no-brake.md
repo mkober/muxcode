@@ -141,6 +141,23 @@ fix.
 response-type messages. The loop happened anyway, twice, and needed a human to name it before it
 stopped. That is the argument for a mechanism at `bus.Send` rather than stronger wording.
 
+**Parked 2026-11-14 by plan**, at `55-defect-backlog-loop` selection (run
+`1794626267-55-defect-backlog-loop-15547e2e`), under the rule that a spec holding an unrecorded
+design decision is not worked unattended. Checked against main `7b73f05`: no response brake exists;
+`DetectMessageLoop` (`bus/guard.go:177`) still only alerts. Two things have narrowed the exposure
+since filing — responses are no longer typed into a listenerless agent's pane
+([MUX-009](../completed/MUX-009-response-echo-chain-retrigger.md), `splitWakeBatch`),
+and a Codex test agent woken with no request is told to send no reply (MUX-213) — but an agent that
+reads its own inbox still receives every response.
+
+Decisions owed — the user's:
+
+| # | Decision | Options |
+|---|----------|---------|
+| 1 | The brake's shape | The table above offers content-similarity suppression or a consecutive response-only cap, "both worth costing before choosing", and calls a hybrid only "likely right". Phase 1 is written for the hybrid, but nobody has chosen it |
+| 2 | What "near-identical" means | The similarity measure (exact match after normalizing, a token-overlap ratio, a length bound) and the default threshold and window — Phase 1 says only "defaulting conservatively" |
+| 3 | What happens to a suppressed response | Dropped at `Send`, or written to the log but not delivered; whether the sender is told; and that a response answering an open tracked request must never be the one dropped |
+
 ## Status
 
-Backlog
+**Backlog** — 0/17. Filed 2026-09-10. Parked 2026-11-14 pending Decisions 1–3 (Notes).

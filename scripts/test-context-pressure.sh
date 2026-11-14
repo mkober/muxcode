@@ -139,7 +139,8 @@ echo "--- Test 3: Message dedup ---"
 # Fire-and-forget, so the in-flight task guard (requests default to --track)
 # cannot stop the repeat first and stand in for the dedup under test.
 FIRST=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Context pressure dedup test" 2>&1)
-SECOND=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Context pressure dedup test" 2>&1)
+# A suppressed send exits 1 (MUX-155), so the capture must not trip set -e.
+SECOND=$(MUXCODE_SEND_DEFAULT_FIRE_AND_FORGET=1 muxcode send watch browser-check "Context pressure dedup test" 2>&1) || true
 
 if echo "$FIRST" | grep -q "Sent"; then
   log_pass "First message delivered"

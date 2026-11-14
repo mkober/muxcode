@@ -11,8 +11,41 @@ import (
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
 
+// sendExit ends a send that did not deliver; tests replace it to observe the
+// exit code in-process.
+var sendExit = os.Exit
+
+// notSent reports a message the bus did not write and exits 1. A suppressed
+// send is not a sent one: it prints no "Sent" line and records no tracked task
+// — a task for an undelivered message re-arms the guard and jams every retry —
+// and before MUX-155 two such roads printed "Sent response:…" or "already
+// tracking" and exited 0.
+func notSent(format string, args ...any) {
+	fmt.Printf("NOT SENT — "+format+"\n", args...)
+	sendExit(1)
+}
+
 // Send handles the "muxcode send" subcommand.
 // Usage: muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
+//
+// A request matching the sender's own in-flight task for (to, action) is not
+// sent again: --track reports NOT SENT naming that task and exits 1, --wait
+// reattaches to it. That is the retry after Bash killed a --wait, whose
+// duplicate would otherwise be injected into the agent's TUI. Another sender's
+// task never matches — keyed on (to, action) alone, watch's unanswered notify
+// to edit silently dropped plan's (MUX-155). --force and non-request messages
+// skip the check.
+//
+// The relay-loop guard drops a request once the same (from, to, action) tuple
+// has fired relaySuppressLimits' threshold times in its window: the daemon's
+// checkLoops only reports a relay spinning with no resolution (run → watch on
+// a hard stand-down), so it is stopped here at the source. Edit is exempt, so
+// its iterative build/test/review delegations are never suppressed.
+//
+// Every road on which nothing is written prints "NOT SENT" and exits 1 — never
+// a "Sent" line or exit 0 (MUX-155): the in-flight, relay-loop and dedup-window
+// guards, the bus's suppression sentinels, and a request whose existing answers
+// are printed in its place.
 func Send(args []string) {
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: muxcode send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]\n")
@@ -142,20 +175,12 @@ func Send(args []string) {
 		}
 	}
 
-	// Loop suppression: drop repeated identical agent-to-agent relay requests
-	// that are spinning with no resolution (e.g. run -> watch when watch is on
-	// a hard stand-down). The daemon's checkLoops only *reports* such loops;
-	// this enforces them at the source by dropping the send once the same
-	// (from, to, action) request tuple has fired >= threshold times in the
-	// window. Scoped to non-edit senders so the orchestrator's (edit's) varied
-	// delegations — including legitimate iterative build/test/review cycles —
-	// are never suppressed. Bypassable with --force.
+	// Relay-loop guard — see doc comment.
 	if msgType == "request" && !force && from != "edit" && bus.WindowForRole(from) != "edit" {
 		threshold, window := relaySuppressLimits()
 		if threshold > 0 {
 			if n := bus.CountRecentRequestTuple(session, from, to, action, window); n >= threshold {
-				fmt.Fprintf(os.Stderr,
-					"Suppressed repeated request %s:%s to %s — already sent %dx in last %ds (loop guard; use --force to override)\n",
+				notSent("Suppressed repeated request %s:%s to %s — already sent %dx in last %ds (loop guard)\nRe-send with --force to deliver anyway.",
 					msgType, action, to, n, window)
 				return
 			}
@@ -176,26 +201,21 @@ func Send(args []string) {
 	// auto-chained, and edit tries to manually send another build request).
 	if msgType == "request" && !force {
 		if consumed := consumeExistingResponses(session, from, to, action, payload); consumed {
+			sendExit(1)
 			return
 		}
 	}
 
-	// Pre-send task dedup: if there's already an in-flight task for the same
-	// (to, action), reattach --wait to the existing task instead of sending a
-	// duplicate. This handles the common case where --wait was killed by Bash
-	// tool timeout and the agent retries the same request. Without this, the
-	// duplicate message gets injected into the agent's TUI, wasting tokens.
-	// Skip for --force (explicit override) and non-request messages.
-	// For --track, just report the existing task and return (no polling).
+	// Pre-send task dedup on this sender's own in-flight task — see doc comment.
 	if msgType == "request" && !force && track {
-		if existing, found := bus.FindInFlightTask(session, to, action); found {
-			fmt.Printf("In-flight task for %s:%s already exists (sent %ds ago) — already tracking\n",
-				to, action, time.Now().Unix()-existing.SentAt)
+		if existing, found := bus.FindInFlightTask(session, to, from, action); found {
+			notSent("your own %s:%s request %s is already in flight (sent %ds ago); its reply will wake you\nRe-send with --force to deliver anyway.",
+				to, action, existing.ID, time.Now().Unix()-existing.SentAt)
 			return
 		}
 	}
 	if msgType == "request" && !force && wait {
-		if existing, found := bus.FindInFlightTask(session, to, action); found {
+		if existing, found := bus.FindInFlightTask(session, to, from, action); found {
 			fmt.Printf("In-flight task for %s:%s already exists (sent %ds ago) — reattaching --wait\n",
 				to, action, time.Now().Unix()-existing.SentAt)
 			awaitOrTrack(session, from, to, action, existing.ID)
@@ -217,18 +237,22 @@ func Send(args []string) {
 		sent, err = bus.SendIfNotDuplicate(session, msg)
 	}
 	if err != nil {
-		if errors.Is(err, bus.ErrSendSuppressed) {
-			// A suppressed send is NOT a sent one: no "Sent" line, no
-			// tracked task (a task for an undelivered message re-arms the
-			// guard and jams every retry), non-zero exit.
-			fmt.Printf("NOT SENT — %v\nRe-send with --force to deliver anyway.\n", err)
-			os.Exit(1)
+		switch {
+		case errors.Is(err, bus.ErrSendSuppressed):
+			notSent("%v\nRe-send with --force to deliver anyway.", err)
+		case errors.Is(err, bus.ErrReplySuppressed):
+			notSent("%v; the reply already recorded for it stands", err)
+		case errors.Is(err, bus.ErrSelfSendDropped):
+			notSent("%v; a message to yourself is never delivered", err)
+		default:
+			fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
+			sendExit(1)
 		}
-		fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
-		os.Exit(1)
+		return
 	}
 	if !sent {
-		fmt.Printf("Suppressed duplicate %s:%s to %s (within dedup window)\n", msgType, action, to)
+		notSent("Suppressed duplicate %s:%s to %s — the same sender, target and action were logged within the %ds dedup window\nRe-send with --force to deliver anyway.",
+			msgType, action, to, bus.DedupWindowSecs())
 		return
 	}
 

@@ -262,35 +262,32 @@ func TestHasInFlightTaskForRole(t *testing.T) {
 
 	session := "test-task-dedup"
 
-	// No tasks → false
-	if HasInFlightTaskForRole(session, "deploy", "deploy") {
+	if HasInFlightTaskForRole(session, "deploy", "edit", "deploy") {
 		t.Error("no tasks should mean no in-flight task")
 	}
 
 	os.MkdirAll(TaskDir(session), 0755)
-
-	// Create an in-flight task
 	m := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
 	CreateTask(session, m, 600)
 
-	// Same (to, action) → found
-	if !HasInFlightTaskForRole(session, "deploy", "deploy") {
-		t.Error("should find in-flight task with matching to+action")
+	if !HasInFlightTaskForRole(session, "deploy", "edit", "deploy") {
+		t.Error("should find in-flight task with matching to+from+action")
 	}
-
-	// Different action → not found
-	if HasInFlightTaskForRole(session, "deploy", "build") {
+	if HasInFlightTaskForRole(session, "deploy", "edit", "build") {
 		t.Error("different action should not match")
 	}
-
-	// Different target → not found
-	if HasInFlightTaskForRole(session, "build", "deploy") {
+	if HasInFlightTaskForRole(session, "build", "edit", "deploy") {
 		t.Error("different target should not match")
 	}
+	if HasInFlightTaskForRole(session, "deploy", "plan", "deploy") {
+		t.Error("another sender's task must not match (MUX-155)")
+	}
+	if HasInFlightTaskForRole(session, "deploy", "daemon", "deploy") {
+		t.Error("daemon must not match edit's task — roles are compared unnormalized")
+	}
 
-	// Completed task → not found
 	CompleteTask(session, m.ID, "resp-123")
-	if HasInFlightTaskForRole(session, "deploy", "deploy") {
+	if HasInFlightTaskForRole(session, "deploy", "edit", "deploy") {
 		t.Error("completed task should not be found")
 	}
 }
@@ -303,19 +300,19 @@ func TestFindInFlightTask(t *testing.T) {
 
 	session := "test-find-task"
 
-	// No tasks
-	_, found := FindInFlightTask(session, "deploy", "deploy")
+	_, found := FindInFlightTask(session, "deploy", "edit", "deploy")
 	if found {
 		t.Error("should not find task when none exist")
 	}
 
 	os.MkdirAll(TaskDir(session), 0755)
-
-	// Create in-flight task
 	m := NewMessage("edit", "deploy", "request", "deploy", "Run cdk deploy", "")
 	CreateTask(session, m, 600)
 
-	task, found := FindInFlightTask(session, "deploy", "deploy")
+	if _, found := FindInFlightTask(session, "deploy", "plan", "deploy"); found {
+		t.Error("another sender must not reattach to edit's task (MUX-155)")
+	}
+	task, found := FindInFlightTask(session, "deploy", "edit", "deploy")
 	if !found {
 		t.Fatal("should find in-flight task")
 	}
@@ -414,6 +411,38 @@ func TestSendMessage_SuppressesDuplicateWithInFlightTask(t *testing.T) {
 	msgs, _ := Peek(session, "deploy")
 	if len(msgs) != 0 {
 		t.Errorf("expected 0 messages after task dedup, got %d", len(msgs))
+	}
+}
+
+// TestSendMessage_CrossSenderInFlightDelivered: watch's unanswered notify to
+// edit no longer suppresses plan's (MUX-155, 2026-09-08), and plan finds no
+// in-flight task of its own to reattach to while watch's stays findable by
+// watch. The same-sender case stays suppressed —
+// TestSendMessage_SuppressesDuplicateWithInFlightTask.
+func TestSendMessage_CrossSenderInFlightDelivered(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-cross-sender-dedup"
+	Init(session, t.TempDir())
+
+	watch := NewMessage("watch", "edit", "request", "notify", "watch: CI green", "")
+	if err := Send(session, watch); err != nil {
+		t.Fatalf("watch send: %v", err)
+	}
+	CreateTask(session, watch, 600)
+	Receive(session, "edit")
+
+	plan := NewMessage("plan", "edit", "request", "notify", "plan: MUX-153 updated", "")
+	if err := Send(session, plan); err != nil {
+		t.Fatalf("plan's notify must be delivered despite watch's in-flight task, got %v", err)
+	}
+	if msgs, _ := Peek(session, "edit"); len(msgs) != 1 || msgs[0].ID != plan.ID {
+		t.Errorf("edit's inbox must hold plan's notify, got %+v", msgs)
+	}
+	if _, ok := FindInFlightTask(session, "edit", "plan", "notify"); ok {
+		t.Error("plan must not reattach to watch's task")
+	}
+	if got, ok := FindInFlightTask(session, "edit", "watch", "notify"); !ok || got.ID != watch.ID {
+		t.Errorf("watch's own task must stay findable by watch, got %+v found=%v", got, ok)
 	}
 }
 

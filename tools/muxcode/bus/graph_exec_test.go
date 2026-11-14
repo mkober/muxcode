@@ -2061,6 +2061,70 @@ func TestExecSuppressedDispatchAdoptsQueuedMessageID(t *testing.T) {
 	}
 }
 
+// A re-dispatch suppressed by the run's own still-in-flight task adopts that
+// task: FindInFlightTask is asked as the graph sender, which is who owns it.
+func TestExecSuppressedDispatchAdoptsOwnInFlightTask(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+		Edges: []Edge{},
+	}
+	run := createTestRun(t, g)
+	step(t, runTestSession, run.ID)
+	msgs, _ := Receive(runTestSession, "build")
+	if len(msgs) != 1 {
+		t.Fatalf("expected the dispatched message, got %d", len(msgs))
+	}
+	firstID := msgs[0].ID
+
+	mustNodeTransition(t, run.ID, "a", GraphNodeDone)
+	mustNodeTransition(t, run.ID, "a", GraphNodeReady)
+	step(t, runTestSession, run.ID)
+
+	if st, _ := ReadNodeStatus(runTestSession, run.ID, "a"); st.TaskID != firstID {
+		t.Errorf("re-dispatch must adopt the run's in-flight task %s, got %s", firstID, st.TaskID)
+	}
+	if msgs, _ := Peek(runTestSession, "build"); len(msgs) != 0 {
+		t.Errorf("the suppressed re-dispatch was delivered: %d messages", len(msgs))
+	}
+}
+
+// MUX-155: another sender's in-flight task for the same (role, action) neither
+// suppresses a graph dispatch nor is adopted by it — the node runs on its own
+// message. Keyed on (to, action) alone, edit's unanswered build request made
+// the node adopt edit's task and wait on a reply addressed to edit (MUX-170).
+func TestExecDispatchIgnoresForeignInFlightTask(t *testing.T) {
+	g := &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+		Edges: []Edge{},
+	}
+	run := createTestRun(t, g)
+	foreign := NewMessage("edit", "build", "request", "build", "edit's own build", "")
+	if err := CreateTask(runTestSession, foreign, 600); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	step(t, runTestSession, run.ID)
+
+	msgs, _ := Peek(runTestSession, "build")
+	if len(msgs) != 1 || msgs[0].From != graphSender {
+		t.Fatalf("the graph's build must be delivered despite edit's task, inbox %+v", msgs)
+	}
+	st, err := ReadNodeStatus(runTestSession, run.ID, "a")
+	if err != nil {
+		t.Fatalf("ReadNodeStatus: %v", err)
+	}
+	if st.TaskID != msgs[0].ID {
+		t.Errorf("node must track its own message %s, got %s (edit's task is %s)", msgs[0].ID, st.TaskID, foreign.ID)
+	}
+	if task, _ := ReadTask(runTestSession, foreign.ID); task.Status != TaskInFlight {
+		t.Errorf("edit's task must be left in flight, got %q", task.Status)
+	}
+}
+
 func mustNodeTransition(t *testing.T, runID, node, state string) {
 	t.Helper()
 	if err := TransitionGraphNode(runTestSession, runID, node, state, nil); err != nil {

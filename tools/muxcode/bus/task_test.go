@@ -33,7 +33,7 @@ func TestHasInFlightTaskForRole_IgnoresExpired(t *testing.T) {
 	if err := CreateTask(session, fresh, 600); err != nil {
 		t.Fatalf("create fresh task: %v", err)
 	}
-	if !HasInFlightTaskForRole(session, "run", "run") {
+	if !HasInFlightTaskForRole(session, "run", "edit", "run") {
 		t.Fatal("fresh in-flight task should block new requests")
 	}
 
@@ -43,10 +43,10 @@ func TestHasInFlightTaskForRole_IgnoresExpired(t *testing.T) {
 	if err := CreateTask(session, stale, 600); err != nil {
 		t.Fatalf("create stale task: %v", err)
 	}
-	if HasInFlightTaskForRole(session, "run", "run") {
+	if HasInFlightTaskForRole(session, "run", "edit", "run") {
 		t.Error("expired in-flight task must not block new requests")
 	}
-	if _, found := FindInFlightTask(session, "run", "run"); found {
+	if _, found := FindInFlightTask(session, "run", "edit", "run"); found {
 		t.Error("FindInFlightTask must not reattach to an expired task")
 	}
 }
@@ -198,7 +198,7 @@ func TestClearInFlightTasksForRole_UnblocksSendsAfterRestart(t *testing.T) {
 	_ = CreateTask(session, stuck, 600)
 
 	// It blocks re-sends until cleared (the observed symptom).
-	if !HasInFlightTaskForRole(session, "review", "review") {
+	if !HasInFlightTaskForRole(session, "review", "test", "review") {
 		t.Fatal("precondition: in-flight review task should block sends")
 	}
 
@@ -210,7 +210,7 @@ func TestClearInFlightTasksForRole_UnblocksSendsAfterRestart(t *testing.T) {
 	if task.Status != TaskTimedOut || task.ClearedBy != "review relaunched (reason=restart)" {
 		t.Errorf("stuck task = %q cleared by %q, want %q naming the relaunch", task.Status, task.ClearedBy, TaskTimedOut)
 	}
-	if HasInFlightTaskForRole(session, "review", "review") {
+	if HasInFlightTaskForRole(session, "review", "test", "review") {
 		t.Error("sends to review must be unblocked after the restart clears the task")
 	}
 }

@@ -69,9 +69,27 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 
 **Dedup guard:** Duplicate messages (same `from`, `to`, `action`, `type` tuple) within a 30-second window are automatically suppressed. The check and send are performed atomically under a file lock (`dedup.lock`) to prevent TOCTOU races. System actions are never deduped. Configure the window via `MUXCODE_DEDUP_WINDOW` env var (seconds); set to `0` to disable.
 
+**In-flight dedup:** a tracked request is not sent again while the **same sender's** earlier request to the same role under the same action is still in flight — the key is `(from, to, action)` (`FindInFlightTask`/`HasInFlightTaskForRole`, `bus/dedup.go`). It exists for a sender retrying its own request after a killed `--wait`: `--track` prints `NOT SENT` naming the existing task and exits 1, `--wait` reattaches to it, and a graph dispatch (sent as `daemon`) adopts only the daemon's own task. Another sender's in-flight task to the same role and action never suppresses a send — before MUX-155 the key was `(to, action)`, so one agent's unanswered `notify` to edit silently dropped every other agent's. `--force` bypasses it.
+
+**A message that was not written says so:** `muxcode send` prints `NOT SENT — <reason>` and exits 1, never `Sent …`, on every road where nothing is written (`notSent`, `cmd/send.go`) — and records no tracked task for it, since a task for an undelivered message would re-arm the guard against the retry. The roads:
+
+| Not sent because | Decided by | Before MUX-155 |
+|------------------|------------|----------------|
+| The sender's own request to that role and action is in flight (`--track`; names the task) | The CLI's pre-send check (`FindInFlightTask`) | "already tracking", exit 0 |
+| The sender's own identical request is already in the inbox or in flight | `bus.Send` → `ErrSendSuppressed` | Reported by the CLI already |
+| The same sender, target and action were logged within the dedup window (`MUXCODE_DEDUP_WINDOW`) | `SendIfNotDuplicate` | "Suppressed duplicate …", exit 0 |
+| The relay-loop guard tripped (`MUXCODE_RELAY_SUPPRESS_THRESHOLD`) | The CLI's loop guard | "Suppressed repeated request …", exit 0 |
+| Existing responses already answer this exact request (the answer is printed) | The CLI's existing-answer check | The answer printed, exit 0 |
+| The reply's task is already answered (a duplicate reply) | `bus.Send` → `ErrReplySuppressed` — the reply already recorded stands | `Sent response:…`, exit 0 |
+| The message is addressed to its own sender — other than the launch-time `startup` request, or a response carrying `--reply-to`, which is recorded as a completion without delivery | `bus.Send` → `ErrSelfSendDropped` | `nil`, reported as sent |
+
+Each request road's message ends "Re-send with --force to deliver anyway". A script that sends a deliberate duplicate must expect exit 1.
+
+A delivered message still prints `Sent …` and exits 0, and `--wait` on the sender's own in-flight request still reattaches rather than failing.
+
 **Relay-loop suppression:** repeated identical agent-to-agent request relays are dropped once the same `(from,to,action)` tuple fires `>= MUXCODE_RELAY_SUPPRESS_THRESHOLD` times (default 4; `0` disables) within `MUXCODE_RELAY_SUPPRESS_WINDOW` seconds (default 300). Scoped to non-edit senders — prevents wedged relay storms (e.g. `run→watch` when the watch agent is stood down). Backed by `bus.CountRecentRequestTuple` (`guard.go`) and a guard in `cmd/send.go`.
 
-**Stuck-task self-heal:** a tracked task left `in-flight` (delivered while the target was busy, never responded) used to permanently block all new `(to,action)` sends to that role via the dedup guard — even `--force` couldn't bypass it, so the target silently stopped receiving messages. Now `bus.TaskExpired` lets `HasInFlightTaskForRole`/`FindInFlightTask` (`dedup.go`) ignore expired in-flight tasks, and the daemon's `checkTrackedTasks` times them out (lifecycle `task-timeout`). Tasks self-heal after their timeout (default 600s). See also `muxcode deliver <role> [--force]` to force-drain a target's pending inbox.
+**Stuck-task self-heal:** a tracked task left `in-flight` (delivered while the target was busy, never responded) used to permanently block all new sends matching its dedup key — `(to,action)` then, `(from,to,action)` since MUX-155 — via the dedup guard — even `--force` couldn't bypass it, so the target silently stopped receiving messages. Now `bus.TaskExpired` lets `HasInFlightTaskForRole`/`FindInFlightTask` (`dedup.go`) ignore expired in-flight tasks, and the daemon's `checkTrackedTasks` times them out (lifecycle `task-timeout`). Tasks self-heal after their timeout (default 600s). See also `muxcode deliver <role> [--force]` to force-drain a target's pending inbox.
 
 Auto-detects sender from `AGENT_ROLE` env var or tmux window name.
 

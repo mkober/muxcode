@@ -209,12 +209,18 @@ func HasPendingAction(session, to, from, action string) bool {
 	return false
 }
 
-// HasInFlightTaskForRole checks if there is an in-flight task targeting
-// the given role and action. This indicates the agent has already consumed
-// the message and is actively working on it — sending another identical
-// request would create a duplicate prompt injection (especially for
-// non-hook providers like OpenCode where messages are injected via send-keys).
-func HasInFlightTaskForRole(session, to, action string) bool {
+// HasInFlightTaskForRole checks if from already has an in-flight task
+// targeting the given role and action. This indicates the agent has already
+// consumed that sender's message and is actively working on it — sending
+// another identical request would create a duplicate prompt injection
+// (especially for non-hook providers like OpenCode where messages are injected
+// via send-keys).
+//
+// The sender is part of the key (MUX-155): keyed on (to, action) alone, watch's
+// unanswered notify to edit silenced plan's, and notify is every role's report
+// action. Roles are compared raw, never normalized — NormalizeBusRole maps
+// daemon to edit, which would merge the graph executor's tasks with edit's.
+func HasInFlightTaskForRole(session, to, from, action string) bool {
 	tasks, err := ListTasks(session, TaskInFlight)
 	if err != nil || len(tasks) == 0 {
 		return false
@@ -223,16 +229,18 @@ func HasInFlightTaskForRole(session, to, action string) bool {
 	for _, t := range tasks {
 		// Skip stale tasks: a task stuck in-flight past its timeout (delivered
 		// but never responded) must not block new requests indefinitely.
-		if t.To == to && t.Action == action && !TaskExpired(t, now) {
+		if t.To == to && t.From == from && t.Action == action && !TaskExpired(t, now) {
 			return true
 		}
 	}
 	return false
 }
 
-// FindInFlightTask returns the first in-flight task matching (to, action),
-// or an empty task and false if none found. Used by --wait reattachment.
-func FindInFlightTask(session, to, action string) (Task, bool) {
+// FindInFlightTask returns the first in-flight task from sender to role under
+// action, or an empty task and false if none found. Used by --wait
+// reattachment and by a suppressed graph dispatch adopting its own task; keyed
+// like HasInFlightTaskForRole, so neither adopts another sender's work.
+func FindInFlightTask(session, to, from, action string) (Task, bool) {
 	tasks, err := ListTasks(session, TaskInFlight)
 	if err != nil || len(tasks) == 0 {
 		return Task{}, false
@@ -240,7 +248,7 @@ func FindInFlightTask(session, to, action string) (Task, bool) {
 	now := time.Now().Unix()
 	for _, t := range tasks {
 		// Don't reattach --wait to a stale task that will never complete.
-		if t.To == to && t.Action == action && !TaskExpired(t, now) {
+		if t.To == to && t.From == from && t.Action == action && !TaskExpired(t, now) {
 			return t, true
 		}
 	}
