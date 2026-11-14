@@ -20,6 +20,12 @@
 # The pre-fix build is this tree with checkAgentDown patched out of
 # diagnosticChecks in a scratch copy; every other line is the tree's own.
 #
+# That restarts are off is checked, not assumed: the scratch daemon's own
+# environment must hold MUXCODE_RESUME_FIRST_SIGHTING=0 and the 8s interval as
+# two variables. Until MUX-221 the export line fused them into one, so neither
+# took effect and the strike window was a race this script happened to win; a
+# decoy started with that fused line is the check's negative control.
+#
 # Sections:
 #   A  a live, idle agent with an empty inbox: exit 0, no findings, "No issues
 #      detected", and its --all row healthy
@@ -42,7 +48,7 @@ set -uo pipefail
 
 PASS=0
 FAIL=0
-EXPECTED_PASS=36
+EXPECTED_PASS=38
 for t in tmux go jq; do
   command -v "$t" >/dev/null 2>&1 || { echo "SKIP: $t is required"; exit 2; }
 done
@@ -62,7 +68,7 @@ export TMUX_TMPDIR="$WORK/tmux"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 export MUXCODE_INSTALL_DIR="$WORK/install"
 export MUXCODE_AGENT_CLI=claude MUXCODE_BUILD_CLI=claude
-export MUXCODE_AGENT_HEALTH_CHECK_SECS=8MUXCODE_RESUME_FIRST_SIGHTING=0 MUXCODE_AGENT_HEARTBEAT=86400
+export MUXCODE_AGENT_HEALTH_CHECK_SECS=8 MUXCODE_RESUME_FIRST_SIGHTING=0 MUXCODE_AGENT_HEARTBEAT=86400
 export MUXCODE_AGENTDEFS_WATCH_DISABLE=1 MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 MUXCODE_CONTROL_PANE_DISABLE=1
 export MUXCODE_FORCE_RESPOND_DISABLE=1 MUXCODE_TMP_CLEANUP_THRESHOLD=0 MUXCODE_ACTIVE_WATCHDOG_SECS=0
 export MUXCODE_PROMPT_AGENT_DISABLE=1 MUXCODE_BRANCH_TIME_DISABLE=1 MUXCODE_STUCK_RELOAD_DISABLE=1
@@ -164,6 +170,27 @@ sleep 1
 DPID=$!
 sleep 1
 kill -0 "$DPID" 2>/dev/null && ok "scratch daemon running" || fail "scratch daemon exited: $(tail -3 "$WORK/daemon.log")"
+
+# restarts_controlled PID — the process's environment holds the health-check
+# interval and first-sighting restarts off as two variables. Read through
+# pii-scrub, never a bare environment dump (MUX-179).
+restarts_controlled() {
+  local env
+  env=$(ps eww -p "$1" 2>/dev/null | "$MUX" pii-scrub | tr ' ' '\n')
+  grep -qx 'MUXCODE_AGENT_HEALTH_CHECK_SECS=8' <<<"$env" && grep -qx 'MUXCODE_RESUME_FIRST_SIGHTING=0' <<<"$env"
+}
+restarts_controlled "$DPID" \
+  && ok "the scratch daemon runs with first-sighting restarts off and an 8s health check (MUX-221)" \
+  || fail "the scratch daemon's environment lacks MUXCODE_RESUME_FIRST_SIGHTING=0 or MUXCODE_AGENT_HEALTH_CHECK_SECS=8"
+# Negative control: the fused export line this replaced — one variable whose
+# value swallowed the second — must fail the same check.
+env MUXCODE_AGENT_HEALTH_CHECK_SECS=8MUXCODE_RESUME_FIRST_SIGHTING=0 sleep 30 &
+FUSED=$!
+sleep 0.5
+restarts_controlled "$FUSED" \
+  && fail "control: the fused export line passed — the check above cannot see the defect" \
+  || ok "control: the fused export line's environment fails the same check"
+kill "$FUSED" 2>/dev/null; wait "$FUSED" 2>/dev/null
 type_in build "muxcode agent launch build --reason user"
 wait_for 20 "build agent (claude-stub) up" stub_up build
 wait_for 15 "build agent's inbox listener running" listener_alive build
