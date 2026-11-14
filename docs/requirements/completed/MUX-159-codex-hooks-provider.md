@@ -11,7 +11,7 @@ as text, and the daemon **pane-scraping** to guess when a task finished and what
 That road produced every incident of 2026-09-08: a rule line closed the graph's build and test nodes
 and held them for manual approval on three runs ([MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md)),
 a review reply injected as a prompt drove a fourteen-request test↔review loop
-([MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md)), `verify-spec` fired on chrome, and the build
+([MUX-009](./MUX-009-response-echo-chain-retrigger.md)), `verify-spec` fired on chrome, and the build
 agent answered three requests by restating test's status line as its own `EXIT=0` (`6b53863`).
 Codex's hooks are the same shape as the Claude hooks muxcode already runs — `PreToolUse`,
 `PostToolUse`, `Stop`, the same `{"decision":"block","reason":…}` answer — so the fix is to write a
@@ -444,7 +444,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — the immediate patch to
   the scrape (chrome signatures, consumer refusal). This spec removes the scrape's *reason to exist*
   for codex; both are needed, in that order.
-- [MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md) — fixed at the root by Phase 4: a response
+- [MUX-009](./MUX-009-response-echo-chain-retrigger.md) — fixed at the root by Phase 4: a response
   is delivered as context, never as a prompt.
 - [MUX-148](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) — authoritative-row provenance
   on the graph road; Phase 3 gives codex nodes authoritative rows for the first time, so its

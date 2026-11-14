@@ -213,6 +213,12 @@ func ReceiptGap(session, role string, olderThan time.Duration) []Message {
 	return gap
 }
 
+// IsResponded reports whether msgID's delivery status records a response.
+func IsResponded(session, msgID string) bool {
+	ds, err := ReadDeliveryStatus(session, msgID)
+	return err == nil && ds.Status == StatusResponded
+}
+
 // ReadDeliveryStatus reads the delivery status for a message ID.
 func ReadDeliveryStatus(session, msgID string) (DeliveryStatus, error) {
 	data, err := os.ReadFile(DeliveryPath(session, msgID))

@@ -295,7 +295,7 @@ The stub cannot show the model deciding to rerun; the live transcript shows it e
 | A daemon re-drive | **Ruled out** — no wake, notify or redrive lifecycle row for test in these turns; each wake is `muxcode send`'s own notify 0–1 s after review's send |
 | Two history rows per run | **Ruled out** — each row is a whole run; but the store mixes in 22 reply rows and 21 build-agent vet rows |
 
-**Relation to the backlog.** This is [MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md)'s
+**Relation to the backlog.** This is [MUX-009](./MUX-009-response-echo-chain-retrigger.md)'s
 mechanism — a response echo re-triggering the chain — seen from the Codex hook road, and
 [MUX-127](../backlog/MUX-127-review-completion-routing.md)'s "loops on success" junction.
 [MUX-175](../backlog/MUX-175-response-ack-ping-pong-has-no-brake.md) is not involved: no
@@ -442,7 +442,7 @@ no section drove a graph test node. It closes the second half of the fifth accep
 
 - [MUX-127](../backlog/MUX-127-review-completion-routing.md) — review completion routes nowhere on failure
   and loops on success; the same junction
-- [MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md) — a response echo re-triggers the chain;
+- [MUX-009](./MUX-009-response-echo-chain-retrigger.md) — a response echo re-triggers the chain;
   possibly the same mechanism from the other side
 - [MUX-175](../backlog/MUX-175-response-ack-ping-pong-has-no-brake.md) — two agents acknowledging each other
   with no brake

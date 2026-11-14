@@ -129,7 +129,7 @@ refused where it enters.
   test node **timed out at 297 s with no row in the test store** — the codex test agent never ran
   the suite ([MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)'s shape) — and
   review never dispatched. The suite row Phase 1 waits on still does not exist.
-- Related: [MUX-009](../backlog/MUX-009-response-echo-chain-retrigger.md) (the other response
+- Related: [MUX-009](./MUX-009-response-echo-chain-retrigger.md) (the other response
   echo — a `type: response` typed as a prompt on the scrape road — closed at its root by the hook
   road; this one is the send-side sibling); [MUX-032](../backlog/MUX-032-loop-detector-granularity.md)
   (the detector's blind spot for one-role echoes); [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)

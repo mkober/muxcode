@@ -188,7 +188,7 @@ the gate is misplaced rather than that the agent is choosing badly.
 mechanism; this section adds B1 (provenance) and the fire-11 negative control. Carrying both risks
 two half-specs of one defect. The likely resolution is to **fold B into MUX-007** and leave this spec
 scoped to Defect A alone — but that is a filing decision for the user, not one to make silently.
-Related: [MUX-009](./MUX-009-response-echo-chain-retrigger.md) is the same *shape* (a response
+Related: [MUX-009](../completed/MUX-009-response-echo-chain-retrigger.md) is the same *shape* (a response
 re-triggering a chain) on non-hook providers, and [MUX-032](./MUX-032-loop-detector-granularity.md)
 governs whether the detector that flagged this can act on it.
 
