@@ -202,6 +202,31 @@ test or tests behind the 2026-11-13 failures are identified, or the failures are
 overlapping or mid-edit runs" is likewise unmet: closing it needs a new occurrence, now nameable,
 or the user narrowing the criterion. No follow-up defect has been filed — that is the user's call.
 
+### Findings after parking — an identified candidate
+
+Recorded 2026-11-14 on the user's request relayed by edit; the account of the CI run is edit's.
+Plan confirmed the fix in the tree on branch `MUX-217-…` (`stubSpawnWindow`,
+`tools/muxcode/bus/spawn_test.go`, stubbing and restoring `graphSpawnWakeFn`, 14 callers). Nothing
+is ticked on this.
+
+A named, order-dependent flake was caught on PR #196's CI (run 43559914017), in the `muxcode`
+module — the module that failed both times on 2026-11-13:
+
+| What failed | Why |
+|-------------|-----|
+| `TestExportBusBaseEnv_UnsetsWhatTheLauncherLacks` recorded a tmux `list-panes` call it had not made | The call leaked from `TestStaleOwnWorkerHandleTouchesNoWorktree`, whose reseed ran the real `graphSpawnWakeFn` — a `go wakeSpawnedAgent` goroutine still polling tmux after its test had ended, landing in whichever test ran next |
+
+Fixed in PR #196: `stubSpawnWindow` now replaces `graphSpawnWakeFn` with a no-op and restores it,
+for all its callers.
+
+**This is the likely cause of the 2026-11-13 failures, not a proven one.** It fits what is on
+record: the `muxcode` module, a failure that depends on goroutine timing across tests and so passes
+on rerun, and no reproduction in 14 runs. But the 2026-11-13 output was lost to truncation, so
+those two failures cannot be matched to this test by name. Phase 2's steps and acceptance criteria
+3 and 4 therefore stay open as written, and the spec stays parked. If the user accepts this as the
+identification, criterion 3 ("identified, or shown to come from overlapping or mid-edit runs") and
+criterion 4 (the flaky test fixed) could be ticked against PR #196 — that is the user's call.
+
 ### Phase 3: Integration test
 
 - [ ] `bash scripts/test-test-sh-coverage.sh` through the run agent: every check passes, floor met;
@@ -233,6 +258,10 @@ Phase 1 is complete and reviewed, and its capture work stays in the tree (uncomm
 `test.sh`, `tools/muxcode/bus/hook.go` (`clipOutput`), `agents/test-runner.md`,
 `scripts/test-test-sh-coverage.sh`, `CLAUDE.md` and `docs/agents.md`. Open: Phase 2 (3 steps — not
 meetable without a new occurrence), Phase 3 (4 steps) and acceptance criteria 2, 3 and 4.
+
+**2026-11-14 — a candidate is identified.** An order-dependent flake in the `muxcode` module was
+caught by name on PR #196's CI and fixed there (see "Findings after parking"). It is the likely
+cause, not a proven one; the spec stays parked and nothing further is ticked.
 
 It was activated 2026-11-13 by `55-defect-backlog-loop` run `1794608375` (Defects rank 1); that run
 is canceled.

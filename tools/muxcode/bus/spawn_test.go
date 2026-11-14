@@ -705,12 +705,16 @@ func TestFindMuxcodeBinary_NotFound(t *testing.T) {
 }
 
 // stubSpawnWindow fakes a live window and records kills; returns the
-// kill log and restores both seams on cleanup.
+// kill log and restores the seams on cleanup. The wake seam is a no-op: a
+// faked window has no pane, and a reseed's real wake goroutine polls tmux
+// after the test returns — PR #196's CI recorded its list-panes inside
+// TestExportBusBaseEnv_UnsetsWhatTheLauncherLacks's capture.
 func stubSpawnWindow(t *testing.T) *[]string {
 	t.Helper()
-	origExists, origKill := spawnWindowExistsFn, spawnKillWindowFn
-	t.Cleanup(func() { spawnWindowExistsFn, spawnKillWindowFn = origExists, origKill })
+	origExists, origKill, origWake := spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn
+	t.Cleanup(func() { spawnWindowExistsFn, spawnKillWindowFn, graphSpawnWakeFn = origExists, origKill, origWake })
 	spawnWindowExistsFn = func(string, string) bool { return true }
+	graphSpawnWakeFn = func(string, string) {}
 	var killed []string
 	spawnKillWindowFn = func(_, window string) error {
 		killed = append(killed, window)
