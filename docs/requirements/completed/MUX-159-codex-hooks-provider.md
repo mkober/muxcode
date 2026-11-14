@@ -320,7 +320,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   findings: (a) `./build.sh` → `muxcode upgrade-daemons` fails inside the codex build sandbox —
   `ps: fork/exec /bin/ps: operation not permitted` (`bus/upgrade.go:69` shells out to `ps -axo`) — so a
   codex build agent never cycles the daemon while `build.sh` still exits 0; filed as
-  [MUX-161](../backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md). (b) Three
+  [MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md). (b) Three
   `graph-authority-refused spawn-e0035225` rows at 00:27:31: the implement spawn ran a test-classified
   command itself despite reporting "build/test left to the graph", and its hook chain was refused from
   firing into graph-owned roles — the authority guard working, and one more instance of

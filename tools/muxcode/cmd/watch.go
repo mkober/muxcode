@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -76,12 +77,40 @@ func Watch(args []string) {
 
 // runDaemonMonitor monitors the bus daemon and restarts it if stale.
 // Runs as a background loop alongside the daemon, checking every 15 seconds.
+// It holds the session's monitor locks for its lifetime — one monitor per
+// session, and the owner `upgrade-daemons` discovers when it cannot run ps
+// (MUX-161) — and exits when another monitor holds them. Every second it
+// consumes an `upgrade-daemons` restart request by re-exec'ing its own
+// executable; a failed exec is logged and the monitor carries on.
 func runDaemonMonitor(session string) {
 	const maxAgeSecs int64 = 30
-	const checkInterval = 15 * time.Second
+	const checkEveryTicks = 15
 
-	for {
-		time.Sleep(checkInterval)
+	unlock, err := bus.AcquireInstanceLock(bus.MonitorLockPath(session), bus.MonitorOwnerPath(session))
+	if errors.Is(err, bus.ErrLockHeld) {
+		fmt.Fprintf(os.Stderr, "  another daemon monitor is already running for session %s\n", session)
+		return
+	}
+	if err != nil {
+		bus.LogLifecycle(session, "warn", "monitor", "lock-failed", err.Error())
+	} else {
+		defer unlock()
+	}
+	if err := bus.WriteMonitorVersion(session, bus.BuildInfo()); err != nil {
+		bus.LogLifecycle(session, "warn", "monitor", "version-write-failed", err.Error())
+	}
+
+	for tick := 1; ; tick++ {
+		time.Sleep(time.Second)
+		if binary, ok := bus.TakeRestartTarget(bus.MonitorRestartRequestPath(session)); ok {
+			bus.LogLifecycle(session, "info", "monitor", "monitor-reexec", "re-exec "+binary+" on an upgrade-daemons restart request")
+			if err := bus.ReexecForRestart(binary); err != nil {
+				bus.LogLifecycle(session, "error", "monitor", "monitor-reexec-failed", err.Error())
+			}
+		}
+		if tick%checkEveryTicks != 0 {
+			continue
+		}
 
 		// Exit if tmux session no longer exists
 		if err := exec.Command("tmux", "has-session", "-t", session).Run(); err != nil {

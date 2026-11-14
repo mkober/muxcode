@@ -962,7 +962,7 @@ ran it after the install); `scripts/test-node-outcome-attribution.sh` does not e
 **15:25:04** — the first-lap `build` node's, produced after the worker's port, so the daemon judging
 this run carries the Phase 3 code — but the 15:33:58 rebuild did not cycle it, and the lifecycle log
 holds no `daemon-upgraded` row for either build. Consistent with
-[MUX-161](../backlog/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) (the build role runs on
+[MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) (the build role runs on
 codex); how the daemon reached the 15:25 build at all is not established. No branch was named in the
 dispatch, so no time was recorded this pass.
 

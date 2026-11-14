@@ -58,6 +58,38 @@ func WriteDaemonVersion(session string, info Info) error {
 	return os.WriteFile(DaemonVersionPath(session), data, 0644)
 }
 
+// MonitorVersionPath is the build identity the session's monitor records at
+// startup — how a rollout tells that a re-exec'd monitor, which keeps its
+// pid, now runs the installed build (MUX-161).
+func MonitorVersionPath(session string) string {
+	return filepath.Join(BusDir(session), "monitor.version")
+}
+
+// WriteMonitorVersion records info as the session monitor's build identity.
+func WriteMonitorVersion(session string, info Info) error {
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(MonitorVersionPath(session), data, 0644)
+}
+
+// stampedBuildSince reports whether the build stamp at path names want and
+// was written at or after since — by a process started for this rollout,
+// not one that was already running it.
+func stampedBuildSince(path string, want Info, since time.Time) bool {
+	st, err := os.Stat(path)
+	if err != nil || st.ModTime().Before(since) {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var info Info
+	return json.Unmarshal(data, &info) == nil && info.SameBuild(want)
+}
+
 // ReadDaemonVersion returns the build identity the session's daemon
 // recorded. ok is false when nothing usable is on disk: no daemon has
 // started for the session, or the running one predates the stamp and never

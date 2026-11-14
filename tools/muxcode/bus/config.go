@@ -569,6 +569,27 @@ func DaemonPidPath(session string) string {
 	return filepath.Join(BusDir(session), "daemon.pid")
 }
 
+// DaemonLockPath is the daemon's single-instance flock (AcquireInstanceLock).
+func DaemonLockPath(session string) string {
+	return filepath.Join(BusDir(session), "lock", "daemon.lock")
+}
+
+// DaemonOwnerPath carries the daemon's record lock, whose owner discovery
+// asks the kernel for (LockHolderPid).
+func DaemonOwnerPath(session string) string {
+	return filepath.Join(BusDir(session), "lock", "daemon.owner")
+}
+
+// MonitorLockPath is the daemon monitor's single-instance flock.
+func MonitorLockPath(session string) string {
+	return filepath.Join(BusDir(session), "lock", "monitor.lock")
+}
+
+// MonitorOwnerPath carries the daemon monitor's record lock.
+func MonitorOwnerPath(session string) string {
+	return filepath.Join(BusDir(session), "lock", "monitor.owner")
+}
+
 // WaitingMarkerPath returns the path to a marker file that indicates the given
 // role has an active --wait polling loop. While this marker exists, Notify()
 // skips display-message notifications because --wait is already polling the inbox.
