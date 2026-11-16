@@ -17,8 +17,6 @@ reads the same fail-safe liveness signal and has the same blind spot. Three path
 `KnownRoles` is a superset of the launched windows, and `IsAgentAlive` cannot say "no" for a role that
 was never launched.
 
-Tracking: _(no GitHub issue yet)_
-
 ## Context
 
 Observed live 2026-09-03 ~07:00 on session `muxcode` while checking agent state during startup.
@@ -179,17 +177,57 @@ Scope note: this touches the reload path **only**. Defect A's emit guard and Def
 are untouched by it, and `notified-analyze.ids` in the bus dir (164 IDs at 13:56) shows the daemon
 still notifying the phantom role every cycle.
 
+### Decisions — the user's, recorded 2026-11-15
+
+Answered by the user in conversation and relayed by edit (`1794787239-edit-1aacf9a4`), as one
+decision across this spec and
+[MUX-180](./MUX-180-daemon-notifies-windowless-roles-forever.md). The open criteria and phases below
+were rewritten to it the same day; the ticked reload items are untouched.
+
+**Context the user gave, which changes this spec's vocabulary.** The feature that hosts several
+agents in one window (research inside plan's window, for example) is going to be removed, and some
+future agents may never have a window of their own. **Every agent always has its own inbox, window
+or not.** So this spec's title condition — "no window" — is no longer the fault by itself.
+
+| Decision | Chosen |
+|----------|--------|
+| Suppress the send, or send and skip the notify (the "open design question" under Technical approach) | **Refuse at `Send`.** The sender is told — `NOT SENT`, exit 1 — rather than the message landing in an inbox nobody reads |
+| What the refusal tests | **"Can anything consume this role's inbox"** — no window **and** no listener **and** no headless agent running. Never "does it have a window": a windowless agent that reads its own inbox receives normally |
+| The division with MUX-180 | **This spec owns the `Send`-time refusal** (plus its own diagnose, status and reload halves). **MUX-180 owns notify suppression, the inbox cap and workflow routing.** Cross-linked, not merged — confirmed by the user 2026-11-16, recorded in MUX-180 |
+
+What the decision leaves for Phase 1 to establish, because a refusal at `Send` is wider than the one
+analyze route this spec was filed on. **Confirmed by the user 2026-11-16** (relayed by edit,
+`1794844857-edit-5f52a782`): Phase 1 enumerates the launch-time seeded sends so they are never
+refused, and the refusal's lifecycle row is once per role. The user also noted that Phase 1 re-pins
+this spec's 2026-09-08 line numbers and mechanism against the tree.
+
+| Question | Why it matters |
+|----------|----------------|
+| Which sends happen before a role's consumer is up | `LaunchSession` pre-populates inboxes and wakes agents at startup (the `request:startup` bootstrap). If a role has no window, listener or headless agent at that instant, the refusal would break session launch |
+| What an unreadable window list reads as | Indeterminate — it must pass as "has a consumer", the rule `RoleWindowMissing` already follows, or a tmux blip refuses every send in the session |
+| How often the refusal is logged | The daemon's own analyze route sends every edit-stabilization cycle. A row per refused message would recreate MUX-180's noise on a new event name, so the row is once per role while the condition holds |
+| Whether the reload path's presence rule moves | `RoleWindowPresent` (Defect C, landed) is a *window* rule and is right for reload, which addresses a window. It is not the consumer predicate and is not replaced by it |
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A message is never routed to a role that has no window in the session, on the analyze path
-- [ ] The suppression is visible — a windowless route emits a lifecycle event rather than failing silently
+Open items rewritten 2026-11-15 to the user's decision. "No consumer" means no window, no live inbox
+listener and no headless agent running for the role.
+
+- [ ] A message to a role with no consumer is refused at `Send` — written to no inbox — and the
+      sender reads `NOT SENT` with exit 1; the daemon's analyze route is refused the same way
+- [ ] The refusal is visible — a lifecycle event names the role, once per role while the condition
+      holds, rather than failing silently or once per message
+- [ ] **Negative control:** a role with no window whose own listener or headless agent is running is
+      sent to and receives normally — a window is not the test
+- [ ] **Negative control:** session launch still seeds every role's startup message; no send made
+      before a role's consumer is up is refused
 - [ ] `diagnose` distinguishes "no consumer exists" from "consumer exists but did not receive", and
       never prescribes `deliver --force` for a role with no pane
-- [ ] The windowless finding names the actual remediation (open the window, or stop routing to the role)
-- [ ] `muxcode status` makes a windowless role distinguishable from a windowed idle one
-- [ ] Draining a windowless inbox by hand is no longer required — the pile does not re-accumulate
+- [ ] The no-consumer finding names the actual remediation (launch the role, or stop routing to it)
+- [ ] `muxcode status` makes a role with no consumer distinguishable from an idle one that has one
+- [ ] Draining such an inbox by hand is no longer required — the pile does not re-accumulate
 - [x] A reload of a role with no window fails **immediately** with an error naming the absence — never
       "did not exit" — `RoleWindowMissing` refuses before the reload marker is written
       (`TestRoleWindowMissing`, 2026-09-08, uncommitted)
@@ -198,20 +236,25 @@ still notifying the phantom role every cycle.
       reports `Alive`, `isSelectable` admits it for a config-only apply and refuses a dead one,
       `notAliveLabel` renders `(no window)` (`TestActiveAgentStatusesMarksWindowlessRoles`,
       `TestReloadBatchConfiguresWindowlessRole`)
-- [ ] `diagnose` on a windowless role with an **empty** inbox does not report "No issues detected"
+- [ ] `diagnose` on a role with no consumer and an **empty** inbox does not report "No issues detected"
 
 ### Technical approach
 
-Defect A is a guard at the emit site using the helper that already exists. The open design question
-is what "no window" should mean: **suppress the send**, or **send but skip the notify**. Suppressing
-is correct here — an inbox nobody reads is not storage, it is a leak — but the analyze payload is the
-only consumer of the edit-stabilization signal, so suppressing it silently discards the signal. Hence
-the lifecycle-event criterion: the suppression must be observable.
+Defect A is a refusal at `bus.Send` (decided 2026-11-15), not a guard at the one emit site: a role
+nothing can consume for is refused whoever the sender is, and the analyze route is one caller among
+them. The predicate joins three answers that already exist — a window (`RoleHasWindow`,
+`bus/agent_health.go`), a live listener (`IsPolling`, `bus/notify.go`) and a running headless agent
+(`IsHarnessActive`, `bus/notify.go`) — and is the one MUX-180's notify and workflow checks reuse.
+The refusal returns through
+[MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md)'s `notSent` road. An inbox
+nobody reads is not storage, it is a leak — but the analyze payload is the only carrier of the
+edit-stabilization signal, so refusing it discards the signal. Hence the lifecycle-event criterion:
+the refusal must be observable.
 
-Defect B is an ordering fix in `diagnosticChecks`. A windowless check must run **before**
+Defect B is an ordering fix in `diagnosticChecks`. A no-consumer check must run **before**
 `receipt-gap`, because the receipt evidence is genuinely present and will match otherwise. The check
-must not depend on the inbox: an empty inbox on a windowless role is the falsely-clean case, not a
-healthy one.
+must not depend on the inbox: an empty inbox on a role with no consumer is the falsely-clean case,
+not a healthy one. A windowless role that reads its own inbox is healthy and must not trip it.
 
 Defect C is the same guard at the reload entry, with the same helper. The one subtlety is the failure
 mode of the window read itself: `TmuxListWindowNames` failing must be **indeterminate** (proceed as
@@ -238,26 +281,35 @@ consult `RoleHasWindow` rather than `IsAgentAlive` — the former can say "no", 
 - [ ] Pin current behavior: a send to a windowless role lands in the inbox and is never consumed
 - [ ] Pin that `diagnose` on that role returns `receipt-gap` with the `deliver --force` remediation
 - [ ] Confirm `bus.Notify` to a nonexistent pane fails non-fatally (stderr only) — the silent half
+- [ ] Enumerate the sends made before a role's consumer is up (session launch, the startup bootstrap,
+      a reload's relaunch window) and record which the refusal must let through
 
-### Phase 2: Guard the emit path
+### Phase 2: Refuse at Send
 
-- [ ] Gate the analyze route on `bus.RoleHasWindow()`
-- [ ] Emit a lifecycle event when a route is suppressed for want of a consumer
+- [ ] One consumer predicate — a window, a live listener or a running headless agent; an unreadable
+      window list reads as having a consumer — placed where MUX-180 can reuse it
+- [ ] `bus.Send` refuses a message to a role the predicate fails for, through `notSent`: `NOT SENT`,
+      exit 1, nothing written to the inbox
+- [ ] Emit a lifecycle event for the refusal, once per role while the condition holds
 - [ ] Negative control: a session **with** an analyze window still routes normally
+- [ ] Negative control: a windowless role with its own listener, and one with a running headless
+      agent, are each sent to normally
+- [ ] Negative control: the sends Phase 1 enumerated still land
 
-### Phase 3: Teach diagnose the windowless case
+### Phase 3: Teach diagnose the no-consumer case
 
-- [ ] Add a windowless-role check ordered **before** `receipt-gap` in `diagnosticChecks`
-- [ ] Remediation names opening the window or stopping the routing — never `deliver --force`
+- [ ] Add a no-consumer check ordered **before** `receipt-gap` in `diagnosticChecks`
+- [ ] Remediation names launching the role or stopping the routing — never `deliver --force`
 - [ ] Negative control: a windowed role with a genuine receipt gap still reports `receipt-gap`
       (the new check must not swallow the real one)
-- [ ] A windowless role with an **empty** inbox is reported as windowless, never "No issues detected"
+- [ ] A role with no consumer and an **empty** inbox is reported as such, never "No issues detected"
       (Defect C's clean verdict — the check must not key on the inbox)
+- [ ] Negative control: a windowless role that reads its own inbox is not reported
 
 ### Phase 4: Surface it in status
 
-- [ ] `muxcode status` distinguishes a windowless role from a windowed idle one
-- [ ] Verify `docs`→`plan` style hosted-role mappings are not misreported as windowless
+- [ ] `muxcode status` distinguishes a role with no consumer from an idle one that has one
+- [ ] Verify `docs`→`plan` style hosted-role mappings are not misreported as having no consumer
 
 ### Phase 5: Refuse to reload a windowless role
 
@@ -296,11 +348,13 @@ applied.
 ### Phase 6: Integration test
 
 - [ ] Create `scripts/test-windowless-routing.sh` (hermetic; scratch bus + tmux session + daemon)
-- [ ] Test: session without an analyze window → edits stabilize → **no** message accumulates, and a
-      suppression lifecycle event is written
+- [ ] Test: session with no consumer for analyze → edits stabilize → **no** message accumulates, one
+      refusal lifecycle event is written, and a `muxcode send analyze …` prints `NOT SENT` and exits 1
 - [ ] Test: session **with** an analyze window → message routes and is consumed (negative control —
       the guard cannot go inert)
-- [ ] Test: `diagnose` on a windowless role reports the windowless finding, not `receipt-gap`
+- [ ] Test: a windowless role with its own listener running → the send lands and is consumed
+      (negative control — a window is not the test)
+- [ ] Test: `diagnose` on a role with no consumer reports that finding, not `receipt-gap`
 - [ ] Test: `diagnose` on a windowed role holding un-receipted messages still reports `receipt-gap`
 - [ ] Test: reload a windowless role → fails fast with the error naming the absence, no reload marker
       written, no 12-second wait
@@ -330,9 +384,15 @@ consult it rather than `IsAgentAlive`.
 
 ## Status
 
-**Backlog — parked 2026-09-08 22:10 at 9/38, Phase 5 at 7/8.** Moved back from `drafts/` on the
-user's instruction: nothing moved since the afternoon, and Defects A (emit guard) and B (diagnose)
-plus Phase 5's CLI-road test are open. The record below is as it stood when parked.
+**Backlog — 9/46, Phase 5 at 7/8. Unparked 2026-11-15** on the user's instruction relayed by edit,
+with the decision that had been open under Technical approach recorded (refuse at `Send`, tested on
+"can anything consume this inbox") and the open criteria and Phases 1–4 and 6 rewritten to it — 38
+items became 46; none of the nine ticked items changed. Its line numbers and the Defect A and B
+mechanism date from 2026-09-08 and were not re-read against the tree at unparking; Phase 1 pins them.
+
+**Previously: parked 2026-09-08 22:10 at 9/38.** Moved back from `drafts/` on the user's
+instruction: nothing moved since the afternoon, and Defects A (emit guard) and B (diagnose) plus
+Phase 5's CLI-road test are open. The record below is as it stood when parked.
 
 **Previously: In Progress.** Filed 2026-09-03 from a live incident the same morning;
 **Defect C added 2026-09-08** from a second live incident on the reload path, with three more

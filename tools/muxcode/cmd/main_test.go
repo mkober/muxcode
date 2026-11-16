@@ -23,7 +23,12 @@ func TestMain(m *testing.M) {
 	os.Setenv("BUS_MEMORY_DIR", filepath.Join(dir, "memory"))
 	os.Setenv(bus.GlobalMemoryDirEnv, filepath.Join(dir, "global-memory"))
 
-	code := m.Run()
+	code := 0
+	if os.Getenv(orphanListenerEnv) == "1" {
+		Inbox([]string{"--poll", "--loop"})
+	} else {
+		code = m.Run()
+	}
 
 	os.RemoveAll(dir)
 	os.Exit(code)

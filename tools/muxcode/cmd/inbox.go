@@ -102,6 +102,13 @@ func readInbox(session, role, from string, peek bool) []bus.Message {
 	return bus.FilterLoopingSelfSends(msgs)
 }
 
+// listenerOrphaned reports whether a listener started under parent has lost
+// it: reparenting changes the parent pid — to launchd/init, or a subreaper on
+// Linux — and a listener already reparented when it started reads pid 1.
+func listenerOrphaned(parent, now int) bool {
+	return now != parent || now == 1
+}
+
 // inboxPoll watches the trigger file for changes and reads inbox when notified.
 // This replaces the send-keys wake-up mechanism — the agent starts this as a
 // background Bash tool and it returns when messages arrive, which Claude Code
@@ -110,27 +117,32 @@ func readInbox(session, role, from string, peek bool) []bus.Message {
 // The poll also checks the inbox directly on each tick to catch messages that
 // arrived before the poll started or without a trigger file update (e.g. from
 // hooks or direct Send() calls that predate the trigger mechanism).
+//
+// The polling marker claim is exclusive, and losing it is fatal: every tick
+// consumes destructively (readInbox with peek=false -> bus.Receive) and writes
+// an "acked" receipt. A second loop on the same role would race the first for
+// each message, and whichever won would print it to a pipe no agent runtime is
+// reading — the message gone, the receipt telling the daemon it was delivered,
+// checkPollHealth's receipt-gap backstop quiet. SetPolling takes the marker
+// over from any incumbent (newest-wins, see its doc), so a failed claim means
+// another listener started at the same instant and is now the one consumer.
+//
+// A listener ends, without consuming, on two conditions checked each tick:
+//   - its parent is gone (listenerOrphaned) — the Stop hook relaunch cycle
+//     left orphans reparented to launchd that acked messages into stdout
+//     nobody read: a run→edit request answered 3½ minutes late on 2026-09-08,
+//     a user-authorised deploy that never ran on 2026-09-10 (MUX-156);
+//   - its tmux session is gone, checked about every 30 s — listeners outlived
+//     their sessions by 15+ hours, and would consume a recreated session's
+//     messages.
 func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
-	// Claim the polling marker so Notify() skips send-keys for our role.
-	//
-	// The claim is exclusive, and losing it is fatal: every tick below consumes
-	// destructively (readInbox with peek=false -> bus.Receive) and writes an
-	// "acked" receipt. A second loop on the same role would race the first for
-	// each message, and whichever loop won would print it to a pipe that no
-	// agent runtime is reading — the message is gone from the inbox, the
-	// receipt tells the daemon it was delivered, and checkPollHealth's
-	// receipt-gap backstop stays quiet.
-	//
-	// SetPolling takes the marker over from any incumbent (see its doc for why
-	// newest-wins), so a failure here means we genuinely lost a race with
-	// another listener starting at the same instant — that one is now the
-	// single consumer and we must not add a second.
 	if !bus.SetPolling(session, role) {
 		fmt.Fprintf(os.Stderr,
 			"Another inbox listener claimed %s concurrently — exiting rather than double-consuming\n", role)
 		return
 	}
 	defer bus.ClearPolling(session, role)
+	parent := os.Getppid()
 
 	triggerPath := bus.TriggerNotifyPath(session, role)
 
@@ -149,15 +161,11 @@ func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
 		for elapsed := 0; elapsed < timeout; elapsed += pollInterval {
 			time.Sleep(time.Duration(pollInterval) * time.Second)
 
-			// Exit once the session this listener belongs to is gone.
-			//
-			// Without this a --loop listener outlives its own session forever:
-			// the tmux session ends, every agent in it is gone, and the process
-			// keeps polling a dead session's inbox. Observed in the wild —
-			// listeners still running 15+ hours after their session exited,
-			// reparented to launchd. They are not merely idle: if a session of
-			// the same name is ever recreated they would consume its messages
-			// into a pipe nobody reads.
+			if listenerOrphaned(parent, os.Getppid()) {
+				bus.LogLifecycle(session, "warn", "inbox", "listener-orphan-exit",
+					fmt.Sprintf("%s pid %d: parent %d gone, exiting without consuming", role, os.Getpid(), parent))
+				return
+			}
 			ticks++
 			if ticks%sessionCheckTicks == 0 && !bus.TmuxHasSession(session) {
 				return

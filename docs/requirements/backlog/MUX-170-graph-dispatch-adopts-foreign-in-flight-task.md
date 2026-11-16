@@ -65,27 +65,67 @@ ownership check alone would **not** have prevented it. The two should ship toget
   dedup keying on target rather than sender is why a foreign task could suppress the dispatch at
   all. Fixing MUX-155 narrows the trigger; this spec is about what the executor does when it fires.
 
+### Findings after MUX-155 shipped (2026-11-14)
+
+Re-read by plan against `06a72ed` (MUX-155's commit) on edit's request. The park reason recorded for
+this spec — "ships together with MUX-155" — has lapsed. Two decisions now hold it instead.
+
+| Spec says | Tree at `06a72ed` |
+|-----------|-------------------|
+| A foreign in-flight task (a different `From`) suppresses the dispatch, and the node adopts it | No longer reachable. `HasInFlightTaskForRole` and `FindInFlightTask` match the sender (`bus/dedup.go`), so another sender's task neither suppresses the daemon's dispatch (`bus/inbox.go`, `Send`'s guard) nor is found for adoption (`dispatchNode`, `bus/graph_exec.go:1262–1266`) |
+| Criterion 1: such a dispatch stays `ready`, deferred behind the foreign task | The opposite shipped: the dispatch is **delivered** beside the foreign request, pinned by `TestExecDispatchIgnoresForeignInFlightTask` ("the graph's build must be delivered despite edit's task"). On the 2026-09-09 shape the test agent would now hold edit's `request:test` and the run's `request:test` together |
+| "Rejected — bypass the dedup": two same-action requests in flight "would both run the suite; the dedup is right to refuse" | That is now the behaviour for requests from different senders. MUX-155 chose it for `notify`; it was not weighed for `test` or `build` |
+| The second case (a worker's `--track` send reattaching to edit's task, 2026-09-28) | Fixed by MUX-155: the CLI's pre-send check matches the sender |
+| Still open: the same `From`, a different payload | Reachable. Every graph dispatch is sent as `daemon`, so a second run's node — or a loop re-entry carrying a different message — to the same role and action is suppressed by the first's in-flight task and adopts it (`FindInFlightTask(session, n.Role, m.From, n.Action)` compares no payload, run or node). The node then completes on a reply to a request it did not send |
+| No lifecycle row on suppression or adoption | Still true for the adoption branch. `graph-dispatch-deferred` now exists (`deferDispatch`, `bus/graph_exec.go:1409`) for a reloading role and a busy worker, and is the row this spec asked for |
+| Ownership read from the payload | `Message.GraphRun` and `GraphNode` (`bus/message.go:43–44`) now carry a dispatch's run and node, which this spec predates |
+
+### Decisions — the user's, recorded 2026-11-15
+
+Answered by the user in conversation and relayed by edit (`1794787239-edit-1aacf9a4`). The criteria
+and phases below were rewritten to them the same day.
+
+| # | Decision | Chosen |
+|---|----------|--------|
+| 1 | A graph dispatch meeting **another sender's** in-flight request for the same role and action | **(a) Keep what MUX-155 shipped.** The dispatch is delivered beside the other sender's request; the agent may run the suite twice. This spec's foreign-`From` deferral and the 2026-09-09 replay are struck as overtaken by MUX-155. Option (b), restoring the deferral for graph dispatches only, was not taken |
+| 2 | What makes an in-flight `daemon` task the node's own | **Run id and node id** (`Message.GraphRun` / `GraphNode`), not payload equality. A `daemon` task from a different run or a different node is foreign: the node stays `ready`, one `graph-dispatch-deferred` row per blocking task, bounded by the node's timeout |
+
+How the check reads ownership — decided by the user 2026-11-16 (relayed by edit,
+`1794844857-edit-5f52a782`): `Task` (`bus/task.go`) carries no run or node field today — only the
+message does (`bus/message.go:43–44`) — so **the task record gains `GraphRun` and `GraphNode`, set at
+dispatch**, and ownership is a direct compare of the two fields. Reading the blocking task's message
+instead was the alternative and was not taken. A task with neither field set (any non-graph send, or
+a task written before the fields existed) is foreign to every node.
+
 ### Scope boundary
 
-Adoption of the daemon's **own** duplicate stays — loop re-entry and the retry race are real and the
-mechanism is right for them. The send-side dedup is not changed here (MUX-155). A foreign task is
-neither adopted nor fatal: the node waits.
+Adoption of the node's **own** duplicate stays — the same run and node, a loop re-entry or a retry
+racing the prior pass. The send-side dedup is not changed here (MUX-155), and neither is what happens
+when the in-flight request is another sender's (Decision 1: delivered beside it). A `daemon` task
+from another run or node is neither adopted nor fatal: the node waits.
 
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A dispatch suppressed by a **foreign** in-flight task (a different `From`, or the same `From` with a different payload) is never adopted: the node stays `ready`, a `graph-dispatch-deferred` row names the blocking task once, and the node dispatches on a later tick once that task clears
-- [ ] The daemon's own identical earlier dispatch is still adopted (negative control — loop re-entry and retry races keep working)
+Rewritten 2026-11-15 to Decisions 1 and 2. Struck, not carried: ~~a dispatch suppressed by a task
+with a different `From` is deferred~~ and ~~the 2026-09-09 shape replayed (a foreign `request:test`
+in flight, the run's test node defers)~~ — both overtaken by MUX-155, which delivers the dispatch
+beside the other sender's request.
+
+- [ ] A dispatch suppressed by an in-flight `daemon` task from a **different run or node** (`GraphRun` / `GraphNode`) is never adopted: the node stays `ready`, a `graph-dispatch-deferred` row names the blocking task once, and the node dispatches on a later tick once that task clears
+- [ ] The node's own earlier dispatch — the same run and node — is still adopted (negative control — loop re-entry and retry races keep working)
 - [ ] The wait is bounded by the node's timeout; a node that times out while deferred fails with a reason naming the blocking task — never `no live edge` after silence
-- [ ] The 2026-09-09 shape replayed: a foreign `request:test` in flight, then a `build-test-review` run — the test node defers with the row and delivers after the foreign task completes or expires
+- [ ] Two runs replayed: run A's `test` dispatch in flight, then run B reaches its own `test` node — B defers with the row, never completes on A's reply, and delivers after A's task completes or expires
+- [ ] Another sender's in-flight request for the same role and action does **not** defer the dispatch (negative control — Decision 1; `TestExecDispatchIgnoresForeignInFlightTask` keeps passing unchanged)
 - [ ] Docs: `CLAUDE.md` graph bullet (one clause), `docs/architecture.md` graph section, `docs/agent-bus.md` graph reference
 
 ### Technical approach
 
 **Primary — ownership before adoption, deferral otherwise.** In `dispatchNode`, adopt only when the
-found task's `From` is the executor's own sender identity and its payload equals the interpolated
-message; anything else is foreign. A foreign task leaves the node `ready` and logs
+found task belongs to this run and this node (Decision 2); a `daemon` task carrying another run or
+node id, or none, is foreign. Payload is not compared — a loop re-entry may legitimately carry a
+different message for the same node. A foreign task leaves the node `ready` and logs
 `graph-dispatch-deferred` (`<node>: waiting for in-flight <id> <from>→<to>:<action>`) exactly once
 per blocking task id; later ticks retry the send, and the node's timeout clock still runs so the
 wait is bounded — on expiry the failure reason carries the task id.
@@ -95,7 +135,9 @@ clear or expire within its own timeout, and a bounded wait costs nothing.
 
 **Rejected — bypass the dedup for graph dispatches (`SendForce`).** Two identical `request:test`
 messages in flight would both run the suite; the dedup is right to refuse, the executor is wrong to
-claim what it refused.
+claim what it refused. *This still holds between two `daemon` dispatches. Between different senders
+the user accepted the double run (Decision 1) — that is MUX-155's behaviour, not a bypass added
+here.*
 
 ### Key files
 
@@ -103,7 +145,7 @@ claim what it refused.
 |------|---------|
 | `tools/muxcode/bus/graph_exec.go` | `dispatchNode` adoption (874–902); the deferred state and its row |
 | `tools/muxcode/bus/dedup.go` | `HasInFlightTaskForRole` (217), `FindInFlightTask` (235) — the `(to, action)` key |
-| `tools/muxcode/bus/task.go` | `Task.From` / payload, what the ownership check reads |
+| `tools/muxcode/bus/task.go` | `Task` gains `GraphRun` / `GraphNode`, set at dispatch — what the ownership check compares |
 | `tools/muxcode/bus/phase_check_test.go`, `tools/muxcode/bus/graph_exec_test.go` | executor tests |
 | `CLAUDE.md`, `docs/architecture.md`, `docs/agent-bus.md` | graph bullet, section, reference |
 
@@ -111,9 +153,9 @@ claim what it refused.
 
 ### Phase 1: Ownership, deferral, the row
 
-- [ ] `dispatchNode`: adopt only a task with the executor's own `From` and an equal payload; otherwise leave the node `ready` and log `graph-dispatch-deferred` once per blocking task id
+- [ ] `dispatchNode`: adopt only an in-flight `daemon` task whose run id and node id are this node's (Decision 2 — the `Task` record gains `GraphRun` and `GraphNode`, set where the dispatch's task is created, and the check is a direct compare of the two; a task with neither set is foreign); a task from another run or node leaves the node `ready` and logs `graph-dispatch-deferred` once per blocking task id
 - [ ] A deferred node that reaches its timeout fails with a reason naming the blocking task
-- [ ] Tests: foreign task → deferred, no adoption, dispatches after the task completes; the daemon's own duplicate → adopted (negative control); the row is emitted exactly once across repeated ticks
+- [ ] Tests: another run's task → deferred, no adoption, dispatches after the task completes; another node of the same run → deferred; the node's own duplicate → adopted (negative control); another sender's task → delivered beside it, no deferral (negative control, Decision 1); the row is emitted exactly once across repeated ticks
 
 ### Phase 2: Docs
 
@@ -121,8 +163,9 @@ claim what it refused.
 
 ### Phase 3: Integration test
 
-- [ ] Hermetic section (scratch `BUS_SESSION`, `build-test-review` with stubbed agents): seed a foreign tracked `request:test` to test, start the run, assert the test node is `ready` with the `graph-dispatch-deferred` row and no `daemon → test` row; mark the foreign task responded → the dispatch lands on the next tick
-- [ ] Negative control: no foreign task → the test node dispatches on the first tick with no deferred row
+- [ ] Hermetic section (scratch `BUS_SESSION`, two `build-test-review` runs with stubbed agents): hold run A's `test` dispatch unanswered, bring run B to its `test` node, assert B's node is `ready` with the `graph-dispatch-deferred` row naming A's task and no second `daemon → test` row; answer A's task → A's node completes, B's dispatch lands on the next tick and B completes only on its own reply
+- [ ] Negative control: no other run → the test node dispatches on the first tick with no deferred row
+- [ ] Negative control (Decision 1): an in-flight `request:test` from edit → the run's dispatch is delivered beside it with no deferred row
 - [ ] Run the section and record the counts in this spec
 
 ## Notes
@@ -140,4 +183,4 @@ claim what it refused.
 
 ## Status
 
-**Backlog** — 0/12. Filed 2026-09-09 16:02.
+**Backlog** — 0/14. Filed 2026-09-09 16:02. Parked 2026-11-13; unparked 2026-11-15 once the user's Decisions 1 and 2 were recorded and the criteria and phases rewritten to them (12 items became 14: one criterion struck, the Decision 1 control added as a criterion and an integration step, a two-run replay in place of the 2026-09-09 one).

@@ -3,7 +3,7 @@
 **Tracking:** [mkober/muxcode#137](https://github.com/mkober/muxcode/issues/137)
 
 **Provenance:** filed 2026-09-11 by plan on the user's request relayed by commit (`1789143390`), from a
-credential leak plan caused while diagnosing [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md).
+credential leak plan caused while diagnosing [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md).
 Verified in code before filing.
 
 `CLAUDE.md` states that `api`, `run` and `watch` output is redacted before it enters the conversation.
@@ -213,7 +213,7 @@ scrubber should have caught it and found the gate unwired. Recorded that way bec
 `ps eww … | grep -E '^(AGENT_ROLE|BUS_SESSION)='` idiom now on MUX-156 is a workaround for a missing
 control, not a fix.
 
-**Related:** [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (where the leak is
+**Related:** [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (where the leak is
 recorded); [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) (a rule with no enforcement — the
 same shape, one road up).
 

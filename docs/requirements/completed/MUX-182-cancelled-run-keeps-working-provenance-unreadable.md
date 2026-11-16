@@ -227,7 +227,7 @@ orphan's edits are already in the shared checkout. Insufficient on its own for t
    executor dispatches set those), but `SpawnEntry` maps `SpawnRole` → `RunID`, so a cancel *can* find
    them: expire in-flight tasks and drain pending rows whose `From` is one of the run's spawn roles.
 2. **Descendants may survive `kill-window`.** It delivers SIGHUP; a detached child (`nohup`, `setsid`,
-   the [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) orphan listener
+   the [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) orphan listener
    shape) is not guaranteed dead. **Unverified** — which is why Phase 6 proves death by process absence.
 3. **Ordering is safe today.** `CancelGraphRun` flips the run to `canceled` before touching nodes, and
    `replaceLostWorkers` runs only from the executor over in-flight runs, so a stopped worker is not
