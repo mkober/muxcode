@@ -83,8 +83,20 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 | The reply's task is already answered (a duplicate reply) | `bus.Send` → `ErrReplySuppressed` — the reply already recorded stands | `Sent response:…`, exit 0 |
 | The message is addressed to its own sender — other than the launch-time `startup` request, or a response carrying `--reply-to`, which is recorded as a completion without delivery | `bus.Send` → `ErrSelfSendDropped` | `nil`, reported as sent |
 | Nothing can read the addressed role's inbox (MUX-145; any message type) | `bus.Send` → `ErrNoConsumer` (`refuseWithoutConsumer`, `bus/consumer.go`) | Written to an inbox nobody read |
+| A **response** repeats the last response delivered on the same `(from, to, action)` within the window (MUX-175) | `bus.Send` → `ErrResponseSuppressed` (`brakeRepeatedResponse`, `bus/response_brake.go`); a `response-suppressed` lifecycle row; the message ends "a response with nothing new needs no reply" | Delivered — two agents could acknowledge each other indefinitely |
 
 Each request road's message ends "Re-send with --force to deliver anyway". A script that sends a deliberate duplicate must expect exit 1.
+
+**The response brake (MUX-175).** Two agents that each answer the other's acknowledgement never stop on their own — on 2026-09-10 build and test traded `Acknowledged.` every 4–5 s until a person told them to stop, and the loop detector only alerts. So a response is refused when its text matches the last one delivered on the same sender, recipient and action:
+
+| Rule | Detail |
+|------|--------|
+| What matches | Exact equality after folding case, whitespace and punctuation (each punctuation or symbol character becomes a space). Numbers and ids stay significant: `10/23` and `11/23` differ. There is no count — the first repeat is refused |
+| Compared against | The last response **delivered** on that `(from, to, action)`, and only if it was delivered within `MUXCODE_RESPONSE_SUPPRESS_WINDOW` seconds (default 300; `0` turns the brake off). A refused attempt neither replaces it nor restarts the window, so a pair that keeps retrying is delivered again once the window has passed |
+| Never braked | A `request`. A response whose `--reply-to` names a request still awaiting its answer — an in-flight tracked task, or a request with no response recorded, such as a graph spawn worker's seed. `--reply-to` naming nothing, a response, or a request already answered gives no exemption |
+| What the sender sees | `NOT SENT`, exit 1. `--force` does not deliver it. Nothing reaches the recipient's inbox or the auto-CC copy to edit |
+| What it does not stop | A loop whose text changes every round (a counter, a timestamp, a fresh id) is never an exact match. `DetectMessageLoop` still alerts on the frequency pattern |
+| Worth knowing | The key is the pair and action, not the request: the same short status line sent twice in five minutes, with no open request behind it, is refused the second time. Say something new, or reply to the request |
 
 **No consumer, no send (MUX-145).** A message is refused when nothing can read the inbox it would land in — the inbox of `WindowForRole(to)`, so a hosted role is judged on its host. `RoleHasConsumer` (`bus/consumer.go`) answers; any one of these is a consumer:
 

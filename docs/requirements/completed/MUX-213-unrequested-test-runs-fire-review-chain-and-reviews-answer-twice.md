@@ -298,7 +298,7 @@ The stub cannot show the model deciding to rerun; the live transcript shows it e
 **Relation to the backlog.** This is [MUX-009](./MUX-009-response-echo-chain-retrigger.md)'s
 mechanism — a response echo re-triggering the chain — seen from the Codex hook road, and
 [MUX-127](../backlog/MUX-127-review-completion-routing.md)'s "loops on success" junction.
-[MUX-175](../backlog/MUX-175-response-ack-ping-pong-has-no-brake.md) is not involved: no
+[MUX-175](./MUX-175-response-ack-ping-pong-has-no-brake.md) is not involved: no
 acknowledgements were exchanged.
 
 **Candidate fix points for Phase 2**, one per link — the choice among them, and the requester-reply
@@ -444,7 +444,7 @@ no section drove a graph test node. It closes the second half of the fifth accep
   and loops on success; the same junction
 - [MUX-009](./MUX-009-response-echo-chain-retrigger.md) — a response echo re-triggers the chain;
   possibly the same mechanism from the other side
-- [MUX-175](../backlog/MUX-175-response-ack-ping-pong-has-no-brake.md) — two agents acknowledging each other
+- [MUX-175](./MUX-175-response-ack-ping-pong-has-no-brake.md) — two agents acknowledging each other
   with no brake
 - [MUX-172](../completed/MUX-172-plan-verify-gate-hardcodes-success.md) — why each of these chains also
   reaches plan

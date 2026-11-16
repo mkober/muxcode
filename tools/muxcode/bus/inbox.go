@@ -69,8 +69,9 @@ func shouldAutoCC(from string) bool {
 // Messages from build, test, and review are automatically CC'd to edit.
 // Nothing undelivered returns nil: a duplicate-suppressed request returns
 // ErrSendSuppressed, a reply to an answered task ErrReplySuppressed, an
-// accidental self-send ErrSelfSendDropped, provider chrome ErrSendChrome and
-// a message nothing can read ErrNoConsumer (RoleHasConsumer, MUX-145).
+// accidental self-send ErrSelfSendDropped, provider chrome ErrSendChrome, a
+// message nothing can read ErrNoConsumer (RoleHasConsumer, MUX-145) and a
+// response repeating the last one on its pair ErrResponseSuppressed (MUX-175).
 func Send(session string, m Message) error {
 	return sendMessage(session, m, true, false, false)
 }
@@ -379,12 +380,12 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 		}
 	}
 
-	if m.ReplyTo == "" {
-		return deliverMessage(session, m, line, inboxRole, autoCC)
+	deliver := func() error { return deliverMessage(session, m, line, inboxRole, autoCC) }
+	if m.ReplyTo != "" {
+		record := deliver
+		deliver = func() error { return acceptReply(session, m, record) }
 	}
-	return acceptReply(session, m, func() error {
-		return deliverMessage(session, m, line, inboxRole, autoCC)
-	})
+	return withResponseBrake(session, m, deliver)
 }
 
 // deliverMessage writes an accepted message everywhere it goes: the recipient
