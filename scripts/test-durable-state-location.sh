@@ -40,6 +40,7 @@
 # Usage: bash scripts/test-durable-state-location.sh
 #        MUXCODE_TEST_KEEP=1 bash scripts/test-durable-state-location.sh   # keep WORK
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 for tool in go tmux git; do
   command -v "$tool" >/dev/null 2>&1 || { echo "SKIP: $tool is required"; exit 2; }

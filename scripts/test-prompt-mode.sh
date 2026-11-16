@@ -22,6 +22,7 @@
 # chord-receiver checks could not run (python3 absent), so the run is
 # INCOMPLETE rather than green.
 set -euo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 PASS=0
 FAIL=0

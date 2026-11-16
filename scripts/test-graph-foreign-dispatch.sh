@@ -34,6 +34,7 @@
 # Usage: bash scripts/test-graph-foreign-dispatch.sh
 #        MUXCODE_TEST_KEEP=1 bash scripts/test-graph-foreign-dispatch.sh   # keep WORK
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 FLOOR=24
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

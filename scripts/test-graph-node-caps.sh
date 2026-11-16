@@ -28,6 +28,7 @@
 #
 # Usage: bash scripts/test-graph-node-caps.sh
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 FLOOR=29
 DOCS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/agent-bus.md"

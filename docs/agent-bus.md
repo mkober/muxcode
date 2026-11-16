@@ -82,8 +82,23 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 | Existing responses already answer this exact request (the answer is printed) | The CLI's existing-answer check | The answer printed, exit 0 |
 | The reply's task is already answered (a duplicate reply) | `bus.Send` → `ErrReplySuppressed` — the reply already recorded stands | `Sent response:…`, exit 0 |
 | The message is addressed to its own sender — other than the launch-time `startup` request, or a response carrying `--reply-to`, which is recorded as a completion without delivery | `bus.Send` → `ErrSelfSendDropped` | `nil`, reported as sent |
+| Nothing can read the addressed role's inbox (MUX-145; any message type) | `bus.Send` → `ErrNoConsumer` (`refuseWithoutConsumer`, `bus/consumer.go`) | Written to an inbox nobody read |
 
 Each request road's message ends "Re-send with --force to deliver anyway". A script that sends a deliberate duplicate must expect exit 1.
+
+**No consumer, no send (MUX-145).** A message is refused when nothing can read the inbox it would land in — the inbox of `WindowForRole(to)`, so a hosted role is judged on its host. `RoleHasConsumer` (`bus/consumer.go`) answers; any one of these is a consumer:
+
+| Consumer | Read from |
+|----------|-----------|
+| A window for the role | `TmuxListWindowNames` + `RoleHasWindow` |
+| A live inbox listener — `--poll` or `--wait` | `IsPolling`, `IsWaiting` |
+| A running headless agent | `IsHarnessActive` — the harness's pid marker. This is what covers the `prompt` role: a prompt agent that is merely enabled, not running, is not a consumer |
+| A window list that cannot be read, or is empty — no tmux server, or no session yet, as at launch before the first window exists | Indeterminate counts as a consumer, so a tmux blip never refuses a session's sends |
+| A spawn worker role | Always — its seed is sent before its window exists |
+
+A mode role (`research`, `auto`) gets no exception: one never cycled to has no hold window and no listener, so a send to it is refused. Mode cycling swaps whole windows and keeps the hold window by name, so from the first cycle on the role has a window — shown or held — and receives normally. Nothing in muxcode sends to a mode role before its first cycle (its `startup` request is sent from the agent launch inside the hold window that cycling creates); only an explicit earlier send is refused, where before it queued until the cycle.
+
+A window is not the test: a role with no window whose own listener or headless agent is running receives normally. A self-send (the startup bootstrap) is never refused. The CLI prints `NOT SENT — … has no window, inbox listener or headless agent …; launch the role or stop routing to it` and exits 1; `--force` does not deliver it. The refusal writes one `send-no-consumer` lifecycle row (warn, source `bus`) and one `[send] REFUSED …` stderr line per role per episode — a `no-consumer-<role>.marker` in the bus directory is created by the first refusal and removed by the first send that finds a consumer — because the daemon's analyze route is refused on every edit-stabilization cycle. Every refusal still returns the error to its caller, so each `muxcode send` reports `NOT SENT`; the daemon's route adds no line of its own. `MUXCODE_CONSUMER_GUARD=0` turns the refusal off ([Configuration](configuration.md)).
 
 A delivered message still prints `Sent …` and exits 0, and `--wait` on the sender's own in-flight request still reattaches rather than failing.
 
@@ -599,6 +614,7 @@ muxcode status [--json]
 - Default: human-readable table with role, state, inbox count, and last activity
 - `--json` — output as JSON array for programmatic use
 - STATE: `busy` (lock file exists) or `idle`
+- HEALTH (`health` in `--json`): `alive`, `dead`, `stopped`, `excluded` (health checks do not apply — a reload in progress, the webhook role) or `no-consumer` — nothing can read the role's inbox: no window, no inbox listener, no running headless agent (`RoleHasConsumer`, MUX-145). `excluded` wins over `no-consumer`, which wins over the rest. A hosted role is judged on its host's window, so `docs` is not `no-consumer` while plan has a window and `pr-read` is while commit has none. Sends to a `no-consumer` role are [refused](#muxcode-send); `idle` beside it means only that no lock file exists. The example below predates the PROVIDER and HEALTH columns
 - LAST ACTIVITY: timestamp + direction arrow (← received, → sent) + peer:action from log.jsonl
 - Roles with no activity show `—`
 

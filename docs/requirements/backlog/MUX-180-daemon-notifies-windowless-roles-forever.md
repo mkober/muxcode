@@ -64,7 +64,7 @@ or not.** So "has no window" is not the fault. The fault is an inbox **nothing c
 |---|----------|--------|
 | 1 | What an inbox does at its cap | **Cap 50 per role.** Everything up to 50 is kept and one alert is raised on reaching it; past it a new send is refused with `NOT SENT`, exit 1, so the sender is told. Nothing already queued is dropped, and the queue is delivered when a consumer appears |
 | 2 | Whether the workflow routes to such a role | **No.** The workflow does not transition (`analyze-route` → `analyzing`, for example) to a role with no consumer; the transition is skipped and logged once per role |
-| 3 | How this divides with [MUX-145](./MUX-145-messages-routed-to-windowless-role.md) | **Refuse at `Send`, which is MUX-145's.** The test is "can anything consume this role's inbox" — no window **and** no listener **and** no headless agent running — never "does it have a window"; a windowless agent that reads its own inbox receives normally. **MUX-145 owns the `Send`-time refusal; this spec owns notify suppression, the cap and workflow routing** |
+| 3 | How this divides with [MUX-145](../completed/MUX-145-messages-routed-to-windowless-role.md) | **Refuse at `Send`, which is MUX-145's.** The test is "can anything consume this role's inbox" — no window **and** no listener **and** no headless agent running — never "does it have a window"; a windowless agent that reads its own inbox receives normally. **MUX-145 owns the `Send`-time refusal; this spec owns notify suppression, the cap and workflow routing** |
 
 **Kept as two specs, not merged** — proposed by plan where Decision 3 left it open, **confirmed by
 the user 2026-11-16** (relayed by edit, `1794844857-edit-5f52a782`). MUX-145 is 9/38 with a
@@ -83,7 +83,7 @@ whatever the reason, which is also why a healthy role never meets it.
 
 In scope: notifying a role nothing can consume for, routing the workflow to it, and an inbox that
 grows without bound. Not in scope: refusing the send itself
-([MUX-145](./MUX-145-messages-routed-to-windowless-role.md), Decision 3); whether `analyze` *should*
+([MUX-145](../completed/MUX-145-messages-routed-to-windowless-role.md), Decision 3); whether `analyze` *should*
 be launched in this session (a configuration choice); removing hosted-window modes (the user's
 planned change, not specified here); and the `injection-refused` guard itself — it is working
 correctly, refusing an injection it cannot verify.
@@ -183,7 +183,7 @@ The three decisions it was parked on — the cap's overflow behaviour, workflow 
 division with MUX-145 — were answered by the user on 2026-11-15 and are recorded under
 [Decisions](#decisions--the-users-recorded-2026-11-15). **Unparked 2026-11-15.**
 
-**Related:** [MUX-145](./MUX-145-messages-routed-to-windowless-role.md) (the `Send`-time refusal and
+**Related:** [MUX-145](../completed/MUX-145-messages-routed-to-windowless-role.md) (the `Send`-time refusal and
 the diagnose and reload halves of the same condition); [MUX-156](../completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (the other way a
 role's inbox stops being consumed — there a rogue consumer, here no consumer at all);
 [MUX-164](../completed/MUX-164-codex-trust-prompt-reads-idle-wakeup-into-shell.md) (the guard whose

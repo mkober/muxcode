@@ -20,6 +20,7 @@
 #
 # Usage: bash scripts/test-codex-trust-prompt.sh
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 PASS=0
 FAIL=0

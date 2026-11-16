@@ -24,6 +24,9 @@ func setupInjectMock(t *testing.T, m *injectMock) {
 	origDelay := injectVerifyDelay
 	injectVerifyDelay = 0 // no real sleeps in tests
 	tmuxOutputRunner = func(args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "list-windows" {
+			return "edit\nreview", nil // the review pane these tests inject into, read by Send's consumer check (MUX-145)
+		}
 		i := m.capIdx
 		m.capIdx++
 		if i < len(m.captErr) && m.captErr[i] {

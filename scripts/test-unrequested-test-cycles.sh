@@ -59,6 +59,7 @@
 # Usage: bash scripts/test-unrequested-test-cycles.sh [--live]
 #   MUXCODE_UNREQUESTED_BIN=<path> tests a prebuilt binary instead of the tree.
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 PASS=0
 FAIL=0
