@@ -268,7 +268,7 @@ rather than failing — are untouched.
   this occurrence ran into
 - [MUX-215](../backlog/MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) — the run it
   happened in
-- [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) — another dispatch losing
+- [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) — another dispatch losing
   its task to bookkeeping
 
 ## Status

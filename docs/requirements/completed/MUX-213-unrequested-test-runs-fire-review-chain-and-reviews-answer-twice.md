@@ -73,7 +73,7 @@ Candidates, none verified:
   about finished work.
 - Each cycle occupies the test and review agents, so a graph node's real dispatch to either waits or
   is suppressed as a duplicate ([MUX-155](./MUX-155-send-dedup-keys-on-target-not-sender.md),
-  [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)).
+  [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)).
 
 ## Requirements
 

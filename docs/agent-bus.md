@@ -1921,6 +1921,23 @@ build→test→review rounds — is a `spawn`. See
 [Architecture](architecture.md#node-time-limits) for the mechanism and the 2026-09-09 incident
 ([MUX-162](requirements/completed/MUX-162-pr-review-fix-node-600s-send-cap.md)).
 
+#### A node waiting on another run's request
+
+Two graph requests to the same role and action cannot be in flight at once — every dispatch is sent
+as `daemon`, and the [in-flight dedup](#muxcode-send) refuses the second. A `send` node whose
+dispatch is refused that way stays `ready` — `graph status` shows it as an ordinary ready node; the
+reason is in the lifecycle log and the node's `deferred_on` field — and it does not borrow the other
+request's reply (MUX-170).
+
+| Situation | What you see |
+|-----------|--------------|
+| Another run, or another node of the same run, has the request open | `graph-dispatch-deferred`: `<node>: waiting for in-flight <id> daemon→<role>:<action>`, once per blocking request. The node dispatches on the tick after the blocker is answered or expires |
+| The wait outlasts the node's time limit (above), counted from when the hold began | The node fails: `timed out after <n>s deferred behind in-flight <id> …, another run's or node's request` — also when the blocker clears just after the deadline |
+| The open request is this node's own (loop re-entry, retry) | No row; the node adopts it and completes on its reply |
+| The open request is another agent's, not a graph's | No wait: the dispatch is delivered beside it, and the role may do the work twice |
+
+See [Architecture](architecture.md#graph-orchestration-control-plane) for the mechanism.
+
 #### Branch-derived intent
 
 `muxcode graph run <template>` with **no intent** derives one from the branch. A branch whose

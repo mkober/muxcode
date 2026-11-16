@@ -375,6 +375,27 @@ disk, so the first tick after a daemon restart **is** the resume scan.
 flag prevents a completion from being double-routed across a restart. There is no in-memory
 scheduler to rebuild.
 
+**A suppressed dispatch is adopted only by its owner (MUX-170).** Every graph dispatch is sent as
+`daemon`, so the bus's in-flight dedup — keyed on `(from, to, action)` — suppresses a node's send
+whenever *any* graph request to the same role and action is still open. `dispatchNode` used to adopt
+whatever the lookup found, and a node then completed on the reply to a request another run had sent.
+A task now records which node dispatched it (`Task.GraphRun` / `GraphNode`, copied from the message by
+`CreateTask`), and adoption asks `Task.ownedByNode`:
+
+| The suppressing request | What the node does | Lifecycle row |
+|-------------------------|--------------------|---------------|
+| In flight, this run and this node (a loop re-entry, a retry racing the prior pass) | Adopts it — the task is keyed to the queued message's id, the one the agent answers | — |
+| In flight, another run or another node, or a task carrying neither field | Stays `ready` and retries each tick (`deferBehindForeignDispatch`); dispatches its own request once the blocker clears | `graph-dispatch-deferred` — `<node>: waiting for in-flight <id> <from>→<to>:<action>`, once per blocking task |
+| Queued with no in-flight task | Adopted whichever node queued it: nobody else waits on that id, and it asks the identical question (`110-pr-merge`'s `recheck-comments` repeats `read-comments`' message) | — |
+| Another sender's request to the same role and action | Not a suppression at all since [MUX-155](requirements/completed/MUX-155-send-dedup-keys-on-target-not-sender.md): the dispatch is delivered beside it | — |
+
+The wait is bounded by the node's own timeout (`nodeTimeoutSecs`), counted from the start of the hold
+(`GraphNodeStatus.DeferredSince`; a change of blocker does not restart it). `foreignHoldExpired` runs
+**before any send**, so a blocker that clears after the deadline fails the node rather than releasing
+it into fresh work; the failure reads `timed out after <n>s deferred behind <blocker>, another run's
+or node's request`. A hold for a reloading role (below, MUX-217) shares the row and the `ready` state
+but carries no deadline.
+
 **Authority gates — what actually holds (MUX-144).** The *topology* rule holds: no graph node
 may fire a git mutation or a tracker write without an upstream `wait_human` gate, and
 `graph validate` rejects such a definition outright (`validateGates`). The tracker writes are

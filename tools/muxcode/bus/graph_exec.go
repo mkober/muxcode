@@ -1226,12 +1226,19 @@ func unverifiedHoldReleased(session string, run *GraphRun, nodeID string) bool {
 
 // dispatchNode fires a ready node's work and moves it to running/waiting.
 //
-// A suppressed send means the identical request is already queued or in
-// flight (loop re-entry or a retry racing the prior pass), so the node
-// adopts the existing work instead of failing. The adopted task must be
-// keyed to the QUEUED duplicate's message ID, not the unsent one — the
-// agent answers the queued id, and a task keyed to the unsent id sits
-// in-flight forever (PR #38 Copilot finding).
+// A suppressed send means a graph request to the same role and action is
+// already queued or in flight. When it is this node's own — the same run and
+// node, a loop re-entry or a retry racing the prior pass — the node adopts the
+// existing work instead of failing. The adopted task must be keyed to the
+// QUEUED duplicate's message ID, not the unsent one — the agent answers the
+// queued id, and a task keyed to the unsent id sits in-flight forever (PR #38
+// Copilot finding). Every graph dispatch is sent as the daemon, so a duplicate
+// from another run or node is not this node's work: adopting it completed the
+// node on a reply to a request it never sent (MUX-170). Such a node is held
+// instead (deferBehindForeignDispatch). A queued duplicate with no in-flight
+// task is still adopted whichever node queued it: nobody else waits on its id,
+// and it asks the identical question — 110-pr-merge's recheck-comments repeats
+// read-comments' message.
 //
 // A spawn or map node whose run worker another node still holds, or a send node
 // whose role is being reloaded (roleReloading), stays ready (deferDispatch) and
@@ -1251,6 +1258,9 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 	switch n.Type {
 	case NodeSend:
+		if foreignHoldExpired(session, run, n, st) {
+			return
+		}
 		if roleReloading(session, n.Role) {
 			deferDispatch(session, run, n, st, fmt.Errorf("%w: %s", errRoleReloading, n.Role))
 			return
@@ -1260,8 +1270,12 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		m.GraphRun, m.GraphNode = run.ID, n.ID
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
-				taskID := m.ID // suppressed = duplicate exists; adopt it — see doc comment
+				taskID := m.ID // suppressed = duplicate exists; adopt it only if it is this node's — see doc comment
 				if t, found := FindInFlightTask(session, n.Role, m.From, n.Action); found {
+					if !t.ownedByNode(run.ID, n.ID) {
+						deferBehindForeignDispatch(session, run, n, st, t.ID, t.From, t.To, t.Action)
+						return
+					}
 					taskID = t.ID
 				} else if pm, found := FindPendingInboxRequest(session, m.To, m.From, m.Action, m.Payload); found {
 					adopted := m // keyed to the queued duplicate's id — see doc comment
@@ -1399,7 +1413,9 @@ func deferDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, 
 	if st.DeferredOn == reason {
 		return
 	}
-	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) { s.DeferredOn = reason })
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.DeferredOn, s.DeferredSince = reason, st.DeferredSince
+	})
 	st.DeferredOn = reason
 	if errors.Is(err, errSpawnCap) {
 		LogLifecycle(session, "warn", "daemon", "spawn-cap-refused", fmt.Sprintf("%s: %s — %s", run.ID, n.ID, reason))
@@ -1410,6 +1426,46 @@ func deferDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, 
 	}
 	LogLifecycle(session, "info", "daemon", event, fmt.Sprintf("%s: %s waits — %s", run.ID, n.ID, reason))
 }
+
+// deferBehindForeignDispatch holds a send node whose dispatch the bus
+// suppressed for another run's or node's request (MUX-170): the node stays
+// ready and retries each tick, with one graph-dispatch-deferred row per
+// blocking request. The hold's start is stamped when a foreign hold begins —
+// a change of blocker keeps it, a reload hold before it does not count — and
+// foreignHoldExpired bounds the wait by the node's timeout.
+func deferBehindForeignDispatch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, id, from, to, action string) {
+	if _, held := foreignHoldBlocker(st.DeferredOn); !held {
+		st.DeferredSince = time.Now().Unix()
+	}
+	deferDispatch(session, run, n, st, fmt.Errorf("%w %s", errForeignDispatch, fmt.Sprintf("in-flight %s %s→%s:%s", id, from, to, action)))
+}
+
+// foreignHoldExpired fails a send node whose hold behind another run's or
+// node's dispatch has outlived the node's timeout, naming the blocker the hold
+// recorded, and reports whether it did. It runs before any send: a blocker
+// that clears after the deadline — a missed tick, or the blocker finishing
+// between ticks — must fail the node, not release it into fresh work. Reload
+// holds carry no such deadline.
+func foreignHoldExpired(session string, run *GraphRun, n *Node, st *GraphNodeStatus) bool {
+	blocker, held := foreignHoldBlocker(st.DeferredOn)
+	limit := nodeTimeoutSecs(n)
+	if !held || st.DeferredSince == 0 || time.Now().Unix()-st.DeferredSince < int64(limit) {
+		return false
+	}
+	finishNode(session, run, n, OutcomeFailure,
+		fmt.Sprintf("timed out after %ds deferred behind %s, another run's or node's request", limit, blocker))
+	return true
+}
+
+// foreignHoldBlocker returns the blocker a foreign-dispatch hold's reason
+// names, and whether the reason is one.
+func foreignHoldBlocker(deferredOn string) (string, bool) {
+	return strings.CutPrefix(deferredOn, errForeignDispatch.Error()+" ")
+}
+
+// errForeignDispatch defers a send node behind another run's or node's
+// in-flight request to the same role and action.
+var errForeignDispatch = errors.New("waiting for")
 
 // taskEndReason is a failed send node's output for a task that ended without
 // an answer. A task a relaunch cleared names that relaunch and how far into

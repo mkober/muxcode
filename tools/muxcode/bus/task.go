@@ -24,6 +24,16 @@ type Task struct {
 	ResponseID string `json:"response_id"`
 	ResponseAt int64  `json:"response_at"`
 	ClearedBy  string `json:"cleared_by,omitempty"` // the relaunch that timed it out (ClearInFlightTasksForRole)
+	GraphRun   string `json:"graph_run,omitempty"`  // the graph run and node whose dispatch this is (MUX-170)
+	GraphNode  string `json:"graph_node,omitempty"`
+}
+
+// ownedByNode reports whether t is the dispatch of run's node — the only
+// in-flight task that node may adopt as its own (MUX-170). A task carrying
+// neither field, any non-graph send or one written before they existed,
+// belongs to no node.
+func (t Task) ownedByNode(run, node string) bool {
+	return t.GraphRun != "" && t.GraphRun == run && t.GraphNode == node
 }
 
 // Task status constants.
@@ -44,18 +54,21 @@ func TaskPath(session, msgID string) string {
 	return filepath.Join(TaskDir(session), msgID+".json")
 }
 
-// CreateTask writes a new in-flight task entry.
+// CreateTask writes a new in-flight task entry, carrying m's graph run and
+// node so a graph dispatch's task records which node owns it.
 // Called by --wait in cmd/send.go after the message is sent.
 func CreateTask(session string, m Message, timeout int) error {
 	t := Task{
-		ID:      m.ID,
-		From:    m.From,
-		To:      m.To,
-		Action:  m.Action,
-		Payload: m.Payload,
-		Status:  TaskInFlight,
-		SentAt:  m.TS,
-		Timeout: timeout,
+		ID:        m.ID,
+		From:      m.From,
+		To:        m.To,
+		Action:    m.Action,
+		Payload:   m.Payload,
+		Status:    TaskInFlight,
+		SentAt:    m.TS,
+		Timeout:   timeout,
+		GraphRun:  m.GraphRun,
+		GraphNode: m.GraphNode,
 	}
 	return writeTask(session, t)
 }

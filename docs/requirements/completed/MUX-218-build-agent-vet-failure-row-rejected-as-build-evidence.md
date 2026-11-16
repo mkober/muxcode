@@ -158,7 +158,7 @@ Sections A–D (MUX-214) still pass. The review's nit — `CLAUDE.md` naming flo
 - [MUX-214](./MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) — the staging
   change this follows
 - [MUX-185](../backlog/MUX-185-history-row-provenance-declared-not-proven.md) — a history row's provenance
-- [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) — another way a node is
+- [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) — another way a node is
   credited with evidence that is not its own
 
 ## Status
