@@ -553,8 +553,11 @@ func IsAgentIdle(session, role string) bool {
 // Notify sends a notification to an agent that new messages are available.
 //
 // Strategy:
-//   - Always writes the trigger file — agents running `muxcode inbox --poll`
-//     detect this via stat() polling. This is the primary notification mechanism.
+//   - A role nothing can read for (RoleHasConsumer) is not notified at all: no
+//     trigger file, no injection attempt, one notify-no-consumer row per
+//     episode — a windowless analyze was refused every ~51 s for 28 h (MUX-180)
+//   - Otherwise always writes the trigger file — agents running `muxcode inbox
+//     --poll` detect this via stat() polling. The primary notification mechanism.
 //   - Harness panes: skipped (they poll inbox directly)
 //   - Waiting/polling roles: trigger file only (already polling)
 //   - All other agents: trigger file + display-message (visual indicator)
@@ -564,6 +567,12 @@ func Notify(session, role string) error {
 	// Hosted roles (docs, research, pr-read) resolve to their host agent.
 	// The message is already in the host's inbox; notify the host's pane.
 	role = WindowForRole(role)
+	if !RoleHasConsumer(session, role) {
+		NoteEpisode(session, role, "notify-no-consumer", fmt.Sprintf(
+			"%s: no window, inbox listener or headless agent — not notified until one exists", role))
+		return nil
+	}
+	EndEpisode(session, role, "notify-no-consumer")
 
 	// Always write the trigger file — safe, non-intrusive, no tmux dependency.
 	// Agents running `muxcode inbox --poll` detect this via stat() polling.

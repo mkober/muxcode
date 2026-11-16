@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -48,8 +49,12 @@ func IsAutoCCRole(role string) bool {
 	return GetAutoCC()[role]
 }
 
-// autoCCLastSent tracks the last CC time per role for rate limiting.
-var autoCCLastSent = make(map[string]int64)
+// autoCCLastSent tracks the last CC time per role for rate limiting, guarded
+// by autoCCMu: concurrent sends in one process share it.
+var (
+	autoCCLastSent = make(map[string]int64)
+	autoCCMu       sync.Mutex
+)
 
 // autoCCWindowSecs is the minimum interval between CC messages from the same role.
 const autoCCWindowSecs int64 = 60
@@ -57,6 +62,8 @@ const autoCCWindowSecs int64 = 60
 // shouldAutoCC returns true if a CC from this role should be delivered to edit.
 // Rate-limits to one CC per role per 60-second window.
 func shouldAutoCC(from string) bool {
+	autoCCMu.Lock()
+	defer autoCCMu.Unlock()
 	now := time.Now().Unix()
 	if last, ok := autoCCLastSent[from]; ok && now-last < autoCCWindowSecs {
 		return false
@@ -71,7 +78,8 @@ func shouldAutoCC(from string) bool {
 // ErrSendSuppressed, a reply to an answered task ErrReplySuppressed, an
 // accidental self-send ErrSelfSendDropped, provider chrome ErrSendChrome, a
 // message nothing can read ErrNoConsumer (RoleHasConsumer, MUX-145) and a
-// response repeating the last one on its pair ErrResponseSuppressed (MUX-175).
+// response repeating the last one on its pair ErrResponseSuppressed (MUX-175)
+// and a message to an inbox at its cap ErrInboxFull (MUX-180).
 func Send(session string, m Message) error {
 	return sendMessage(session, m, true, false, false)
 }
@@ -391,18 +399,16 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 // deliverMessage writes an accepted message everywhere it goes: the recipient
 // inbox, the auto-CC copy, delivery tracking, and the session log.
 func deliverMessage(session string, m Message, line []byte, inboxRole string, autoCC bool) error {
-	// Append to recipient inbox (host inbox for hosted roles)
-	if err := appendToFile(InboxPath(session, inboxRole), line); err != nil {
-		return err
+	// Append to recipient inbox (host inbox for hosted roles), bounded by its cap
+	if err := appendCapped(session, inboxRole, line); err != nil {
+		return fmt.Errorf("%s→%s:%s: %w", m.From, m.To, m.Action, err)
 	}
 
 	// Auto-CC to edit: copy messages from auto-CC roles when not already going to edit.
 	// Rate-limited to 1 CC per role per 60s to prevent context pressure on edit.
-	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" && inboxRole != "edit" {
-		if shouldAutoCC(m.From) {
-			if err := appendToFile(InboxPath(session, "edit"), line); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
-			}
+	if autoCC && IsAutoCCRole(m.From) && m.To != "edit" && inboxRole != "edit" && shouldAutoCC(m.From) {
+		if err := appendCapped(session, "edit", line); err != nil && !errors.Is(err, ErrInboxFull) {
+			fmt.Fprintf(os.Stderr, "warning: auto-CC to edit failed: %v\n", err)
 		}
 	}
 
@@ -570,7 +576,22 @@ func ReceiveDeliveredIDs(session, role string, ids map[string]bool) ([]Message, 
 // Both partial-consume callers share this core deliberately. They were once
 // independent copies, which is exactly how a single oversized-message bug came
 // to live in two places and get fixed in only one.
-func receiveMatching(session, role, kind string, match func(Message) bool) ([]Message, error) {
+//
+// It runs under role's inbox capacity lock (withInboxCapLock): between taking
+// the inbox and writing the rest back the inbox reads empty, and a send
+// admitted then would take it past InboxCap once the rest returns (MUX-180).
+func receiveMatching(session, role, kind string, match func(Message) bool) (msgs []Message, err error) {
+	if lockErr := withInboxCapLock(session, role, func() error {
+		msgs, err = receiveMatchingLocked(session, role, kind, match)
+		return nil
+	}); lockErr != nil {
+		return nil, lockErr
+	}
+	return msgs, err
+}
+
+// receiveMatchingLocked is receiveMatching's body; the caller holds the lock.
+func receiveMatchingLocked(session, role, kind string, match func(Message) bool) ([]Message, error) {
 	inbox := InboxPath(session, role)
 	consuming := inbox + ".consuming"
 
@@ -652,11 +673,23 @@ func receiveMatching(session, role, kind string, match func(Message) bool) ([]Me
 // copy of a request addressed to another agent lives in edit's inbox with the
 // same From/Action, and must never be collaterally removed. Missing message,
 // missing inbox, and an already-consumed row are all ordinary no-ops, not errors.
-func ConsumeByID(session, role, msgID string) (bool, error) {
+// Like receiveMatching it holds role's inbox capacity lock across taking the
+// inbox and writing the rest back.
+func ConsumeByID(session, role, msgID string) (found bool, err error) {
 	if msgID == "" {
 		return false, nil
 	}
+	if lockErr := withInboxCapLock(session, role, func() error {
+		found, err = consumeByIDLocked(session, role, msgID)
+		return nil
+	}); lockErr != nil {
+		return false, lockErr
+	}
+	return found, err
+}
 
+// consumeByIDLocked is ConsumeByID's body; the caller holds the lock.
+func consumeByIDLocked(session, role, msgID string) (bool, error) {
 	inbox := InboxPath(session, role)
 	consuming := inbox + ".consuming-id"
 
