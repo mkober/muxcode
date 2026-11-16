@@ -141,7 +141,6 @@ func TestOpenRequestFor_FailsOpenWithoutReceipts(t *testing.T) {
 // inbox carrying a request, and every other role (edit acting on a delegated
 // result, build receiving an event), keep the request preamble.
 func TestCodexPromptSubmitContext_TestRequestFreeInboxRunsNothing(t *testing.T) {
-	session := codexBusEnv(t)
 	review := func(to string) Message {
 		return NewMessage("review", to, "response", "review-complete", "Review: 0 must-fix, 0 should-fix, 0 nits. EXIT=0", "")
 	}
@@ -164,6 +163,7 @@ func TestCodexPromptSubmitContext_TestRequestFreeInboxRunsNothing(t *testing.T) 
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			session := codexBusEnv(t) // each case its own bus: a shared one repeats the review reply (MUX-175's brake)
 			for _, m := range tc.msgs {
 				if err := SendNoCC(session, m); err != nil {
 					t.Fatal(err)

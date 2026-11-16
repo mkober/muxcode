@@ -246,6 +246,8 @@ func Send(args []string) {
 			notSent("%v; a message to yourself is never delivered", err)
 		case errors.Is(err, bus.ErrNoConsumer):
 			notSent("%v; launch the role or stop routing to it", err)
+		case errors.Is(err, bus.ErrResponseSuppressed):
+			notSent("%v; a response with nothing new needs no reply", err)
 		default:
 			fmt.Fprintf(os.Stderr, "Error sending message: %v\n", err)
 			sendExit(1)

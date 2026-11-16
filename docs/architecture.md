@@ -248,6 +248,17 @@ The bus daemon (implemented in `daemon/daemon.go`) uses `daemon` as its message 
 - **Lifecycle logs**: daemon events appear with source `daemon` in the lifecycle JSONL
 - **Loop detection**: `daemon` is filtered out of message loop detection to prevent false positives from the daemon's frequent system events
 
+### Loop detection and the two brakes
+
+`DetectMessageLoop` (`bus/guard.go`) recognises a pair trading the same action at high frequency and **only alerts** (`loop-detected`). Frequency cannot be the brake: on 2026-09-10 it flagged a build ↔ test acknowledgement loop and, later the same morning, a plan ↔ edit `verify-spec` exchange in which every round carried new evidence. What stops traffic is two separate checks, on different roads:
+
+| Brake | Where | What it stops |
+|-------|-------|---------------|
+| Relay-loop guard | The **CLI** — `cmd/send.go` (`relaySuppressLimits`), not `bus.Send` | Identical non-edit **request** relays once a `(from, to, action)` tuple passes `MUXCODE_RELAY_SUPPRESS_THRESHOLD` within `MUXCODE_RELAY_SUPPRESS_WINDOW`. A request sent by any other road does not pass it |
+| Response brake ([MUX-175](requirements/completed/MUX-175-response-ack-ping-pong-has-no-brake.md)) | `bus.Send` — `withResponseBrake` around delivery (`bus/response_brake.go`), so every road passes it | A **response** whose normalized text equals the last response delivered on the same `(from, to, action)` within `MUXCODE_RESPONSE_SUPPRESS_WINDOW` |
+
+The response brake has no count: it refuses on the first repeat, and a substantive exchange — new text each round — is never braked. Normalization folds case, whitespace and punctuation and keeps numbers and ids, so `10/23` then `11/23` are two messages. The comparison point is one file per tuple under the bus directory (`response-last/<hash>.json`, the hash a SHA-256 of the NUL-joined tuple so `a/b` and `a_b` cannot collide), written by `recordDeliveredResponse` **only on delivery** — a refused attempt neither replaces the text nor restarts the window, so a pair that keeps retrying is delivered again once the window has passed. Check, delivery and record run under a session lock (`response-brake.lock`); if the lock cannot be taken the check still runs, unserialized, so a concurrent repeat may slip through rather than a send being lost. Requests are never braked, nor is a response whose `--reply-to` names a request still awaiting its answer (`answersOpenRequest`: an in-flight task, or a request with no response recorded — a graph spawn worker's seed has no task, and a terse worker answers each loop iteration identically). The refusal is `ErrResponseSuppressed`, a `response-suppressed` lifecycle row, and `NOT SENT` at the CLI; it happens before delivery, so neither the recipient's inbox nor the auto-CC copy is written. A loop whose text changes every round is not an exact match and is not braked — the detector still alerts on it.
+
 ### Daemon debounce
 
 The daemon uses a two-phase approach to coalesce burst edits:
