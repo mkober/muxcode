@@ -56,6 +56,7 @@ type AgentStateEvidence struct {
 	WiderCaptureIdle bool   `json:"wider_capture_idle"`
 	PaneLastLine     string `json:"pane_last_line"`
 	ResumeSessionID  string `json:"resume_session_id,omitempty"`
+	NoConsumer       bool   `json:"no_consumer"` // nothing can read the role's inbox (RoleHasConsumer, MUX-145)
 }
 
 // InboxStateEvidence captures inbox contents and message ages.
@@ -139,6 +140,7 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 		Provider:        provider.Name(),
 		SupportsHooks:   provider.SupportsHooks(),
 		HasPendingInput: HasPendingInput(session, role),
+		NoConsumer:      !RoleHasConsumer(session, WindowForRole(role)),
 	}
 
 	if ev.IsAlive {
@@ -366,6 +368,7 @@ var roleRelevantEvents = map[string]bool{
 	"delivery-gap":             true,
 	"idle-task-rescue":         true,
 	"agent-down":               true,
+	"send-no-consumer":         true,
 	"mass-agent-exit":          true,
 	"agent-restarting":         true,
 	"agent-recovered":          true,
@@ -558,6 +561,7 @@ var diagnosticChecks = []DiagnosticCheck{
 	checkStaleNotifiedIDs,
 	checkMissedSendKeys,
 	checkIdleDetectionFailure,
+	checkNoConsumer,
 	checkReceiptGap,
 	checkDaemonNotWaking,
 	checkPostRestartWakeGap,
@@ -572,12 +576,27 @@ var diagnosticChecks = []DiagnosticCheck{
 }
 
 // RunDiagnostics executes all diagnostic checks and populates report.Findings.
+//
+// While the role has no consumer, a finding that prescribes `muxcode deliver`
+// is dropped: it would inject into a pane that does not exist, and its
+// evidence is the no-consumer finding's to explain (MUX-145).
 func RunDiagnostics(report *DiagnosticReport) {
 	for _, check := range diagnosticChecks {
-		if finding := check(report); finding != nil {
-			report.Findings = append(report.Findings, *finding)
+		finding := check(report)
+		if finding == nil || (report.AgentState.NoConsumer && prescribesDeliver(finding)) {
+			continue
+		}
+		report.Findings = append(report.Findings, *finding)
+	}
+}
+
+func prescribesDeliver(f *DiagnosticFinding) bool {
+	for _, r := range f.Remediation {
+		if strings.Contains(r, "muxcode deliver ") {
+			return true
 		}
 	}
+	return false
 }
 
 // checkDaemonDead detects when the daemon keepalive is stale (>30s).
@@ -1212,6 +1231,40 @@ func checkResumableSession(report *DiagnosticReport) *DiagnosticFinding {
 			fmt.Sprintf("Resume with its definition carried: muxcode resume %s", report.Role),
 			fmt.Sprintf("Or explicitly: muxcode agent launch %s --resume %s", report.Role, st.ResumeSessionID),
 		},
+	}
+}
+
+// checkNoConsumer reports a role nothing can read for — no window, no inbox
+// listener, no running headless agent (RoleHasConsumer, MUX-145) — which
+// receipt-gap used to misread as a delivery failure, prescribing a
+// force-deliver into a pane that does not exist. It does not key on the
+// inbox: an empty one is the falsely clean verdict of 2026-09-08, reported
+// as a warning; stranded messages make it critical.
+func checkNoConsumer(report *DiagnosticReport) *DiagnosticFinding {
+	if !report.AgentState.NoConsumer {
+		return nil
+	}
+	severity := "warning"
+	evidence := []string{
+		"No tmux window for the role, no `muxcode inbox --poll`/`--wait` listener and no running headless agent",
+		"Sends to it are refused NOT SENT, logged once as send-no-consumer",
+	}
+	remediation := []string{
+		fmt.Sprintf("Launch the role: add %s to MUXCODE_WINDOWS and relaunch the session, or run its agent headless", report.Role),
+		fmt.Sprintf("Or stop routing to it: remove the chain, subscription or cron entry that targets %s", report.Role),
+	}
+	if n := report.InboxState.MessageCount; n > 0 {
+		severity = "critical"
+		evidence = append(evidence, fmt.Sprintf(
+			"%d message(s) stranded in its inbox — sent before the refusal or with MUXCODE_CONSUMER_GUARD=0; nothing will read them", n))
+		remediation = append(remediation, fmt.Sprintf("Discard the stranded messages: muxcode inbox --role %s", report.Role))
+	}
+	return &DiagnosticFinding{
+		Severity:    severity,
+		FailureMode: "no-consumer",
+		Summary:     fmt.Sprintf("%s has no consumer — nothing can read its inbox", report.Role),
+		Evidence:    evidence,
+		Remediation: remediation,
 	}
 }
 

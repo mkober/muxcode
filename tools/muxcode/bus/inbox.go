@@ -69,7 +69,8 @@ func shouldAutoCC(from string) bool {
 // Messages from build, test, and review are automatically CC'd to edit.
 // Nothing undelivered returns nil: a duplicate-suppressed request returns
 // ErrSendSuppressed, a reply to an answered task ErrReplySuppressed, an
-// accidental self-send ErrSelfSendDropped and provider chrome ErrSendChrome.
+// accidental self-send ErrSelfSendDropped, provider chrome ErrSendChrome and
+// a message nothing can read ErrNoConsumer (RoleHasConsumer, MUX-145).
 func Send(session string, m Message) error {
 	return sendMessage(session, m, true, false, false)
 }
@@ -342,6 +343,9 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 	// Resolve hosted roles: deliver to the host agent's inbox.
 	// The message retains the original To field so the host knows the context.
 	inboxRole := WindowForRole(m.To)
+	if err := refuseWithoutConsumer(session, m, inboxRole); err != nil {
+		return err
+	}
 
 	// Ensure inbox directory exists
 	inboxDir := filepath.Dir(InboxPath(session, inboxRole))

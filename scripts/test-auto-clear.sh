@@ -20,6 +20,7 @@
 #
 # Usage: bash scripts/test-auto-clear.sh
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 MUX="${MUXCODE_BIN:-muxcode}"
 MUX="$(command -v "$MUX" 2>/dev/null || echo "$MUX")"

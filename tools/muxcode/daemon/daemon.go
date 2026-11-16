@@ -780,7 +780,9 @@ func (d *Daemon) routeTrigger() {
 	analyzePayload := fmt.Sprintf("Claude edited files: %s — Read those files and explain what was changed and why.", fileList)
 	msg := bus.NewMessage("daemon", "analyze", "event", "analyze", analyzePayload, "")
 	if err := bus.Send(d.session, msg); err != nil {
-		fmt.Fprintf(os.Stderr, "  [route] failed to send analyze event: %v\n", err)
+		if !errors.Is(err, bus.ErrNoConsumer) { // the refusal logs its own send-no-consumer row
+			fmt.Fprintf(os.Stderr, "  [route] failed to send analyze event: %v\n", err)
+		}
 		return
 	}
 

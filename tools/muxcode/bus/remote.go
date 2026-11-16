@@ -238,10 +238,10 @@ func RemoteOverview(session string) string {
 
 	// Agent status table
 	statuses := GetAllAgentStatus(session)
-	b.WriteString("  " + strings.Repeat("─", 75) + "\n")
-	b.WriteString(fmt.Sprintf("  %-12s %-10s %-6s %-8s %-6s %s\n",
+	b.WriteString("  " + strings.Repeat("─", 78) + "\n")
+	b.WriteString(fmt.Sprintf("  %-12s %-10s %-6s %-11s %-6s %s\n",
 		"ROLE", "PROVIDER", "STATE", "HEALTH", "INBOX", "LAST ACTIVITY"))
-	b.WriteString("  " + strings.Repeat("─", 75) + "\n")
+	b.WriteString("  " + strings.Repeat("─", 78) + "\n")
 
 	for _, s := range statuses {
 		state := "idle"
@@ -269,7 +269,7 @@ func RemoteOverview(session string) string {
 			provider = "—"
 		}
 
-		b.WriteString(fmt.Sprintf("  %-12s %-10s %-6s %-8s %-6d %s\n",
+		b.WriteString(fmt.Sprintf("  %-12s %-10s %-6s %-11s %-6d %s\n",
 			s.Role, provider, state, health, s.InboxCount, activity))
 	}
 	b.WriteString("\n")

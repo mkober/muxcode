@@ -45,6 +45,7 @@
 # Usage: bash scripts/test-cancel-provenance.sh
 #        MUXCODE_TEST_KEEP=1 bash scripts/test-cancel-provenance.sh   # keep WORK
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 MUX="${MUXCODE_BIN:-muxcode}"
 MUX="$(command -v "$MUX" 2>/dev/null || echo "$MUX")"

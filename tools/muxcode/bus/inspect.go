@@ -18,7 +18,7 @@ type AgentStatus struct {
 	LastAction string `json:"last_action"`
 	LastPeer   string `json:"last_peer"`
 	LastDir    string `json:"last_dir"` // "sent" or "recv"
-	Health     string `json:"health"`   // "alive", "dead", "excluded", "stopped"
+	Health     string `json:"health"`   // "alive", "dead", "excluded", "stopped", "no-consumer" (nothing can read its inbox, MUX-145)
 }
 
 // GetAgentStatus returns the current status for a single agent role.
@@ -33,6 +33,8 @@ func GetAgentStatus(session, role string) AgentStatus {
 	// Health check
 	if IsAgentHealthExcluded(session, role) {
 		status.Health = "excluded"
+	} else if !RoleHasConsumer(session, WindowForRole(role)) {
+		status.Health = "no-consumer"
 	} else if IsAgentStopped(session, role) {
 		status.Health = "stopped"
 	} else if IsAgentAlive(session, role) {
@@ -110,7 +112,7 @@ func FormatStatusTable(statuses []AgentStatus) string {
 	var b strings.Builder
 
 	// Header
-	b.WriteString(fmt.Sprintf("%-12s %-10s %-6s %-8s %-6s %s\n", "ROLE", "PROVIDER", "STATE", "HEALTH", "INBOX", "LAST ACTIVITY"))
+	b.WriteString(fmt.Sprintf("%-12s %-10s %-6s %-11s %-6s %s\n", "ROLE", "PROVIDER", "STATE", "HEALTH", "INBOX", "LAST ACTIVITY"))
 
 	for _, s := range statuses {
 		state := "idle"
@@ -138,7 +140,7 @@ func FormatStatusTable(statuses []AgentStatus) string {
 			provider = "—"
 		}
 
-		b.WriteString(fmt.Sprintf("%-12s %-10s %-6s %-8s %-6d %s\n", s.Role, provider, state, health, s.InboxCount, activity))
+		b.WriteString(fmt.Sprintf("%-12s %-10s %-6s %-11s %-6d %s\n", s.Role, provider, state, health, s.InboxCount, activity))
 	}
 
 	return b.String()

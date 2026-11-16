@@ -253,6 +253,13 @@ func restartAll(session, providerFilter string) {
 	}
 }
 
+// listWindows and reloadExit are configureIfWindowless's tmux and process-exit
+// boundaries, replaced by its tests.
+var (
+	listWindows = bus.TmuxListWindowNames
+	reloadExit  = os.Exit
+)
+
 // configureIfWindowless applies a role's CLI/model as config when the role has
 // no window, reporting whether it handled the request.
 //
@@ -262,17 +269,19 @@ func restartAll(session, providerFilter string) {
 // answered two different ways depending on which road it arrived by, which is
 // the MUX-142 shape.
 func configureIfWindowless(session, role, cli, model string) bool {
-	windows, err := bus.TmuxListWindowNames(session)
+	windows, err := listWindows(session)
 	if !bus.ConfigOnlyRole(windows, err == nil && len(windows) > 0, role) {
 		return false
 	}
 	if cli == "" && model == "" {
 		fmt.Fprintf(os.Stderr, "Error: %s has no window — nothing to reload; pass --cli or --model to set its config\n", role)
-		os.Exit(1)
+		reloadExit(1)
+		return true
 	}
 	if err := bus.ConfigureWindowlessRole(session, role, cli, model); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		reloadExit(1)
+		return true
 	}
 	fmt.Printf("✓ %s configured — CLI: %s, Model: %s (no window: saved, not reloaded)\n",
 		role, bus.ResolveProviderCLI(role), bus.EffectiveConfig(role).Model)

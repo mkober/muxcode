@@ -518,7 +518,7 @@ func (ui *RemoteUI) renderSessionDetail() string {
 	hrLine()
 
 	// Agent table header
-	writeLine(fmt.Sprintf("  %s   %-12s %-10s %-6s %-8s %-6s %s%s",
+	writeLine(fmt.Sprintf("  %s   %-12s %-10s %-6s %-11s %-6s %s%s",
 		Comment, "ROLE", "PROVIDER", "STATE", "HEALTH", "INBOX", "LAST ACTIVITY", RST))
 	hrLine()
 
@@ -535,7 +535,7 @@ func (ui *RemoteUI) renderSessionDetail() string {
 			healthColor = Green
 		case "dead":
 			healthColor = Red
-		case "stopped":
+		case "stopped", "no-consumer":
 			healthColor = Yellow
 		}
 
@@ -571,7 +571,7 @@ func (ui *RemoteUI) renderSessionDetail() string {
 		}
 
 		// Truncate activity to fit
-		maxAct := W - 52
+		maxAct := W - 55
 		if maxAct < 0 {
 			maxAct = 0
 		}
@@ -579,7 +579,7 @@ func (ui *RemoteUI) renderSessionDetail() string {
 			activity = activity[:maxAct]
 		}
 
-		writeLine(fmt.Sprintf("  %s%s%s%-12s%s %-10s %-6s %s%-8s%s %s%-6d%s %s%s%s",
+		writeLine(fmt.Sprintf("  %s%s%s%-12s%s %-10s %-6s %s%-11s%s %s%-6d%s %s%s%s",
 			Yellow, cursor,
 			roleColor, s.Role, RST,
 			provider, state,

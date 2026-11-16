@@ -43,6 +43,9 @@ func deliverTestSetup(t *testing.T, session, captureContent string) *[][]string 
 		if strings.Contains(joined, "window_active") {
 			return "0", nil // not focused
 		}
+		if len(args) > 0 && args[0] == "list-windows" {
+			return "edit\nrun", nil // the run agent's window, which Send's consumer check reads (MUX-145)
+		}
 		return captureContent, nil // capture-pane content
 	}
 	t.Cleanup(func() {
