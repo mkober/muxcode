@@ -107,7 +107,10 @@ type GraphNodeStatus struct {
 	MapNext     int             `json:"map_next,omitempty"`    // map: next unassigned item
 	MapResults  []MapItemResult `json:"map_results,omitempty"` // map: each item's recorded result, in item order
 	MapPending  []MapDispatch   `json:"map_pending,omitempty"` // map: lane dispatches persisted but not yet confirmed on a worker
-	DeferredOn  string          `json:"deferred_on,omitempty"` // ready node held back: a spawn/map node on the run's busy worker (MUX-195), a send node on its role's reload (MUX-217)
+	DeferredOn  string          `json:"deferred_on,omitempty"` // ready node held back: a spawn/map node on the run's busy worker (MUX-195), a send node on its role's reload (MUX-217) or on another run's or node's in-flight dispatch (MUX-170)
+	// DeferredSince is when the current hold behind another run's or node's
+	// dispatch began; the node's timeout bounds that wait from it.
+	DeferredSince int64 `json:"deferred_since,omitempty"`
 	// Branched marks a condition's false branch for JSON consumers —
 	// render-time only, never persisted; see ConditionTookBranch.
 	Branched bool `json:"branched,omitempty"`
@@ -658,6 +661,7 @@ func TransitionGraphNode(session, runID, nodeID, newState string, mutate func(*G
 	case GraphNodeRunning:
 		st.StartedAt = now
 		st.DeferredOn = ""
+		st.DeferredSince = 0
 	case GraphNodeDone, GraphNodeFailed:
 		st.DoneAt = now
 	case GraphNodeReady:
@@ -671,6 +675,7 @@ func TransitionGraphNode(session, runID, nodeID, newState string, mutate func(*G
 		st.Redrives = 0
 		st.LastRedrive = 0
 		st.DeferredOn = ""
+		st.DeferredSince = 0
 	}
 	if mutate != nil {
 		mutate(st)

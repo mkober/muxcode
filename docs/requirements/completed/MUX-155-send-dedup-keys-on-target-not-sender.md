@@ -27,7 +27,7 @@ line numbers have moved and one piece of Phase 3 already exists.
 | `FindInFlightTask` / `HasInFlightTaskForRole` key on `(to, action)` | Unchanged, `bus/dedup.go:235` and `:217`; neither reads `From` |
 | Duplicate-reply suppression returns `nil` at `bus/inbox.go:228` | Now `bus/inbox.go:186-187`; still returns `nil`, so the CLI still prints `Sent response:…` |
 | `Send` returns `nil` for every suppression (Phase 3, first step) | Partly done since filing: the two **request** suppressions (`bus/inbox.go:354`, `:359`) return `ErrSendSuppressed`, and `cmd/send.go:220` reads it. The duplicate-reply road and the CLI's own pre-send return are what remain |
-| Callers of the key | Besides `cmd/send.go`: `bus/inbox.go:356` (`Send` itself) and `bus/graph_exec.go:1264` (`dispatchNode`'s adoption — [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)'s subject; adding `from` changes what it can adopt, so its behaviour is pinned here even though its redesign is not this spec's) |
+| Callers of the key | Besides `cmd/send.go`: `bus/inbox.go:356` (`Send` itself) and `bus/graph_exec.go:1264` (`dispatchNode`'s adoption — [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)'s subject; adding `from` changes what it can adopt, so its behaviour is pinned here even though its redesign is not this spec's) |
 
 ### Observed (2026-09-08, session `muxcode`; every fact below read by plan directly)
 
@@ -166,7 +166,7 @@ that last test-file edit by 73 s; the full suite after it covers the same tests.
 | New tests | `TestExecDispatchIgnoresForeignInFlightTask` and `TestExecSuppressedDispatchAdoptsOwnInFlightTask` (graph dispatch), `TestSendCLI_ForceBypassesSameSenderDedup`, `TestSendCLI_DistinctActionsIndependent` |
 | Run | `/tmp/mux155-phase2-check.sh` via the run agent, proc `1794694373-proc-f64ef5aa`: 13 passed, 0 failed (expected 13). The tree as written passes its 20 tests; a copy with the sender compare removed fails the 5 cross-sender tests while the 6 controls (same-sender retry, `--wait` reattach, `--force`, distinct actions, `Send`'s own duplicate guard, own-task adoption) still pass |
 | Not done | The payload-hash tightening from the technical approach — it is no Phase 2 step and no criterion requires it. A same-sender send of a *different* message under an in-flight action is still deduplicated without `--force` |
-| Reach beyond this spec | `dispatchNode` no longer adopts a foreign task, which is part of [MUX-170](../backlog/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)'s defect; what the executor does when a dispatch *is* suppressed stays that spec's |
+| Reach beyond this spec | `dispatchNode` no longer adopts a foreign task, which is part of [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md)'s defect; what the executor does when a dispatch *is* suppressed stays that spec's |
 | Docs | `docs/agent-bus.md` (new "In-flight dedup" paragraph; self-heal line) and `docs/architecture.md` (task-timeout row) name the `(from, to, action)` key |
 
 ### Phase 3: An honest CLI

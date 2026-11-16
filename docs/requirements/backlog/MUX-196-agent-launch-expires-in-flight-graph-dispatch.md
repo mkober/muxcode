@@ -110,7 +110,7 @@ failed. Neither change touches the dedup guard itself
 
 ## Related
 
-- [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) and
+- [MUX-170](../completed/MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md) and
   [MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md) — the `(to, action)` dedup the
   launch-time clearing was written to unblock; narrowing that key reduces the pressure to clear at all.
 - [MUX-162](../completed/MUX-162-pr-review-fix-node-600s-send-cap.md) — another node failed by a clock rather

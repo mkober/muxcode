@@ -2125,6 +2125,222 @@ func TestExecDispatchIgnoresForeignInFlightTask(t *testing.T) {
 	}
 }
 
+func singleBuildGraph() *Graph {
+	return &Graph{
+		Name:  "t",
+		Start: "a",
+		Nodes: []Node{{ID: "a", Type: NodeSend, Role: "build", Action: "build", Message: "go"}},
+		Edges: []Edge{},
+	}
+}
+
+// deferredRows returns the graph-dispatch-deferred rows naming runID.
+func deferredRows(t *testing.T, runID string) []string {
+	t.Helper()
+	rows, err := FilterLifecycleLog(runTestSession, LifecycleFilterOpts{Event: "graph-dispatch-deferred"})
+	if err != nil {
+		t.Fatalf("FilterLifecycleLog: %v", err)
+	}
+	var mine []string
+	for _, r := range rows {
+		if strings.HasPrefix(r.Detail, runID+":") {
+			mine = append(mine, r.Detail)
+		}
+	}
+	return mine
+}
+
+// MUX-170, the two-run replay: every graph dispatch is sent as the daemon, so
+// run A's in-flight build suppressed run B's and B adopted it, completing on a
+// reply to a request it never sent. B now stays ready across ticks with one
+// row naming A's task, is not completed by A's reply, and dispatches its own
+// request once A's task clears.
+func TestExecDispatchDefersBehindAnotherRunsTask(t *testing.T) {
+	g := singleBuildGraph()
+	runA := createTestRun(t, g)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	runB, err := CreateGraphRun(runTestSession, g, g.Name, "second run")
+	if err != nil {
+		t.Fatalf("CreateGraphRun: %v", err)
+	}
+	step(t, runTestSession, runA.ID)
+	stA, _ := ReadNodeStatus(runTestSession, runA.ID, "a")
+	if task, err := ReadTask(runTestSession, stA.TaskID); err != nil || task.GraphRun != runA.ID || task.GraphNode != "a" {
+		t.Fatalf("A's dispatch task must record its run and node, got %+v (err %v)", task, err)
+	}
+
+	for i := 0; i < 3; i++ {
+		step(t, runTestSession, runB.ID)
+	}
+	stB, _ := ReadNodeStatus(runTestSession, runB.ID, "a")
+	if stB.State != GraphNodeReady || stB.TaskID != "" {
+		t.Fatalf("B must stay ready with no task behind A's dispatch, got %s task %q", stB.State, stB.TaskID)
+	}
+	if rows := deferredRows(t, runB.ID); len(rows) != 1 || !strings.Contains(rows[0], stA.TaskID) {
+		t.Errorf("want one graph-dispatch-deferred row naming A's task %s across three ticks, got %q", stA.TaskID, rows)
+	}
+	if msgs, _ := Peek(runTestSession, "build"); len(msgs) != 1 || msgs[0].GraphRun != runA.ID {
+		t.Fatalf("build's inbox must hold A's dispatch alone, got %+v", msgs)
+	}
+
+	if _, err := Receive(runTestSession, "build"); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(runTestSession, stA.TaskID, "resp-"+stA.TaskID)
+	if s := nodeState(t, runTestSession, runB.ID, "a"); s != GraphNodeReady {
+		t.Fatalf("A's reply moved B to %s", s)
+	}
+	step(t, runTestSession, runB.ID)
+	stB, _ = ReadNodeStatus(runTestSession, runB.ID, "a")
+	msgs, _ := Peek(runTestSession, "build")
+	if stB.State != GraphNodeRunning || len(msgs) != 1 || msgs[0].GraphRun != runB.ID || stB.TaskID != msgs[0].ID {
+		t.Fatalf("B must dispatch its own request once A's clears: state %s task %q inbox %+v", stB.State, stB.TaskID, msgs)
+	}
+	if stB.DeferredOn != "" || stB.DeferredSince != 0 {
+		t.Errorf("dispatch must clear the hold, got %q since %d", stB.DeferredOn, stB.DeferredSince)
+	}
+}
+
+// MUX-170: an in-flight daemon task is this node's only when it carries this
+// run and node. Another node of the same run and a task carrying no graph
+// fields both defer the node rather than being adopted. The node's own
+// duplicate is still adopted — the negative controls are
+// TestExecSuppressedDispatchAdoptsOwnInFlightTask and
+// TestExecSuppressedDispatchAdoptsQueuedMessageID.
+func TestExecDispatchDefersBehindForeignDaemonDuplicate(t *testing.T) {
+	cases := []struct {
+		name string
+		node string
+	}{
+		{name: "another node of this run", node: "other"},
+		{name: "a task with no graph fields"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			run := createTestRun(t, singleBuildGraph())
+			t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+			dup := NewMessage(graphSender, "build", "request", "build", "another node's build", "")
+			if c.node != "" {
+				dup.GraphRun, dup.GraphNode = run.ID, c.node
+			}
+			if err := CreateTask(runTestSession, dup, 600); err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+
+			step(t, runTestSession, run.ID)
+			step(t, runTestSession, run.ID)
+
+			st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+			if st.State != GraphNodeReady || st.TaskID != "" {
+				t.Errorf("node must stay ready, not adopt %s: state %s task %q", dup.ID, st.State, st.TaskID)
+			}
+			if rows := deferredRows(t, run.ID); len(rows) != 1 || !strings.Contains(rows[0], dup.ID) {
+				t.Errorf("want one graph-dispatch-deferred row naming %s, got %q", dup.ID, rows)
+			}
+		})
+	}
+}
+
+// MUX-170: the hold behind another run's request is bounded by the node's
+// timeout; on expiry the node fails naming the blocking task, never silently.
+func TestExecForeignDeferralTimesOutNamingTheTask(t *testing.T) {
+	g := singleBuildGraph()
+	g.Nodes[0].TimeoutSec = 120
+	run := createTestRun(t, g)
+	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+	foreign := NewMessage(graphSender, "build", "request", "build", "other run's build", "")
+	foreign.GraphRun, foreign.GraphNode = "run-other", "a"
+	if err := CreateTask(runTestSession, foreign, 600); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	step(t, runTestSession, run.ID)
+	if err := MutateNodeStatus(runTestSession, run.ID, "a", func(s *GraphNodeStatus) {
+		s.DeferredSince = time.Now().Unix() - 119
+	}); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run.ID)
+	if s := nodeState(t, runTestSession, run.ID, "a"); s != GraphNodeReady {
+		t.Fatalf("a %s one second inside its 120 s timeout, want ready", s)
+	}
+
+	if err := MutateNodeStatus(runTestSession, run.ID, "a", func(s *GraphNodeStatus) {
+		s.DeferredSince = time.Now().Unix() - 121
+	}); err != nil {
+		t.Fatal(err)
+	}
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+	if st.State != GraphNodeFailed || !strings.Contains(st.Output, foreign.ID) || !strings.Contains(st.Output, "deferred behind") {
+		t.Errorf("want a failure naming %s past the timeout, got %s %q", foreign.ID, st.State, st.Output)
+	}
+}
+
+// MUX-170 review must-fix: the hold's deadline is read before any send, so a
+// node whose blocker cleared only after the deadline — a missed tick, or the
+// blocker finishing between ticks — fails naming the blocker its hold
+// recorded instead of dispatching fresh work. Released inside the deadline it
+// dispatches its own request; a reload hold of the same age has no deadline.
+func TestExecForeignHoldDeadlineCheckedBeforeSend(t *testing.T) {
+	cases := []struct {
+		name       string
+		age        int64
+		reloadHold bool
+		wantFail   bool
+	}{
+		{name: "blocker cleared after the deadline", age: 121, wantFail: true},
+		{name: "blocker cleared inside the deadline", age: 119},
+		{name: "an aged reload hold has no deadline", age: 121, reloadHold: true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := singleBuildGraph()
+			g.Nodes[0].TimeoutSec = 120
+			run := createTestRun(t, g)
+			t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", t.TempDir())
+			foreign := NewMessage(graphSender, "build", "request", "build", "other run's build", "")
+			foreign.GraphRun, foreign.GraphNode = "run-other", "a"
+			if err := CreateTask(runTestSession, foreign, 600); err != nil {
+				t.Fatalf("CreateTask: %v", err)
+			}
+			step(t, runTestSession, run.ID)
+
+			CompleteTask(runTestSession, foreign.ID, "resp-"+foreign.ID)
+			if err := MutateNodeStatus(runTestSession, run.ID, "a", func(s *GraphNodeStatus) {
+				s.DeferredSince = time.Now().Unix() - c.age
+				if c.reloadHold {
+					s.DeferredOn = fmt.Sprintf("%v: build", errRoleReloading)
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+			step(t, runTestSession, run.ID)
+
+			st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+			var own []Message
+			msgs, _ := Peek(runTestSession, "build")
+			for _, m := range msgs {
+				if m.GraphRun == run.ID {
+					own = append(own, m)
+				}
+			}
+			if c.wantFail {
+				if st.State != GraphNodeFailed || !strings.Contains(st.Output, foreign.ID) {
+					t.Errorf("want a failure naming %s, got %s %q", foreign.ID, st.State, st.Output)
+				}
+				if len(own) != 0 {
+					t.Errorf("an expired hold dispatched fresh work: %+v", own)
+				}
+				return
+			}
+			if st.State != GraphNodeRunning || len(own) != 1 || st.TaskID != own[0].ID {
+				t.Errorf("want its own dispatch, got %s task %q own %+v", st.State, st.TaskID, own)
+			}
+		})
+	}
+}
+
 func mustNodeTransition(t *testing.T, runID, node, state string) {
 	t.Helper()
 	if err := TransitionGraphNode(runTestSession, runID, node, state, nil); err != nil {
