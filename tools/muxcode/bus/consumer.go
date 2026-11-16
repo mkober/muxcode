@@ -39,10 +39,49 @@ func RoleHasConsumer(session, role string) bool {
 	return err != nil || len(names) == 0 || RoleHasWindow(names, role)
 }
 
-// noConsumerMarkerPath marks a role whose sends are being refused, so the
-// refusal's lifecycle row is written once per episode.
-func noConsumerMarkerPath(session, role string) string {
-	return filepath.Join(BusDir(session), "no-consumer-"+role+".marker")
+// episodeMarkerPath marks an open `event` episode for role, so its lifecycle
+// row is written once per episode.
+func episodeMarkerPath(session, role, event string) string {
+	return filepath.Join(BusDir(session), event+"-"+role+".marker")
+}
+
+// NoteEpisode writes one `event` lifecycle row for role per episode — the
+// first time the condition is seen — and reports whether it did. A standing
+// condition (no consumer, a full inbox) is a fact to report once, not a
+// recurring incident: on 2026-09-10 a windowless analyze logged
+// injection-refused every ~51 s for 28 h (MUX-180). EndEpisode closes it once
+// the condition clears.
+func NoteEpisode(session, role, event, detail string) bool {
+	f, err := os.OpenFile(episodeMarkerPath(session, role, event), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	LogLifecycle(session, "warn", "bus", event, detail)
+	return true
+}
+
+// EndEpisode closes role's `event` episode, so the next occurrence is
+// reported again.
+func EndEpisode(session, role, event string) {
+	_ = os.Remove(episodeMarkerPath(session, role, event))
+}
+
+// RouteToRole reports whether a daemon route may hand work to role — the
+// workflow transition and the send that follow it. A role nothing can read
+// for is skipped and the skip logged once per episode (route-no-consumer),
+// so the workflow never enters a state whose agent cannot receive: on
+// 2026-09-10 analyze-route moved the workflow into analyzing every cycle for
+// a role with no window (MUX-180, Decision 2).
+func RouteToRole(session, role, route string) bool {
+	inbox := WindowForRole(role)
+	if RoleHasConsumer(session, inbox) {
+		EndEpisode(session, inbox, "route-no-consumer")
+		return true
+	}
+	NoteEpisode(session, inbox, "route-no-consumer", fmt.Sprintf(
+		"%s: %s skipped — no window, inbox listener or headless agent; the workflow stays put until one exists", inbox, route))
+	return false
 }
 
 // consumerGuardEnv set to 0 turns the refusal off — a rollback valve, and the
@@ -63,14 +102,12 @@ func refuseWithoutConsumer(session string, m Message, inboxRole string) error {
 		return nil
 	}
 	if m.From == m.To || RoleHasConsumer(session, inboxRole) {
-		_ = os.Remove(noConsumerMarkerPath(session, inboxRole))
+		EndEpisode(session, inboxRole, "send-no-consumer")
 		return nil
 	}
-	if f, err := os.OpenFile(noConsumerMarkerPath(session, inboxRole), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644); err == nil {
-		_ = f.Close()
-		LogLifecycle(session, "warn", "bus", "send-no-consumer", fmt.Sprintf(
-			"%s: no window, inbox listener or headless agent — refusing messages to it until one exists (first: %s→%s:%s)",
-			inboxRole, m.From, m.To, m.Action))
+	if NoteEpisode(session, inboxRole, "send-no-consumer", fmt.Sprintf(
+		"%s: no window, inbox listener or headless agent — refusing messages to it until one exists (first: %s→%s:%s)",
+		inboxRole, m.From, m.To, m.Action)) {
 		fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s has no consumer (logged once until one exists)\n",
 			m.From, m.To, m.Action, inboxRole)
 	}

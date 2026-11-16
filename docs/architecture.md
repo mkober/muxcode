@@ -1097,7 +1097,8 @@ A Codex **test** agent woken with an inbox that holds no request is told so: `Co
 2. `Send()` creates a delivery status file (`delivery/{msg-id}.status`) tracking the message lifecycle (sent → delivered → responded)
 3. If the message has `ReplyTo`, `Send()` marks the original message as "responded"
 4. `send` calls `Notify()` to alert the recipient (provider-aware):
-   - **Trigger file** (always): writes timestamp to `trigger-{role}.notify` — agents running `muxcode inbox --poll` detect this via `stat()` polling (no pane interaction, no TOCTOU race)
+   - **No consumer** (checked first, MUX-180): a role nothing can read for — no window, no `--poll`/`--wait` listener, no running headless agent (`RoleHasConsumer`, `bus/consumer.go`) — is not notified at all. No trigger file, no injection attempt, `nil` returned, and one `notify-no-consumer` lifecycle row per episode. Details below
+   - **Trigger file** (for every role that has a consumer): writes timestamp to `trigger-{role}.notify` — agents running `muxcode inbox --poll` detect this via `stat()` polling (no pane interaction, no TOCTOU race)
    - **Polling agents** (`--poll` or `--wait` active): skipped for send-keys — the poll loop watches the trigger file
    - **Harness panes**: skipped — they poll inbox directly
    - **Non-hook providers** (OpenCode, Codex CLI, local LLM): routed directly to `provider.SendWakeUp()` — OpenCode and Codex inject message payload via send-keys (self-addressed messages filtered to prevent echo loops — `isLoopingSelfSend` in `bus/inbox.go` refuses every self-send at `Send` except the launch-time bootstrap, and that exemption is keyed on type **and** action (`isStartupBootstrap`: `request:startup`); an agent's own `response:startup` is correlated through `recordUndeliveredReply` and never delivered or CC'd. On 2026-09-09 a codex test agent that answered its bootstrap with `--reply-to` acknowledged its own acknowledgement every 5 s — 16 rows in a minute — a one-role echo `DetectMessageLoop` reports but cannot break: [`MUX-169`](requirements/completed/MUX-169-startup-self-reply-echo-loop.md)), local LLM is no-op
@@ -1106,6 +1107,22 @@ A Codex **test** agent woken with an inbox that holds no request is told so: `Co
 5. If auto-CC fires, `send` also notifies edit
 6. The daemon provides fallback notifications for all roles
 7. When an agent reads its inbox via `Receive()`, consumed messages are marked "delivered" in their status files
+
+#### A role nothing can read for
+
+A role can be configured without being launched — `analyze` is a known role with no window in a default session — and that is a supported state, not a fault. What matters is whether anything can **consume** its inbox, not whether it has a window: `RoleHasConsumer` is true for a window, a live `muxcode inbox --poll` or `--wait` listener, or a running headless agent, and an unreadable or empty window list is indeterminate and counts as having one. On 2026-09-10 a windowless `analyze` was sent to, notified, and refused at pane capture 164 times in 28 hours while its inbox reached 109 messages ([MUX-145](requirements/completed/MUX-145-messages-routed-to-windowless-role.md), [MUX-180](requirements/completed/MUX-180-daemon-notifies-windowless-roles-forever.md)). Three roads now ask the question before they act, each reporting once per role per episode and again only after a consumer has come and gone:
+
+| Road | What is skipped | Lifecycle row |
+|------|-----------------|---------------|
+| `bus.Send` (`refuseWithoutConsumer`) | The message is refused — `ErrNoConsumer`, `NOT SENT` at the CLI | `send-no-consumer` |
+| `bus.Notify` | The trigger file and the wake-up. The check sits before the trigger write, so all of the daemon's notify call sites inherit it | `notify-no-consumer` |
+| The daemon's analyze route (`bus.RouteToRole`, before `TransitionWorkflow`) | The `analyzing` workflow transition and the send behind it — the workflow never enters a state whose agent cannot receive | `route-no-consumer` |
+
+Each road keeps its own marker in the bus directory (`<event>-<role>.marker`, through the shared `NoteEpisode` / `EndEpisode`). A skipped role is not blacklisted: the first call that finds a consumer clears the marker and proceeds normally.
+
+**The injection guard's signal is kept.** A window that is **present** but whose pane capture fails passes the consumer check, reaches the guard, and still logs `injection-refused` — that row means a dead agent's shell was about to receive a payload ([MUX-164](requirements/completed/MUX-164-codex-trust-prompt-reads-idle-wakeup-into-shell.md)), and the per-cycle noise from an absent window used to bury it.
+
+**The inbox cap.** A role the consumer check passes can still stop consuming — an agent dead behind its window, a listener that went away. So every inbox is bounded at `InboxCap`, 50 unconsumed messages (`bus/inbox_cap.go`). `appendCapped` is the only write into an inbox, for the addressee and for the auto-CC copy alike: under a per-inbox lock (`lock/inbox-cap-<role>.lock`) it counts, and at 50 refuses with `ErrInboxFull` rather than appending. Nothing already queued is dropped, and every message type is bound, an agent's own startup message included. Partial consumes (`receiveMatching`, `ConsumeByID`) hold the same lock across take-and-restore. The lock fails closed: if it cannot be taken nothing is written and the lock error is returned. Reaching 50 writes one `inbox-full` lifecycle row per episode and sends edit one `inbox-full` event naming the role; when the full inbox is edit's own there is only the row, since a message about it would meet the same cap. An auto-CC copy that would take edit past its cap is not made — the original is still delivered and the sender is not told. An append that finds the inbox below 50 ends the episode, so a refill alerts again.
 
 Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts.
 

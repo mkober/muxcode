@@ -771,7 +771,9 @@ func (d *Daemon) routeTrigger() {
 	bus.LogLifecycle(d.session, "info", "daemon", "trigger-route",
 		fmt.Sprintf("%d file(s): %s", len(files), strings.Join(files, ", ")))
 
-	// Workflow: transition to analyzing
+	if !bus.RouteToRole(d.session, "analyze", "analyze-route") {
+		return
+	}
 	bus.TransitionWorkflow(d.session, bus.StateAnalyzing, "daemon:analyze-route",
 		bus.WithFiles(files))
 

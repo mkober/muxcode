@@ -200,7 +200,7 @@ Phase 1 pins behaviour, this table pins where it lives now.
 
 Answered by the user in conversation and relayed by edit (`1794787239-edit-1aacf9a4`), as one
 decision across this spec and
-[MUX-180](../backlog/MUX-180-daemon-notifies-windowless-roles-forever.md). The open criteria and phases below
+[MUX-180](./MUX-180-daemon-notifies-windowless-roles-forever.md). The open criteria and phases below
 were rewritten to it the same day; the ticked reload items are untouched.
 
 **Context the user gave, which changes this spec's vocabulary.** The feature that hosts several

@@ -20,6 +20,45 @@ Reported by edit; the rows below were re-read by plan in `log.jsonl` and the lif
 | 14:28:13 | `task-timeout daemon→test:test expired in-flight`, then `graph-node-done … test -> failure` |
 | after | The run's fix worker diagnoses a timeout with no code defect and re-verifies — about 11 minutes lost |
 
+### Observed again (2026-11-16) — a stale id, not an unknown one
+
+Reported by edit (`1794866234-edit-18b29d28`), same session, same run, MUX-180's Phase 2 test node.
+Plan re-read the task store and `log.jsonl`.
+
+| Time | Event | Source |
+|------|-------|--------|
+| 16:36:18 | The daemon dispatches `request:test`, id `1794864978-daemon-a1fc0b39` | `log.jsonl` |
+| 16:37:54 | The Codex test agent answers it — response `1794865074-test-c9f0696a`, `reply_to` that id; the task is `completed` | `log.jsonl`, `tasks/` |
+| 16:46:16 | The daemon dispatches the **next** `request:test`, id `1794865576-daemon-1f847a92` | `log.jsonl` |
+| ~16:47 | The test agent answers it with `--reply-to 1794864978-daemon-a1fc0b39` — the previous request's id. `muxcode send` prints `NOT SENT`: the task that id names is already answered (MUX-155's duplicate-reply guard, `ErrReplySuppressed`) | Edit's account. Nothing is written for a refused reply, so no row in `log.jsonl` shows it; plan found none and could not confirm the time or the id from records |
+| 16:56:17 | `task-timeout daemon→test:test expired in-flight` — task `1794865576-daemon-1f847a92` is `timed-out` at its 600 s cap; the graph's test node fails and the run retries it | lifecycle log, `tasks/` |
+
+**How this differs from the 2026-11-14 case, and why it matters for the decisions.**
+
+| | 2026-11-14 | 2026-11-16 |
+|---|-----------|-----------|
+| The id given | Names **no** message (six characters dropped) | Names a **real** message — the sender's previous, already-answered request |
+| What `send` said | `Sent` — silent | `NOT SENT`, exit 1 — the agent was told, and did not send a corrected reply |
+| What caught it | Nothing | MUX-155's duplicate-reply guard, which shipped two days after this spec was filed |
+| The sender's open requests from that requester | One | One |
+| The outcome | The open request waits out 600 s | The same |
+
+The outcome and the repair that would have fixed it are the same: exactly one open request from that
+requester, so Decision 1's first branch would attach the reply to it. But **this spec's trigger is an
+unknown id**, and this id is known. As written:
+
+- Decision 1 speaks of "an unknown `--reply-to`", and the title, the first criterion and Phase 2 all
+  key on the id naming no message. A stale id never enters that branch.
+- The second criterion — "a known `--reply-to` behaves exactly as today" — is a negative control that
+  would **forbid** repairing it.
+- The optional timestamp guard would refuse it too: the two ids' leading timestamps differ
+  (`1794864978` and `1794865576`).
+
+So this occurrence is evidence for the defect's cost, and for a wider rule than the one decided:
+"a `--reply-to` that cannot be the request being answered" covers both an id that names nothing and
+one that names a request already answered. **Whether Decision 1 extends to the stale-id case is not
+decided.** It needs the user's word before Phase 2 is built, because it changes a criterion.
+
 ### Mechanism — verified in code
 
 - `cmd/send.go:45–51` — `--reply-to` is read into `replyTo` and never looked up.
@@ -104,3 +143,5 @@ branch Decision 1 selects. Open requests for the sender come from the receipts a
 ## Status
 
 **Backlog** — 1/14. Filed 2026-11-14. Unparked 2026-11-14 with Decisions 1 and 2 recorded; eligible for the defect loop.
+
+**2026-11-16:** a second occurrence recorded (see [Observed again](#observed-again-2026-11-16--a-stale-id-not-an-unknown-one)) — a `--reply-to` naming the sender's previous, already-answered request, which this spec's "unknown id" trigger does not cover. Not parked: the decided scope is still buildable as written. **One question is open for the user** — whether Decision 1's repair extends to a stale id — and it should be answered before Phase 2, since saying yes changes the second criterion.

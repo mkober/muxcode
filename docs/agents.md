@@ -111,6 +111,8 @@ Non-hook providers degrade gracefully across three layers:
 | api | api-tester.md | api | Manage API collections, execute requests, track history |
 | agent | autonomous-agent.md | edit *(via mode cycle)* | Autonomous story executor — reads Jira, creates requirements, implements features, submits PRs |
 
+**A role can be configured without being launched.** `analyze` has no window in a default session, and a mode-cycled role has none until it is first cycled to. That is a supported state. The bus does not ask whether such a role has a window but whether anything can **consume** its inbox — a window, a live `muxcode inbox --poll`/`--wait` listener, or a running headless agent. With none of those, a message to the role is refused (`NOT SENT`), the daemon neither notifies it nor routes the workflow to it, and each of those is logged once, not once per cycle; `muxcode status` shows the role as `no-consumer`. Nothing is retried on a timer, and nothing needs clearing: launch the role (add it to `MUXCODE_WINDOWS`, or cycle to it) and it receives normally from then on. See [Architecture](architecture.md#a-role-nothing-can-read-for).
+
 ## Agent Categories
 
 ### Orchestrator (edit)

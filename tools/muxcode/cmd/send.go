@@ -246,6 +246,8 @@ func Send(args []string) {
 			notSent("%v; a message to yourself is never delivered", err)
 		case errors.Is(err, bus.ErrNoConsumer):
 			notSent("%v; launch the role or stop routing to it", err)
+		case errors.Is(err, bus.ErrInboxFull):
+			notSent("%v; nothing queued was dropped — send again once its consumer drains it", err)
 		case errors.Is(err, bus.ErrResponseSuppressed):
 			notSent("%v; a response with nothing new needs no reply", err)
 		default:

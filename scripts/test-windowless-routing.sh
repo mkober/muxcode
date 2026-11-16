@@ -12,8 +12,9 @@
 # agent in pane 1 as LaunchSession lays it out:
 #
 #   A. No consumer for analyze: two edit-stabilization cycles leave analyze's
-#      inbox empty with one send-no-consumer row and one REFUSED line in the
-#      daemon log; `muxcode send analyze …` prints NOT SENT and exits 1.
+#      inbox empty — the route is skipped with one route-no-consumer row and no
+#      analyzing transition (MUX-180), sending nothing; `muxcode send analyze …`
+#      prints NOT SENT, exits 1 and writes the one send-no-consumer row.
 #   B. Negative control — an analyze window whose pane reads the inbox: the
 #      next cycle's event lands and is consumed, receipted by analyze.
 #   C. Negative control — no analyze window but its own `inbox --poll --loop`
@@ -153,13 +154,15 @@ echo "-- A: no consumer — the analyze route and the CLI are refused"
 edit_cycle; edit_cycle
 [ "$(cycles)" = 2 ] && [ "$(inbox_rows analyze)" = 0 ] && ok "A: two edit cycles routed, analyze's inbox stays empty" \
   || fail "A: cycles $(cycles), analyze inbox rows $(inbox_rows analyze)"
-[ "$(row_count send-no-consumer '^analyze:')" = 1 ] && ok "A: one send-no-consumer row for both refusals" \
-  || fail "A: $(row_count send-no-consumer '^analyze:') send-no-consumer rows"
-[ "$(grep -c 'REFUSED .*analyze has no consumer' "$WORK/daemon.log")" = 1 ] && ! grep -q 'failed to send analyze event' "$WORK/daemon.log" \
-  && ok "A: one REFUSED line in the daemon log, no route failure line" || fail "A: daemon log REFUSED lines: $(grep -c 'REFUSED .*analyze' "$WORK/daemon.log")"
+[ "$(row_count route-no-consumer '^analyze:')" = 1 ] && [ "$(row_count analyzing .)" = 0 ] \
+  && ok "A: the route skipped both cycles — one route-no-consumer row, no analyzing transition (MUX-180)" \
+  || fail "A: $(row_count route-no-consumer '^analyze:') route-no-consumer rows, $(row_count analyzing .) analyzing transitions"
+[ "$(grep -c 'REFUSED .*analyze has no consumer' "$WORK/daemon.log")" = 0 ] && ! grep -q 'failed to send analyze event' "$WORK/daemon.log" \
+  && ok "A: the route sent nothing — no REFUSED or route failure line in the daemon log" || fail "A: daemon log REFUSED lines: $(grep -c 'REFUSED .*analyze' "$WORK/daemon.log")"
 out=$(AGENT_ROLE=edit "$MUX" send analyze analyze "explain the change" 2>&1); rc=$?
-[ $rc = 1 ] && grep -q 'NOT SENT' <<<"$out" && [ "$(inbox_rows analyze)" = 0 ] && ok "A: muxcode send prints NOT SENT, exit 1, nothing written" \
-  || fail "A: CLI exit $rc: $out"
+[ $rc = 1 ] && grep -q 'NOT SENT' <<<"$out" && [ "$(inbox_rows analyze)" = 0 ] && [ "$(row_count send-no-consumer '^analyze:')" = 1 ] \
+  && ok "A: muxcode send prints NOT SENT, exit 1, nothing written, one send-no-consumer row" \
+  || fail "A: CLI exit $rc, $(row_count send-no-consumer '^analyze:') send-no-consumer rows: $out"
 
 # ── B: an analyze window whose pane reads the inbox ─────────────────
 echo "-- B: negative control — an analyze window that reads"
