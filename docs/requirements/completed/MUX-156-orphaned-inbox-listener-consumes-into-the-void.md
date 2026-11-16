@@ -229,7 +229,7 @@ the last test edit (17:44:58): `./build.sh` exit 0 at 17:52:12, `./test.sh` exit
 (both modules passed), review at 17:54:05 with 0 must-fix, 0 should-fix, 0 nits
 (`/tmp/muxcode-review-1794696808.txt`). The first `./test.sh` on this change, at 17:48, failed on an
 unrelated flaky test in `bus/` — filed as
-[MUX-229](../backlog/MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md) — and the rerun
+[MUX-229](./MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md) — and the rerun
 passed.
 
 | Item | Result |

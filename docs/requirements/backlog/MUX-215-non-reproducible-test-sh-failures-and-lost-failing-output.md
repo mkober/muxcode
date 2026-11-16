@@ -237,7 +237,7 @@ At 17:48 `./test.sh` failed in the `muxcode` module and the summary named the te
 for: the first flaky `./test.sh` failure on record that names itself. The failure was the test's
 temporary `HOME` failing to clean up (`Library: directory not empty`), not an assertion, and it is a
 different test and cause from the candidate above. It is filed as its own defect,
-[MUX-229](./MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md), as Phase 2's third step
+[MUX-229](../completed/MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md), as Phase 2's third step
 provides. Whether either named flake is the one behind the 2026-11-13 failures still cannot be
 shown; this spec's open boxes remain the user's call.
 

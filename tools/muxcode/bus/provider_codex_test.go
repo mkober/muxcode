@@ -599,6 +599,51 @@ func codexTestDarwin(t *testing.T) string {
 	return install
 }
 
+// goTelemetryOff writes Go's telemetry mode "off" under the current HOME's
+// config dir. Under a fresh HOME, the `go env` that build and test launch args
+// run (goToolchainRoots) otherwise starts a detached telemetry child that keeps
+// writing $HOME's config dir after go returns, recreating files under the test's
+// temp dir — usually after t.TempDir's cleanup, leaving a tree behind; twice in
+// 87 suite runs during it, failing "directory not empty" (MUX-229). With "off",
+// go opens no counters and starts no child; the probe itself still runs.
+func goTelemetryOff(t *testing.T) {
+	t.Helper()
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir: %v", err)
+	}
+	dir := filepath.Join(cfg, "go", "telemetry")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mode"), []byte("off"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCodexTestHomeStartsNoGoTelemetry: a codexTestHome test that runs the
+// real `go env` probe leaves no telemetry state under its HOME — no local dir,
+// where a fresh HOME's go writes counters and from which it starts the
+// detached child that raced t.TempDir's cleanup (MUX-229). Without
+// goTelemetryOff the local dir exists the moment go returns.
+func TestCodexTestHomeStartsNoGoTelemetry(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go not on PATH: the probe this guards never runs")
+	}
+	codexTestHome(t)
+	if roots := goToolchainRoots(); len(roots) == 0 {
+		t.Fatal("goToolchainRoots returned nothing: the real go env probe did not run")
+	}
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := filepath.Join(cfg, "go", "telemetry", "local")
+	if _, err := os.Stat(local); !os.IsNotExist(err) {
+		t.Errorf("go wrote telemetry under the test HOME (%s): the child that outlives the test is started", local)
+	}
+}
+
 // argsFor builds launch args for a role on the workspace-write opt-out — the
 // road every per-role grant lives on — with model env cleared, so the
 // assertions see only sandbox flags.
@@ -613,11 +658,13 @@ func (p *CodexProvider) argsFor(t *testing.T, role string) []string {
 
 // codexTestHome points HOME at a temp dir with the lifecycle-log, XDG state and
 // bus-base overrides cleared, so the state roots resolve under it and no real
-// home is touched.
+// home is touched. Go telemetry is turned off for that home (goTelemetryOff).
 func codexTestHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	goTelemetryOff(t)
 	t.Setenv("MUXCODE_LIFECYCLE_LOG_DIR", "")
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv(BusDirBaseEnv, "")
