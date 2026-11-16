@@ -33,7 +33,7 @@ A spec keeps its Defects and category rows until it closes; on close it moves to
 [registry](#completed-id-registry) and the defect ranks are renumbered.
 
 **Parked** — returning one to `drafts/` is the user's call. `55-defect-backlog-loop`'s `select`
-skips every spec listed here. MUX-145 and MUX-153 were parked 2026-09-08; the rest on 2026-11-13, on
+skips every spec listed here. MUX-153 was parked 2026-09-08; the rest on 2026-11-13, on
 the user's decision relayed by edit: a spec whose phases hold a design decision nobody has recorded,
 or that ships together with an unfinished spec, is not worked unattended. MUX-215 was parked the same day
 after its run, for a different reason: its remaining steps need a failure nobody can produce on
@@ -42,13 +42,11 @@ demand. Each keeps its Defects rank.
 | Spec | At | Issue | Why parked |
 |------|----|-------|------------|
 | MUX-215 | 7/17 | [#190](https://github.com/mkober/muxcode/issues/190) | Flaky test not reproducible in 14 runs; reopen on a named failure. Phase 1's capture work stays in the tree |
-| MUX-145 | 9/38 | — | Parked 2026-09-08 |
 | MUX-153 | 3/19 | — | Parked 2026-09-08 |
 | MUX-185 | 0/40 | [#141](https://github.com/mkober/muxcode/issues/141) | Five Phase 2 design decisions (threat model, witness vs daemon secret, guard scope, `actor`, legacy rows) |
 | MUX-181 | 0/25 | [#139](https://github.com/mkober/muxcode/issues/139) | Phase 2 is the user's choice among three seams; ships together with MUX-165 |
 | MUX-165 | 0/20 | — | Ships together with MUX-181 (one provenance mechanism, two rules) |
 | MUX-166 | 0/22 | [#127](https://github.com/mkober/muxcode/issues/127) | Notes: "Decision owed" — the no-overlap behind threshold (5 is a proposal, not a choice) |
-| MUX-170 | 0/12 | — | Parked because it says it should ship together with MUX-155 (shared `bus/dedup.go`). MUX-155 closed 2026-11-14 and its sender key already stops `dispatchNode` adopting a foreign task, so this reason has lapsed and the spec is partly overtaken — to be re-read against the tree before it is unparked |
 | MUX-157 | 0/39 | — | Phase 1: whether watch and analyze join `validationRoles` is undecided |
 | MUX-127 | 0/36 | — | Whether to fold Defect B into MUX-007 is "a filing decision for the user"; `Validate()` rejection rule undecided |
 | MUX-124 | 0/15 | — | Phase 1 implements "the chosen option"; two are listed in order of preference, none chosen |
@@ -56,7 +54,6 @@ demand. Each keeps its Defects rank.
 | MUX-190 | 0/17 | — | Decision 1: re-drive or alert |
 | MUX-160 | 0/35 | — | Three decisions the spec marks "open, the user's call" |
 | MUX-150 | 0/23 | — | Decision 1 (gate by window or path) and Decision 2 ("changed since when") |
-| MUX-184 | 0/44 | — | Five open decisions (ownership proof, automatic vs opt-in, `escabs` scope, daemon signal handler, MUX-147/MUX-156 overlap) |
 | MUX-135 | 0/19 | — | Phase 2: exempt seed records from expiry, or fall back to inbox absence — not chosen |
 | MUX-120 | 5/45 | — | Open decisions (source vs daemon fix, spawn enumeration) and the dirty-worktree policy |
 | MUX-112 | 0/28 | — | Phase 3: synthetic response advisory or authoritative — not decided |
@@ -66,15 +63,25 @@ demand. Each keeps its Defects rank.
 | MUX-111 | 0/27 | — | Phase 4: behaviour for a batch with several requests — not chosen |
 | MUX-110 | 0/24 | — | Phase 1: closed-form startup message or none for harness roles — not decided |
 | MUX-010 | 0/66 | — | Phase 1 is nine design decisions |
-| MUX-147 | 1/55 | — | Reaper design (daemon sweep, startup sweep or both) and three open decisions |
+| MUX-147 | 21/55 | — | Its reaper items (20) are ticked as deferred to MUX-184 on the user's decision of 2026-11-15; what remains is the scripts' own cleanup and the footprint. Decision 1 (harness self-exit) and Decision 3 (idle eviction) are open |
 | MUX-151 | 0/26 | — | Ambiguous-width characters (1 or 2 cells) "not chosen here"; table location depends on MUX-107 |
 | MUX-173 | 0/12 | — | Phase 1: discovery convention (per-role `help` pattern or shared) |
 | MUX-188 | 0/15 | — | Decision 1: whether a worker gets its own bootstrap |
 | MUX-197 | 0/16 | — | Phase 1 presents options A–D to the user; decision unrecorded |
-| MUX-175 | 0/17 | [#133](https://github.com/mkober/muxcode/issues/133) | Parked 2026-11-14 by plan under the rule above: the brake's shape (similarity, cap or hybrid — "worth costing before choosing"), what counts as near-identical, and what happens to a suppressed response are all unchosen |
 
 MUX-223 and MUX-225 were parked at filing and unparked 2026-11-14 once the user's decisions,
 relayed by edit, were recorded in each spec.
+
+**Unparked 2026-11-15** on the user's decisions, relayed by edit and recorded in each spec with its
+criteria and phases rewritten to them:
+
+| Spec | Now | What was decided |
+|------|-----|------------------|
+| MUX-170 | 0/14 | Keep MUX-155's deliver-both for another sender's request; a `daemon` task is a node's own by run id and node id, not payload |
+| MUX-145 | 9/46 | Refuse at `Send` when nothing can consume the role's inbox — no window, no listener and no headless agent; a window alone is not the test. Owns the refusal; MUX-180 owns notify, cap and workflow |
+| MUX-175 | 0/23 | Suppress a response that exactly matches (case, whitespace and punctuation folded; numbers kept) the previous one on the same pair and action within 300 s; no count cap; sender told `NOT SENT`; a reply to an open tracked request is exempt |
+| MUX-180 | 0/25 | Cap 50 per role, refuse past it, drop nothing; the workflow does not transition to a role with no consumer; divided with MUX-145 as above, kept as two specs |
+| MUX-184 | 5/52 | Proof by argv session name (since 2026-11-16 including the legacy `inbox-listener.sh` script path, which is reaped) or a recorded pid still naming the same process, no environment probe; automatic at every launch (`MUXCODE_ORPHAN_REAP=0`); `escabs` servers in scope; the daemon stops its children on TERM/INT, not on re-exec; MUX-147's and MUX-156's reaper phases point to it |
 
 ### Defects — prioritized
 
@@ -98,10 +105,10 @@ relayed by edit, were recorded in each spec.
 | 13 | 1 | [`MUX-160`](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The `/tmp` Go caches the disk-pressure sweep counts but cannot clear | High | — |
 | 14 | 1 | [`MUX-145`](./MUX-145-messages-routed-to-windowless-role.md) | Messages route to a role with no window; diagnose prescribes an impossible fix; reload reports a phantom hang | Medium | — |
 | 15 | 1 | [`MUX-150`](./MUX-150-verify-spec-names-last-routed-batch.md) | `verify-spec` names the last routed batch, not the change set | Medium | — |
-| 16 | 2 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two agents trade acknowledgements every 4–5 s and nothing brakes it | Medium | — |
-| 17 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
-| 18 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
-| 19 | 2 | [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An orphaned inbox listener consumes messages into the void | High | — |
+| 16 | 1 | [`MUX-229`](./MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md) | `TestCodexBuildExecArgs_NoShimWithoutInstallDir` flakes on its temp-HOME cleanup | Medium | — |
+| 17 | 2 | [`MUX-175`](./MUX-175-response-ack-ping-pong-has-no-brake.md) | Two agents trade acknowledgements every 4–5 s and nothing brakes it | Medium | — |
+| 18 | 2 | [`MUX-180`](./MUX-180-daemon-notifies-windowless-roles-forever.md) | The daemon notifies a windowless role forever; its inbox grows unbounded | High | — |
+| 19 | 2 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned session processes are never reaped | High | — |
 | 20 | 2 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an agent expires its in-flight graph dispatch and fails the node | High | — |
 | 21 | 2 | [`MUX-220`](./MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The wake batch drops a listenerless role's own delegation reply, and may re-inject an answered request | High | — |
 | 22 | 2 | [`MUX-223`](./MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project memory resolves against the caller's working directory, stranding session summaries | High | — |
@@ -146,13 +153,13 @@ relayed by edit, were recorded in each spec.
 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` Fails — a Stale Spinner in Scrollback Pins the Pane Busy | Medium | — |
 | [`MUX-226`](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` Runs on the User's Real tmux Server and May Mix In the Installed Binary | Medium | — |
 | [`MUX-228`](./MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` Alerts on the Transient Gap During a Ship Merge | Low | — |
+| [`MUX-229`](./MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md) | `TestCodexBuildExecArgs_NoShimWithoutInstallDir` Flakes on Its Temp-HOME Cleanup | Medium | — |
 | [`MUX-209`](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md) | `test-force-respond.sh` Fails — a Non-Forced `deliver` No Longer Surfaces the In-Flight Skip | Medium | — |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-184`](./MUX-184-orphaned-session-processes-never-reaped.md) | Orphaned Session Processes Are Never Reaped | High | — |
 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every Spawn Worker Launch Sends Edit a Stray Startup Request | Low | — |
 | [`MUX-160`](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The /tmp Go Caches the Disk-Pressure Sweep Counts but Cannot Clear | High | — |
-| [`MUX-156`](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An Orphaned Inbox Listener Consumes Messages Into the Void | High | — |
 | [`MUX-196`](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) | Relaunching an Agent Expires Its In-Flight Graph Dispatch | High | — |
 | [`MUX-152`](./MUX-152-test-sh-hides-modules-after-first-failure.md) | `test.sh` Hides Every Module After the First Failure | High | — |
 | [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Reap Orphaned Harness Processes and Reduce Session Memory Footprint | Medium | — |
@@ -389,6 +396,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-221`](../completed/MUX-221-diagnose-dead-agent-test-uncontrolled-and-hosted-role-remediation.md) | The Dead-Agent Diagnose Test Is Uncontrolled, and a Hosted Role's Remediation Names a Command That Refuses |
 | [`MUX-224`](../completed/MUX-224-tests-use-the-real-global-memory-dir.md) | The Test Suite Creates and Reads the User's Real Global Memory Directory |
 | [`MUX-155`](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md) | `muxcode send` Drops a Message Because Another Agent's Task Is In Flight |
+| [`MUX-156`](../completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | An Orphaned Inbox Listener Consumes Messages Into the Void |
 
 ## Ideas without specs
 

@@ -618,6 +618,13 @@ func PollingMarkerPath(session, role string) string {
 	return filepath.Join(BusDir(session), "polling-"+role+".marker")
 }
 
+// PollingParentPath returns the sidecar beside the --poll marker recording
+// "<listener pid> <parent pid>" at claim time. The marker itself stays a bare
+// pid, which scripts read with `kill -0`.
+func PollingParentPath(session, role string) string {
+	return filepath.Join(BusDir(session), "polling-"+role+".parent")
+}
+
 // staleMarkerAge returns the duration after which a waiting/polling marker
 // is considered stale and should be cleaned up. This prevents stale markers
 // from blocking notifications if a process crashes during --wait or --poll.

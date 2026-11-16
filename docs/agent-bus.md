@@ -196,7 +196,18 @@ muxcode inbox [--peek] [--raw] [--role ROLE] [--poll] [--loop]
 - `--raw` — dump raw JSONL
 - `--role ROLE` — read a specific role's inbox (defaults to own role)
 - `--poll` — block until a message arrives (watches `trigger-{role}.notify` mtime + inbox), then consume and return. Sets a `polling-{role}.marker` that suppresses redundant daemon send-keys wake-ups while the poll is active — the agent pulls its own inbox instead of being pushed to.
-- `--loop` — with `--poll`, re-arm the poll after each return. This is the **self-poll listener** each agent runs as a background job under the [delivery-acknowledgement](architecture.md#delivery-tracking) model; for Claude Code agents the [Stop hook](hooks.md#hook-stop-self-poll-re-launch) re-launches it if it dies.
+- `--loop` — with `--poll`, keep polling past the poll timeout instead of exiting with nothing read. It still returns after the first batch it consumes (`inboxPoll`, `cmd/inbox.go`). This is the **self-poll listener** each agent runs as a background job under the [delivery-acknowledgement](architecture.md#delivery-tracking) model; for Claude Code agents the [Stop hook](hooks.md#hook-stop-self-poll-re-launch) re-launches it after each return.
+
+A `--poll` listener ends **without consuming** on two conditions, checked every tick before the inbox is read:
+
+| Condition | Check | Lifecycle row |
+|-----------|-------|---------------|
+| Its parent process is gone | `listenerOrphaned`: the parent pid recorded at start has changed, or is 1 | `listener-orphan-exit` (warn, source `inbox`): `<role> pid <pid>: parent <ppid> gone, exiting without consuming` |
+| Its tmux session is gone | `TmuxHasSession`, about every 30 s | none |
+
+The marker's holder also stops counting as a live poller once it loses its parent (MUX-156): `SetPolling` writes a `polling-{role}.parent` sidecar (`<listener pid> <parent pid>`) beside the marker, and `IsPolling` is false for a live holder whose recorded parent is pid 1 or no longer exists (`pollerOrphaned`, `bus/notify.go`) — so the Stop hook relaunches the agent's own listener instead of trusting an orphan. The marker is left in place (the holder exits on its next tick, and a new listener's claim terminates it); a marker with no sidecar, or one naming another pid, is judged as before.
+
+The parent check exists because an orphaned listener still held its role's claim: it consumed the next batch into output nobody read while the receipt recorded it `acked` — a `run → edit` request answered 3½ minutes late on 2026-09-08, and a user-authorised deploy that never ran on 2026-09-10 (MUX-156). The message an orphan would have eaten stays in the inbox for the next live listener.
 
 **Example:**
 ```

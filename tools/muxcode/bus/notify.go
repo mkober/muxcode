@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -772,17 +773,61 @@ func SetPolling(session, role string) bool {
 	if pid, ok := readMarkerPID(path); ok && pid != os.Getpid() && CheckProcAlive(pid) {
 		terminateMarkerHolder(pid)
 	}
-	return claimMarker(path)
+	if !claimMarker(path) {
+		return false
+	}
+	_ = os.WriteFile(PollingParentPath(session, role), []byte(fmt.Sprintf("%d %d", os.Getpid(), os.Getppid())), 0644)
+	return true
 }
 
-// ClearPolling removes the --poll marker for a role, if this process owns it.
+// ClearPolling removes the --poll marker for a role, and its parent sidecar,
+// if this process owns them.
 func ClearPolling(session, role string) {
 	releaseMarker(PollingMarkerPath(session, role))
+	if pid, _, ok := readPollingParent(session, role); ok && pid == os.Getpid() {
+		_ = os.Remove(PollingParentPath(session, role))
+	}
+}
+
+// readPollingParent returns the listener and parent pids SetPolling recorded.
+func readPollingParent(session, role string) (pid, parent int, ok bool) {
+	data, err := os.ReadFile(PollingParentPath(session, role))
+	if err != nil {
+		return 0, 0, false
+	}
+	if n, _ := fmt.Sscanf(string(data), "%d %d", &pid, &parent); n != 2 {
+		return 0, 0, false
+	}
+	return pid, parent, true
+}
+
+// pollerOrphaned reports whether the marker holder pid lost the parent it
+// claimed under: its sidecar names it and records a parent that is pid 1 or no
+// longer exists. A marker with no sidecar, or one naming another pid, is not
+// judged — the holder counts as before.
+func pollerOrphaned(session, role string, pid int) bool {
+	holder, parent, ok := readPollingParent(session, role)
+	if !ok || holder != pid {
+		return false
+	}
+	return parent == 1 || !procExists(parent)
+}
+
+// procExists is CheckProcAlive that also counts a process this one may not
+// signal (EPERM) as existing.
+func procExists(pid int) bool {
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 // IsPolling returns true if the given role has an active --poll loop.
 // Validates that the PID in the marker is still alive to prevent stale markers
-// from permanently suppressing notifications.
+// from permanently suppressing notifications, and that it has not lost its
+// parent (pollerOrphaned): an orphaned listener once satisfied the Stop hook's
+// liveness question, so the agent's own listener was never relaunched while the
+// orphan consumed its messages (MUX-156). The orphan's marker is left in place
+// — the holder is alive, exits on its own next tick, and a newcomer's
+// SetPolling terminates it.
 func IsPolling(session, role string) bool {
 	data, err := os.ReadFile(PollingMarkerPath(session, role))
 	if err != nil {
@@ -797,7 +842,7 @@ func IsPolling(session, role string) bool {
 		_ = os.Remove(PollingMarkerPath(session, role))
 		return false
 	}
-	return true
+	return !pollerOrphaned(session, role, pid)
 }
 
 // notifySendKeys injects a wake-up message into the agent's tmux pane.

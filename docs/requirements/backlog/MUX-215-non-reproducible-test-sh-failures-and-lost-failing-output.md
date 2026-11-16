@@ -227,6 +227,20 @@ those two failures cannot be matched to this test by name. Phase 2's steps and a
 identification, criterion 3 ("identified, or shown to come from overlapping or mid-edit runs") and
 criterion 4 (the flaky test fixed) could be ticked against PR #196 — that is the user's call.
 
+### A second named flake, 2026-11-14 — filed as MUX-229
+
+Recorded 2026-11-14 by plan. Nothing is ticked on this.
+
+At 17:48 `./test.sh` failed in the `muxcode` module and the summary named the test —
+`FAIL bus: TestCodexBuildExecArgs_NoShimWithoutInstallDir` — with the full output kept in
+`/tmp/muxcode-test-logs/20261114-174723-85976/muxcode.log`. That is Phase 1 doing what it was built
+for: the first flaky `./test.sh` failure on record that names itself. The failure was the test's
+temporary `HOME` failing to clean up (`Library: directory not empty`), not an assertion, and it is a
+different test and cause from the candidate above. It is filed as its own defect,
+[MUX-229](./MUX-229-codex-exec-args-test-flakes-on-temp-home-cleanup.md), as Phase 2's third step
+provides. Whether either named flake is the one behind the 2026-11-13 failures still cannot be
+shown; this spec's open boxes remain the user's call.
+
 ### Phase 3: Integration test
 
 - [ ] `bash scripts/test-test-sh-coverage.sh` through the run agent: every check passes, floor met;

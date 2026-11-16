@@ -33,7 +33,7 @@ None of the four described a log finding. All fired because a bash call in the w
 |------|----------|--------|------------|
 | 10:09:23 | `watch → edit [event:notify]` "Watch completed — logs look healthy after deploy (`nohup muxcode inbox --poll --loop > /tmp/watch-listener.log 2>&1 & disown; sleep 1; ps aux \| grep …`)" — the body is a listener-detaching call, not a log finding | bus history | **machine-written (chain)** |
 
-The call itself is the [MUX-156](../backlog/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md)
+The call itself is the [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md)
 2026-09-22 entry, and is now refused at PreToolUse by `CheckListenerGuard`. The chain defect is
 **not** fixed by that change and remains this spec's work. A second facet of the mechanism, verified
 in code the same day: `ClassifyCommand`'s bus test is a raw `strings.HasPrefix(command, "muxcode")`

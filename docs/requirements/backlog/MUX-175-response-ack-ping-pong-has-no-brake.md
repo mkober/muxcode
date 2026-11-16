@@ -64,6 +64,34 @@ information**. Two candidate shapes, both worth costing before choosing:
 A hybrid is likely right: cap consecutive **near-identical** responses, so a pair trading new content
 is never limited while a pair trading `Acknowledged.` is stopped quickly.
 
+*Superseded 2026-11-15: the user chose content-similarity suppression alone, with no count — see
+[Decisions](#decisions--the-users-recorded-2026-11-15).*
+
+### Decisions — the user's, recorded 2026-11-15
+
+Answered by the user in conversation and relayed by edit (`1794787239-edit-1aacf9a4`). The criteria
+and phases below were rewritten to them the same day.
+
+| # | Decision | Chosen |
+|---|----------|--------|
+| 1 | The brake's shape | **Content-similarity suppression only — no consecutive-count cap.** A response too similar to the previous response on the same `(from, to, action)` is suppressed immediately, on the first repeat |
+| 2 | What "too similar" means | **An exact match after normalizing case, whitespace and punctuation.** Numbers and ids stay significant: `10/23` and `11/23` differ. **Plus a 5-minute window:** only a match against a previous response sent within 300 s counts, which is what makes the brake self-clearing |
+| 3 | What happens to a suppressed response | **Not delivered**; a lifecycle row names the pair and the action; the sender is told `NOT SENT - <reason>` and exits 1 ([MUX-155](../completed/MUX-155-send-dedup-keys-on-target-not-sender.md)'s `notSent` pattern). **A response answering an open tracked request is never suppressed. A request is never suppressed** |
+
+Two points the decisions left open. Plan proposed both readings; **the user confirmed both on
+2026-11-16** (relayed by edit, `1794844857-edit-5f52a782`):
+
+| Point | Reading — confirmed | Why |
+|-------|----------------|-----|
+| What "the previous response" is | The last response on that `(from, to, action)` that was **delivered**. A suppressed attempt does not become the comparison point and does not restart the 300 s | Otherwise a pair that never stops trying stays suppressed for as long as it tries, and "a pair stopped once can converse again later" would hold only for a pair that went quiet |
+| The window's override | `MUXCODE_RESPONSE_SUPPRESS_WINDOW`, default 300, beside the relay suppression's `MUXCODE_RELAY_SUPPRESS_WINDOW` | The integration test has to see the window clear without waiting five minutes. No threshold variable exists, because Decision 1 has no count |
+
+**What the chosen measure does not stop, by decision — accepted by the user 2026-11-16.** A loop whose text changes each round — a
+counter, a timestamp, a fresh id — is never an exact match, so it is not braked; numbers are
+significant so that `10/23` → `11/23` progress reports survive. The 2026-09-10 exchange was braked
+only from the point it degraded to bare `Acknowledged.` on one side. `DetectMessageLoop` still alerts
+on the frequency pattern either way.
+
 ### Scope boundary
 
 In scope: a brake on response-type ping-pong, and whatever content test distinguishes it from a
@@ -76,21 +104,32 @@ this spec exists because instruction alone did not hold.
 
 ### Acceptance criteria
 
-- [ ] A pair of agents exchanging near-identical response-type messages is stopped automatically,
-      without a human issuing a directive
+Rewritten 2026-11-15 to Decisions 1–3.
+
+- [ ] A response whose text, normalized for case, whitespace and punctuation, equals the previous
+      response delivered on the same `(from, to, action)` within 300 s is suppressed on that first
+      repeat — a pair trading `Acknowledged.` stops without a human issuing a directive
 - [ ] A substantive response exchange — new content each round — is **not** suppressed, pinned by a
-      test built from the 10:42:37 `plan <-> edit` shape
+      test built from the 10:42:37 `plan <-> edit` shape; two responses differing only in a number or
+      an id (`10/23`, `11/23`) are both delivered
+- [ ] A suppressed response is not delivered — in neither inbox nor the auto-CC copy — and the sender
+      gets `NOT SENT - <reason>` with exit 1
 - [ ] The suppression writes a lifecycle row naming the pair and the action, so a stopped exchange is
       visible rather than silent
-- [ ] Suppression is bounded and self-clearing: a pair stopped once can converse again later
+- [ ] Suppression is bounded and self-clearing: the same text is delivered again once 300 s have
+      passed since the last delivered copy
+- [ ] A response answering an **open tracked request** is never suppressed, however similar
 - [ ] The brake cannot suppress a `request`, only a `response`
 
 ### Technical approach
 
 Extend the suppression that already exists for relays rather than inventing a second mechanism, but
-key it on response identity. `bus.Send` is the choke point — the same place MUX-169 chose to drop
-self-replies, for the same reason: an alert-only detector downstream cannot stop what has already been
-written.
+key it on response identity: `(from, to, action)` plus the normalized text of the last delivered
+response and when it was sent. There is no counter (Decision 1). `bus.Send` is the choke point — the
+same place MUX-169 chose to drop self-replies, for the same reason: an alert-only detector downstream
+cannot stop what has already been written. The refusal reaches the CLI through the `notSent` road
+MUX-155 built, so the sender reads the reason rather than a `Sent` line for a message written
+nowhere.
 
 The test that matters is the **negative** one. A brake that suppresses everything passes a naive
 "loop stopped" assertion, so the suite needs both: the build↔test shape must be stopped, and the
@@ -109,29 +148,40 @@ fix.
 
 ### Phase 1: The brake
 
-- [ ] Add response-ping-pong suppression at `bus.Send`, keyed on `(from, to, action)` plus payload
-      similarity
-- [ ] Emit a lifecycle row when a response is suppressed
-- [ ] Make the threshold and window configurable, defaulting conservatively
+- [ ] Add response suppression at `bus.Send`: a `response` whose normalized text (case, whitespace
+      and punctuation folded; digits and ids kept) equals the last response delivered on the same
+      `(from, to, action)` within the window is not written to any inbox
+- [ ] Exempt a response that answers an open tracked request, and every `request`
+- [ ] Return the refusal through `notSent`: `NOT SENT - <reason>`, exit 1
+- [ ] Emit a lifecycle row when a response is suppressed, naming the pair and the action
+- [ ] Window 300 s by default, `MUXCODE_RESPONSE_SUPPRESS_WINDOW` overriding it; a suppressed attempt
+      neither replaces the comparison text nor restarts the window
 
 ### Phase 2: Tests
 
-- [ ] Positive: the build↔test `Acknowledged.` shape is stopped within the threshold
+- [ ] Positive: the build↔test `Acknowledged.` shape is stopped on the first repeat, and a repeat
+      differing only in case, spacing or punctuation is stopped too
 - [ ] **Negative control:** the plan↔edit `verify-spec` shape — new content each round — is never
-      suppressed
-- [ ] A suppressed pair can converse again after the window clears
+      suppressed, and `10/23` followed by `11/23` are both delivered
+- [ ] **Negative control:** an identical response that answers an open tracked request is delivered
+- [ ] A suppressed pair can converse again after the window clears, including while it kept retrying
+      during the window
 
 ### Phase 3: Docs
 
 - [ ] `CLAUDE.md` relay-loop bullet: state that responses are now braked too, and how the content test
       keeps substantive exchanges alive
 - [ ] [`docs/architecture.md`](../../architecture.md): the same, beside `DetectMessageLoop`
+- [ ] [`docs/agent-bus.md`](../../agent-bus.md): a row in `muxcode send`'s "A message that was not
+      written says so" table, and the window variable in [`docs/configuration.md`](../../configuration.md)
 
 ### Phase 4: Integration test
 
 - [ ] `scripts/test-response-pingpong.sh`: drive two scratch agents into an ack exchange, assert it
-      stops without intervention and that a lifecycle row names the pair
-- [ ] Include the substantive-exchange case as a section that must **not** trip the brake
+      stops without intervention, that the repeat's sender read `NOT SENT` with exit 1 and that a
+      lifecycle row names the pair
+- [ ] Include the substantive-exchange case as a section that must **not** trip the brake, and a
+      reply to an open tracked request that must be delivered though identical
 - [ ] Coverage floor set so a skipped section cannot read as green
 - [ ] Run through the run agent and record the row here
 
@@ -150,14 +200,10 @@ since filing — responses are no longer typed into a listenerless agent's pane
 and a Codex test agent woken with no request is told to send no reply (MUX-213) — but an agent that
 reads its own inbox still receives every response.
 
-Decisions owed — the user's:
-
-| # | Decision | Options |
-|---|----------|---------|
-| 1 | The brake's shape | The table above offers content-similarity suppression or a consecutive response-only cap, "both worth costing before choosing", and calls a hybrid only "likely right". Phase 1 is written for the hybrid, but nobody has chosen it |
-| 2 | What "near-identical" means | The similarity measure (exact match after normalizing, a token-overlap ratio, a length bound) and the default threshold and window — Phase 1 says only "defaulting conservatively" |
-| 3 | What happens to a suppressed response | Dropped at `Send`, or written to the log but not delivered; whether the sender is told; and that a response answering an open tracked request must never be the one dropped |
+The three decisions it was parked on — the brake's shape, what "near-identical" means, and what
+happens to a suppressed response — were answered by the user on 2026-11-15 and are recorded under
+[Decisions](#decisions--the-users-recorded-2026-11-15). **Unparked 2026-11-15.**
 
 ## Status
 
-**Backlog** — 0/17. Filed 2026-09-10. Parked 2026-11-14 pending Decisions 1–3 (Notes).
+**Backlog** — 0/23. Filed 2026-09-10. Parked 2026-11-14; unparked 2026-11-15 once the user's Decisions 1–3 were recorded and the criteria and phases rewritten to them (17 items became 23).

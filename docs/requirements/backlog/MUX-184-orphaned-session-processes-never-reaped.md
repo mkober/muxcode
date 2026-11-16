@@ -50,7 +50,7 @@ Three claims in the handoff did not survive verification and are recorded correc
 | 6 | The four live `muxcode inbox --poll --loop` listeners carry **no session name in argv** — their session is `BUS_SESSION` in the environment, inherited from the pane | plan, `ps -axo pid,ppid,command`. An argv-matching reaper cannot own this family |
 
 Orphans are not inert. An orphaned listener consumes bus messages for a session that no longer
-exists ([MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — 31 alive at its
+exists ([MUX-156](../completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — 31 alive at its
 second occurrence, a user-authorised `cdk deploy` acked and never run). Orphaned harnesses burn CPU
 and memory ([MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — 36 holding ~243 MB at its
 measurement). This spec is the mechanism both of those symptoms share.
@@ -125,6 +125,23 @@ A reaper may kill only what it can prove a dead session owns. The proof availabl
 | Launch helpers | `muxcode launch --resize <s>`, `--auto-accept <s> …` (`launcher.go:315-318`) | yes | none | whether they exit on their own when the session goes is **unverified** (Phase 1) |
 | Integration-test tmux servers | `tmux -L escabs-<pid> …` | not session-owned at all | the launching script's pid is in the socket name | owned by a script's `EXIT` trap (`scripts/test-escape-absorber.sh:50-58`); how three escaped it is not established |
 
+**Proof per family — Decision 1, recorded 2026-11-15.** Two proofs exist and nothing else counts: the
+session name in argv, or a recorded pid that still names the same process. No proof → no kill, an
+`orphan-unproven` row. There is no environment-probe proof.
+
+*Amended 2026-11-16 by the user (relayed by edit, `1794844857-edit-5f52a782`): the legacy
+`inbox-listener.sh` script form, whose path names the session, counts as argv proof — the same
+evidence class as the daemon, monitor and launch helpers — and **is reaped**. Plan had read the
+decision as leaving it unproven; that reading is reversed.*
+
+| Family | Proof | Consequence |
+|---|---|---|
+| Daemon, monitor, launch helpers | Session name in argv | Reaped on the argv census when the named session is positively absent |
+| Legacy listener, script form (`bash <bus base>/muxcode-bus-<s>/inbox-listener.sh`) | Session name in argv — the script path's `muxcode-bus-<s>` directory names it | Reaped on the argv census when the named session is positively absent, like the row above. The parser takes the session from the bus-directory component of the path only; a path that does not parse to one is unproven |
+| Claude inbox listener, headless harness, `muxcode proc` children, spawn workers, webhook | The pid record under the dead session's bus dir, **and** that pid still naming the recorded process (pid reuse detectable — whether each record carries enough for that is Phase 1's finding; where it does not, Phase 3 adds it) | Reaped from the record; a record whose pid now names something else is refused and logged |
+| Legacy listener, loop form (`bash -c while true; do muxcode inbox --poll; done`) | Neither. The bash parent is unrecorded and its argv carries no session | `orphan-unproven`, never killed. Its inner `muxcode inbox --poll` is reaped per iteration through the marker record like any listener |
+| `escabs-<pid>` test tmux servers | Its own rule (Decision 3): the pid in the socket name is dead | Reaped with its own lifecycle row; not session-owned, so the session-liveness bar does not apply — the socket-name pid's liveness does |
+
 Two doctrines already in the tree bound the design. `isTmuxSessionAlive` (`bus/cleanup.go:210-240`)
 demands **positive absence** — the server answered and the name was not listed — because on
 2026-09-08 a sandboxed probe read every live session as stale and an attached session lost its bus
@@ -141,8 +158,8 @@ that blindness, which is one reason the pid records above matter.
 
 ### Family
 
-- [MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — the harness family. Its Phases 2–3 (reaper design; *"may a daemon reap another session's processes?"*) are this spec's Phases 2–3 restricted to one family; its footprint half is untouched here.
-- [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — the listener family. Its listener-side self-exit and receipt attribution stay there; its daemon-side census is this reaper.
+- [MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — the harness family. Its Phases 2–3 (reaper design; *"may a daemon reap another session's processes?"*) are this spec's Phases 2–3 restricted to one family; its footprint half is untouched here. Since 2026-11-15 its reaper items are ticked there as deferred to this spec (Decision 5).
+- [MUX-156](../completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — the listener family. Its listener-side self-exit and receipt attribution stay there; its daemon-side census is this reaper.
 - [MUX-161](../completed/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) — `ps` is unavailable to a Codex build agent; any reaper on the `ps` road shares it.
 - [MUX-008](./MUX-008-unverified-daemon-auto-restart.md) — the fire-and-hope relaunch; bears on whether a reaped daemon stays reaped.
 - [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) — one way an integration script dies mid-run; whether that is how the `escabs` servers lost their trap is not established.
@@ -154,19 +171,25 @@ that blindness, which is one reason the pid records above matter.
 - [ ] Closing a session — `tmux kill-session`, a same-name relaunch, or the tmux server exiting — leaves **no process whose bus session is that session** alive past a bounded grace period: daemon, monitor, listeners, harness, proc children, spawn workers, webhook, launch helpers
 - [ ] The `session-closed` hook, or its replacement, removes **the closing session's own** artifacts — sub-defect A closed, with a negative control proving it does not touch a live session's
 - [ ] Process cleanup precedes file cleanup, and the monitor stops before the daemon — a reaped session's bus dir does not reappear (sub-defect B)
-- [ ] A daemon that exits — signalled or otherwise — takes its harness with it, or the reaper finds the harness by its pid record (sub-defect C)
-- [ ] Ownership is proved before any kill: by the session name in argv, by a pid record under that session's bus dir whose pid still names the same process, or by an explicit environment probe — **never by bare process name**, and never while the session's liveness is unknown (the `isTmuxSessionAlive` positive-absence bar)
+- [ ] A daemon sent TERM or INT stops its children — harness and proc children — before it exits; a daemon that dies without the chance (`kill -9`) leaves a harness the reaper finds by its pid record (sub-defect C, Decision 4)
+- [ ] **Negative control:** a daemon re-exec'ing in place for `upgrade-daemons` does **not** stop its children — the harness survives the re-exec under the same pid (Decision 4)
+- [ ] Ownership is proved before any kill: by the session name in argv (daemon, monitor, launch helpers, and the legacy `inbox-listener.sh` script form, whose path names it), or by a pid record under that session's bus dir whose pid still names the same process (every other family) — **never by bare process name, never by an environment probe**, and never while the session's liveness is unknown (the `isTmuxSessionAlive` positive-absence bar) (Decision 1)
 - [ ] A live session's processes are never reaped: the integration test runs a scratch live session beside the dead one and proves every one of its processes survives the sweep
 - [ ] Every kill writes a lifecycle row naming session, family, pid and the proof used (`orphan-reaped`); a refusal for want of proof writes `orphan-unproven`
+- [ ] A legacy `inbox-listener.sh` listener whose script path names a dead session is reaped on argv proof; the `bash -c while true …` loop form, which names no session, is left alone and logged `orphan-unproven` (negative control) (Decision 1 as amended 2026-11-16)
 - [ ] Reaping at launch covers **every** dead session on the machine, not only the name being launched — `killStaleProcesses` becomes the family sweep or is subsumed by it
 - [ ] `muxcode cleanup` reaps a dead session's processes before removing its files, or reports what it could not prove and leaves both in place
-- [ ] Automatic-vs-opt-in is decided and recorded with its reason; if automatic, an opt-out exists
-- [ ] Integration-test tmux servers (`escabs-<pid>`) are either in scope with their own proof (the socket-name pid is dead) or explicitly excluded — decided, not defaulted
+- [ ] The sweep runs automatically at every session launch; `MUXCODE_ORPHAN_REAP=0` disables it, and with it set a launch reaps nothing (Decision 2)
+- [ ] An `escabs-<pid>` test tmux server is reaped when the pid in its socket name is dead, with its own lifecycle row; one whose pid is alive survives (Decision 3)
 - [ ] `scripts/test-orphan-reaper.sh` exercises the sweep hermetically with a coverage floor
 
-### Technical approach — options, deliberately not yet chosen
+### Technical approach — the three shapes, composed
 
-Three shapes; the evidence favours composing the first two and keeping the third as one trigger.
+Three shapes. The user's decisions of 2026-11-15 compose them: Decision 1's two proofs are options 1
+(argv, for the families that carry the session — daemon, monitor, launch helpers and, since
+2026-11-16, the script-form legacy listener) and 2 (pid records, for the rest); Decision 2
+makes the launch-time sweep the trigger that does not depend on tmux; option 3, the fixed hook, stays
+as the immediate trigger for the closing session.
 
 | Option | Shape | Catches | Risk |
 |---|---|---|---|
@@ -174,11 +197,12 @@ Three shapes; the evidence favours composing the first two and keeping the third
 | 2 — a session-owned pid registry | every `startDetachedProcess`, `StartPromptAgent`, `claimMarker` and `StartProc` already leaves a record — unify them under one reader that, for a dead session's bus dir, verifies each pid still names the recorded process (start time or argv), kills it, then lets `RemoveAll` run | every family the session launched, argv-less ones included; no `ps` for the common case | the daemon and monitor leave no pid record today — add one at launch; the record lives in the dir being deleted, so the reader must run before removal |
 | 3 — the tmux hook, fixed | `session-closed` → a `cleanup` form that does not skip its argument, running the option-2 reader first | the closing session, immediately | fires only if tmux still runs the hook for a killed session; not a substitute for the launch-time sweep (crashes, `kill -9` of the server) |
 
-An environment probe is a fourth proof for argv-less processes (`ps -E` on the caller's own
-processes on macOS) but is not portable; it is a Phase 1 measurement, not a design input.
+An environment probe (`ps -E` on the caller's own processes on macOS) was considered as a fourth
+proof for argv-less processes and **ruled out** by Decision 1: it is not portable, and an argv-less
+process with no usable pid record is left alone and logged.
 
-Automatic at launch is the default the evidence argues for — the manual sweep was never run (evidence
-row 5) — with an opt-out (`MUXCODE_ORPHAN_REAP=0`). TERM, a grace, then KILL, mirroring `killProcess`
+Automatic at launch is decided (Decision 2) — the manual sweep was never run (evidence row 5) — with
+an opt-out (`MUXCODE_ORPHAN_REAP=0`). TERM, a grace, then KILL, mirroring `killProcess`
 (`upgrade.go:250`): all 19 died on TERM, so KILL is the backstop, not the path.
 
 ### Key files
@@ -214,26 +238,33 @@ row 5) — with an opt-out (`MUXCODE_ORPHAN_REAP=0`). TERM, a grace, then KILL, 
 
 ### Phase 2: Choose the design
 
-- [ ] Decide the proof per family ([Decision 1](#decision-1--what-proves-ownership-per-family)) and record it in the families table
-- [ ] Decide automatic-at-launch vs opt-in, and the opt-out ([Decision 2](#decision-2--automatic-at-launch-or-opt-in))
-- [ ] Decide the `escabs` servers — in scope with socket-pid proof, or out ([Decision 3](#decision-3--are-the-escabs-test-servers-in-scope))
-- [ ] Decide whether the daemon gains a signal handler that stops its children, or the reaper alone covers sub-defect C ([Decision 4](#decision-4--should-the-daemon-stop-its-own-children-on-exit))
-- [ ] Decide the relation to MUX-147 Phase 3 and MUX-156 Phase 3 — absorbed here, or those specs keep their family-specific halves and depend on this one ([Decision 5](#decision-5--what-becomes-of-mux-147s-and-mux-156s-reaper-phases)) — and record it in both specs and the backlog
+All five were decided by the user on 2026-11-15, ahead of Phase 1's census, and are ticked as
+decided — no code is claimed by them. Phase 1 still runs first: a finding that contradicts a decision
+(a pid record that cannot detect reuse, a launch helper that exits by itself) is recorded there and
+taken back to the user rather than worked around.
+
+- [x] Decide the proof per family ([Decision 1](#decision-1--what-proves-ownership-per-family)) and record it in the families table — decided 2026-11-15: argv session name, or a recorded pid still naming the same process; recorded under [Families](#families-and-what-proves-their-ownership)
+- [x] Decide automatic-at-launch vs opt-in, and the opt-out ([Decision 2](#decision-2--automatic-at-launch-or-opt-in)) — decided 2026-11-15: automatic at every launch, `MUXCODE_ORPHAN_REAP=0`
+- [x] Decide the `escabs` servers — in scope with socket-pid proof, or out ([Decision 3](#decision-3--are-the-escabs-test-servers-in-scope)) — decided 2026-11-15: in scope
+- [x] Decide whether the daemon gains a signal handler that stops its children, or the reaper alone covers sub-defect C ([Decision 4](#decision-4--should-the-daemon-stop-its-own-children-on-exit)) — decided 2026-11-15: the handler, on TERM/INT, not on re-exec
+- [x] Decide the relation to MUX-147 Phase 3 and MUX-156 Phase 3 — absorbed here, or those specs keep their family-specific halves and depend on this one ([Decision 5](#decision-5--what-becomes-of-mux-147s-and-mux-156s-reaper-phases)) — and record it in both specs and the backlog — decided 2026-11-15: their reaper phases point here; applied to MUX-147, MUX-156 and `backlog.md` the same day
 
 ### Phase 3: Reaper and registry
 
 - [ ] Daemon and monitor write a pid record at launch (`daemon.pid`, `monitor.pid`, with start time) — the two families with no record today
 - [ ] One reader over all records of a bus dir: verifies each pid still names the recorded process, then TERM → grace → KILL in the order monitor, daemon, the rest
-- [ ] Argv census for the argv-carrying families on the `ListDaemonProcs` road, gated by `TmuxHasSession` positive absence; when `ps` is unavailable it refuses that road and logs `orphan-census-unavailable` (MUX-161)
-- [ ] Launch-time sweep over every dead session on the machine, replacing or subsuming `killStaleProcesses`; opt-out honoured
+- [ ] Argv census for the argv-carrying families — daemon, monitor, launch helpers and the legacy `inbox-listener.sh` script form, its session parsed from the `muxcode-bus-<s>` component of the script path — on the `ListDaemonProcs` road, gated by `TmuxHasSession` positive absence; when `ps` is unavailable it refuses that road and logs `orphan-census-unavailable` (MUX-161)
+- [ ] Launch-time sweep over every dead session on the machine, replacing or subsuming `killStaleProcesses`; `MUXCODE_ORPHAN_REAP=0` honoured
+- [ ] `escabs-<pid>` rule: a test tmux server whose socket-name pid is dead is killed and logged with its own row; a live pid's server is left alone
 - [ ] `orphan-reaped` / `orphan-unproven` lifecycle rows per pid, naming session, family and proof
-- [ ] Unit tests with negative controls: a record naming a pid now held by an unrelated process → refused; a session the server lists → nothing killed; a probe that failed → nothing killed
+- [ ] Unit tests with negative controls: a record naming a pid now held by an unrelated process → refused; an argv-less process with no record → refused, `orphan-unproven`; a script-form legacy listener naming a dead session → reaped, the loop form → refused, and a script path that parses to no session → refused; a session the server lists → nothing killed; a probe that failed → nothing killed; an `escabs` socket whose pid is alive → nothing killed
 
 ### Phase 4: Close hook and cleanup ordering
 
 - [ ] `muxcode cleanup` runs the reader before `RemoveAll` on each dead session's bus dir; a dir whose processes could not all be proved is left in place with a report
 - [ ] The `session-closed` hook invokes a form that does **not** skip its own session (`--session <s>` or a dedicated subcommand), closing sub-defect A; `--all` semantics unchanged
-- [ ] If Decision 4 says so: the daemon traps TERM/INT and stops its harness and proc children before exiting
+- [ ] The daemon traps TERM/INT and stops its harness and proc children before exiting (Decision 4)
+- [ ] The in-place re-exec `upgrade-daemons` requests does not take that path: children keep running across it (Decision 4)
 - [ ] `docs/agent-bus.md` (`muxcode cleanup`, `muxcode upgrade-daemons`), `docs/architecture.md` (session re-init) and `CLAUDE.md` describe the sweep, its order, the proof rule and the opt-out
 
 ### Phase 5: Integration test
@@ -242,13 +273,28 @@ row 5) — with an opt-out (`MUXCODE_ORPHAN_REAP=0`). TERM, a grace, then KILL, 
 - [ ] Dead-session sweep: launch a scratch session with daemon, monitor, a listener stand-in and a harness stand-in; kill the session; run the sweep → all four gone, bus dir removed and still absent after twice the daemon poll, an `orphan-reaped` row naming each
 - [ ] Live-session negative control: a second scratch session stays up through the sweep; every one of its processes and its bus dir survive
 - [ ] Unproven negative control: a bus dir whose pid record names a pid now held by a sleeper the test started → the sleeper survives, `orphan-unproven` is logged, the dir is left in place
+- [ ] Legacy listeners: a stand-in `bash <scratch bus dir>/inbox-listener.sh` for the dead session is reaped with an `orphan-reaped` row naming argv proof; a `bash -c 'while true; …'` loop stand-in survives with `orphan-unproven`; the same script form under the live session survives
 - [ ] Order control: in a deliberately mis-ordered run the monitor dies last and the daemon relaunches (the failure the order rule prevents); in the real order it does not
 - [ ] Close-hook control: `tmux kill-session` on a scratch session with the fixed hook → its own bus dir is gone with no manual command
 - [ ] `ps`-unavailable control: with the census road disabled, the registry road alone still reaps the recorded families and logs `orphan-census-unavailable` for the rest
+- [ ] Opt-out control: with `MUXCODE_ORPHAN_REAP=0` a launch beside a dead session reaps nothing and removes nothing
+- [ ] Daemon children: TERM a scratch daemon → its harness stand-in is gone before the daemon exits; request an in-place re-exec → the stand-in survives under the same pid
+- [ ] `escabs`: a scratch `tmux -L escabs-<pid>` server whose pid is dead is reaped with its own row; one named for a live pid survives
 - [ ] Coverage floor: every section above asserts at least once; a skipped section fails the script
 - [ ] Run the script and record the pass/fail counts here
 
-## Open decisions
+## Decisions — the user's, recorded 2026-11-15
+
+Answered by the user in conversation and relayed by edit (`1794787239-edit-1aacf9a4`). Each
+subsection keeps the question as it was put; this table is the answer.
+
+| # | Decision | Chosen |
+|---|----------|--------|
+| 1 | What proves ownership | **Session name in argv** for the daemon, monitor and launch helpers; for every other family **a recorded pid that still names the same process**, so pid reuse is detectable. No proof → no kill, an `orphan-unproven` row. **No environment-probe proof.** *Amended 2026-11-16:* the legacy `inbox-listener.sh` script form, whose path names the session, **is argv proof and is reaped**; the `bash -c` loop form stays unproven |
+| 2 | Automatic or opt-in | **Automatic at every session launch, sweeping all dead sessions.** Opt out with `MUXCODE_ORPHAN_REAP=0` |
+| 3 | The `escabs-<pid>` test tmux servers | **In scope.** Reaped when the pid in the socket name is dead — its own proof rule and its own lifecycle row |
+| 4 | Whether the daemon stops its own children | **Yes, on TERM/INT** (harness, proc children). **Not** on the in-place re-exec `upgrade-daemons` requests |
+| 5 | MUX-147's and MUX-156's reaper phases | **They point here.** Each keeps only its family-specific half. Applied 2026-11-15 to both specs and `backlog.md` |
 
 ### Decision 1 — what proves ownership, per family
 
@@ -256,6 +302,10 @@ The argv session name is proof for the daemon, monitor and launch helpers; a pid
 session's bus dir is proof for the listener, harness, procs, spawns and webhook **if** the record also
 lets the reader detect pid reuse. Whether a record without a start time is enough is a Phase 1
 finding.
+
+On 2026-11-16 the user extended argv proof to the legacy `inbox-listener.sh` script form: its path
+runs through the session's bus directory, which is the same class of evidence as a session name
+passed as an argument. Plan had recorded it as unproven and asked; the answer was to reap it.
 
 ### Decision 2 — automatic at launch, or opt-in
 
@@ -286,12 +336,17 @@ on the user's say.
 
 - **The stray-session cause** — the launcher routing a subcommand call that lost its subcommand into a session launch; guarded in `tools/muxcode/main.go` the same day (uncommitted at filing).
 - **MUX-147's footprint half** and **MUX-156's listener-side self-exit and receipt attribution** — related, separately specified.
-- **Why three `escabs` servers escaped their `EXIT` trap** — recorded as unestablished; Decision 3 decides whether the reaper covers them regardless.
+- **Why three `escabs` servers escaped their `EXIT` trap** — recorded as unestablished; the reaper covers them regardless (Decision 3).
 - **`muxcode cleanup --claude`** (Claude Code `/tmp` dirs) — files, not processes; unchanged.
 
 ## Status
 
-Draft
+**Backlog** — 5/52. Parked 2026-11-13 on five open decisions; unparked 2026-11-15 once the user's
+Decisions 1–5 were recorded and the criteria and phases rewritten to them (44 items became 50).
+Decision 1 was amended by the user on 2026-11-16 — the legacy `inbox-listener.sh` script form is argv
+proof and is reaped — which added one criterion and one integration step (50 became 52).
+The five ticked items are Phase 2's "decide" steps, ticked as decided — no code exists yet, and
+Phase 1 is the open phase.
 
 Filed 2026-09-14 on the user's instruction relayed by edit, from edit's first-hand cleanup of four
 stray sessions. Every mechanism claim verified by plan against `3f9a2cb`; three handoff claims

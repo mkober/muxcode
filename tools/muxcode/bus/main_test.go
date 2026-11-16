@@ -34,7 +34,14 @@ import (
 // home config), so it is pinned to none: a user's own
 // MUXCODE_GATE_AUTHORITY_ROLES grant would otherwise flip every test that
 // expects an agent refused. Tests needing a value use pinGateAuthorityConfig.
+//
+// Under orphanReceiptEnv the binary runs no tests: it is the reparented
+// receipt writer runOrphanReceiptWriter describes.
 func TestMain(m *testing.M) {
+	if spec := os.Getenv(orphanReceiptEnv); spec != "" {
+		runOrphanReceiptWriter(spec)
+		os.Exit(0)
+	}
 	gateAuthorityConfigPaths = func() []string { return nil }
 	dir, err := os.MkdirTemp("", "muxcode-lifecycle-test-")
 	if err != nil {

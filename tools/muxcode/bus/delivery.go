@@ -10,6 +10,11 @@ import (
 )
 
 // DeliveryStatus represents the lifecycle state of a message.
+//
+// A receipt names the process that wrote it (AckedPID) and whether that
+// process still had its parent (AckedParentAlive, false once reparented to pid
+// 1): the role alone made a live listener and an orphan indistinguishable after
+// the fact (MUX-156). Both are absent on receipts written before they existed.
 type DeliveryStatus struct {
 	ID          string `json:"id"`
 	Status      string `json:"status"` // sent, delivered, acked, responded, expired
@@ -23,6 +28,9 @@ type DeliveryStatus struct {
 	AckedAt     int64  `json:"acked_at,omitempty"`     // when the receipt was written
 	AckedBy     string `json:"acked_by,omitempty"`     // role that received it
 	ReceiptKind string `json:"receipt_kind,omitempty"` // ReceiptKindAck | ReceiptKindDelivered
+
+	AckedPID         int   `json:"acked_pid,omitempty"`          // process that wrote the receipt
+	AckedParentAlive *bool `json:"acked_parent_alive,omitempty"` // that process was not reparented
 }
 
 // Delivery status constants.
@@ -114,7 +122,9 @@ func MarkResponded(session, originalID, responseID string) {
 // delivery-status file, creating a minimal one if the message predates delivery
 // tracking or its status was GC'd, so a receipt is never lost just because the
 // "sent" status is missing. A receipt never regresses a message already marked
-// responded (a reply already implies receipt).
+// responded (a reply already implies receipt). The receipt names the writing
+// process and whether its parent was alive, read as "not reparented to pid 1"
+// — a Linux subreaper adopting an orphan is not detected.
 func WriteReceipt(session, msgID, ackedBy, kind string) {
 	ds, err := ReadDeliveryStatus(session, msgID)
 	if err != nil {
@@ -123,6 +133,8 @@ func WriteReceipt(session, msgID, ackedBy, kind string) {
 	ds.AckedAt = time.Now().Unix()
 	ds.AckedBy = ackedBy
 	ds.ReceiptKind = kind
+	parentAlive := os.Getppid() != 1
+	ds.AckedPID, ds.AckedParentAlive = os.Getpid(), &parentAlive
 	// Advance lifecycle status without regressing past a recorded response.
 	if ds.Status != StatusResponded {
 		if kind == ReceiptKindAck {
