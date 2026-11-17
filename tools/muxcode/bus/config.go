@@ -1,11 +1,14 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -380,31 +383,138 @@ func LogPath(session string) string {
 	return filepath.Join(BusDir(session), "log.jsonl")
 }
 
-// MemoryDir returns the memory directory path.
-// Uses BUS_MEMORY_DIR env if set, otherwise defaults to ".muxcode/memory".
+// MemoryDirEnv names the project memory directory; the launcher exports it,
+// absolute, beside BusDirEnv.
+const MemoryDirEnv = "BUS_MEMORY_DIR"
+
+// ErrNoMemoryRoot reports that no project memory directory resolves: neither
+// MemoryDirEnv nor a git checkout around the working directory names one.
+var ErrNoMemoryRoot = errors.New("no project memory directory: not inside a git checkout and " +
+	MemoryDirEnv + " is unset — set " + MemoryDirEnv + " to an absolute path")
+
+// ErrRelativeMemoryDir reports a MemoryDirEnv that is not absolute: resolved
+// against each caller's working directory it would split memory again.
+var ErrRelativeMemoryDir = errors.New(MemoryDirEnv + " must be an absolute path")
+
+// ProjectMemoryDir is the one answer to where project memory lives (MUX-223):
+// an absolute MemoryDirEnv, else `.muxcode/memory` at the main checkout's root
+// around the working directory (MainCheckoutRoot), else ErrNoMemoryRoot; a
+// relative MemoryDirEnv is ErrRelativeMemoryDir. Never a path relative to the
+// working directory: run from a subdirectory, the old `.muxcode/memory`
+// default stranded session summaries where restore never reads.
+func ProjectMemoryDir() (string, error) {
+	if v := os.Getenv(MemoryDirEnv); v != "" {
+		if !filepath.IsAbs(v) {
+			return "", fmt.Errorf("%w, got %q", ErrRelativeMemoryDir, v)
+		}
+		return filepath.Clean(v), nil
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("%w (working directory: %v)", ErrNoMemoryRoot, err)
+	}
+	if root, ok := MainCheckoutRoot(wd); ok {
+		return filepath.Join(root, ".muxcode", "memory"), nil
+	}
+	return "", ErrNoMemoryRoot
+}
+
+// MemoryDir returns ProjectMemoryDir's answer, or "" when none resolves. The
+// path helpers below return "" with it, and a read of "" fails as not-exist,
+// so readers fall back to global memory alone; writers must ask
+// ProjectMemoryDir for the error.
 func MemoryDir() string {
-	if v := os.Getenv("BUS_MEMORY_DIR"); v != "" {
-		return v
+	dir, err := ProjectMemoryDir()
+	if err != nil {
+		return ""
 	}
-	return filepath.Join(".muxcode", "memory")
+	return dir
 }
 
-// MemoryPath returns the memory file path for a role.
+// MemoryPath returns the memory file path for a role, or "" (see MemoryDir).
 func MemoryPath(role string) string {
-	if role == "shared" {
-		return filepath.Join(MemoryDir(), "shared.md")
+	dir := MemoryDir()
+	if dir == "" {
+		return ""
 	}
-	return filepath.Join(MemoryDir(), role+".md")
+	if role == "shared" {
+		return filepath.Join(dir, "shared.md")
+	}
+	return filepath.Join(dir, role+".md")
 }
 
-// MemoryArchiveDir returns the archive directory for a role's memory files.
+// MemoryArchiveDir returns the archive directory for a role's memory files, or
+// "" (see MemoryDir).
 func MemoryArchiveDir(role string) string {
-	return filepath.Join(MemoryDir(), role)
+	dir := MemoryDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, role)
 }
 
-// MemoryArchivePath returns the archive file path for a role on a given date.
+// MemoryArchivePath returns the archive file path for a role on a given date,
+// or "" (see MemoryDir).
 func MemoryArchivePath(role, date string) string {
-	return filepath.Join(MemoryArchiveDir(role), date+".md")
+	dir := MemoryArchiveDir(role)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, date+".md")
+}
+
+// LaunchMemoryDir is the absolute project memory directory a session launched
+// on projectDir exports as MemoryDirEnv: an already-set MemoryDirEnv, else the
+// main checkout's root around projectDir, else projectDir itself — a project
+// outside git still has a defined root, and every pane of the session, a
+// spawned worker's included, resolves the same one. A MemoryDirEnv inherited
+// inside a muxcode pane (MUXCODE=1) is another session's export and ignored,
+// or a launch from that pane would write into the other project's memory. A
+// relative MemoryDirEnv is ErrRelativeMemoryDir, refusing the launch.
+func LaunchMemoryDir(projectDir string) (string, error) {
+	if v := os.Getenv(MemoryDirEnv); v != "" && os.Getenv("MUXCODE") == "" {
+		if !filepath.IsAbs(v) {
+			return "", fmt.Errorf("%w, got %q", ErrRelativeMemoryDir, v)
+		}
+		return filepath.Clean(v), nil
+	}
+	root, err := filepath.Abs(projectDir)
+	if err != nil {
+		root = projectDir
+	}
+	if r, ok := MainCheckoutRoot(root); ok {
+		root = r
+	}
+	return filepath.Join(root, ".muxcode", "memory"), nil
+}
+
+var mainCheckoutRoots sync.Map // dir → string ("" when none)
+
+// MainCheckoutRoot returns the main checkout's root for the git checkout
+// holding dir: the parent of `git rev-parse --git-common-dir`, so a worktree
+// (a spawn worker's) shares the main checkout's root, where --show-toplevel
+// would name the worktree. A common dir not named `.git` (a submodule's, under
+// the superproject's `.git/modules`) falls back to --show-toplevel. It never
+// walks up to the nearest `.muxcode/`, which would stop at a stranded one.
+// Answers are cached per directory for the life of the process.
+func MainCheckoutRoot(dir string) (string, bool) {
+	if v, ok := mainCheckoutRoots.Load(dir); ok {
+		return v.(string), v.(string) != ""
+	}
+	root := ""
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--git-common-dir").Output(); err == nil {
+		common := strings.TrimSpace(string(out))
+		if !filepath.IsAbs(common) {
+			common = filepath.Join(dir, common)
+		}
+		if filepath.Base(common) == ".git" {
+			root = filepath.Dir(filepath.Clean(common))
+		} else if top, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
+			root = strings.TrimSpace(string(top))
+		}
+	}
+	mainCheckoutRoots.Store(dir, root)
+	return root, root != ""
 }
 
 // GlobalMemoryDirEnv names the absolute directory that replaces the default

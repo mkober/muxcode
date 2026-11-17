@@ -187,6 +187,11 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		return fmt.Errorf("bus directory: %w", err)
 	}
 	os.Setenv(BusDirEnv, BusDir(session))
+	memoryDir, err := LaunchMemoryDir(projectDir)
+	if err != nil {
+		return fmt.Errorf("project memory: %w", err)
+	}
+	os.Setenv(MemoryDirEnv, memoryDir)
 
 	// Log session start
 	LogLifecycle(session, "info", "launcher", "session-start",
@@ -272,11 +277,13 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 
 	// Create tmux session with first window
 	firstWin := cfg.Windows[0]
-	if err := TmuxNewSession(session, firstWin, projectDir, clientW, clientH, busBaseEnvArgs(session)...); err != nil {
+	newSessionEnv := append(busBaseEnvArgs(session), MemoryDirEnv+"="+memoryDir)
+	if err := TmuxNewSession(session, firstWin, projectDir, clientW, clientH, newSessionEnv...); err != nil {
 		return fmt.Errorf("new session: %w", err)
 	}
 	TmuxSetEnv(session, "BUS_SESSION", session)
 	TmuxSetEnv(session, BusDirEnv, BusDir(session))
+	TmuxSetEnv(session, MemoryDirEnv, memoryDir)
 	ExportBusBaseEnv(session)
 	TmuxSetEnv(session, "MUXCODE", "1")
 

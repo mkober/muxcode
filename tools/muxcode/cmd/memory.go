@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
@@ -12,7 +13,7 @@ import (
 // Memory handles the "muxcode memory" subcommand.
 func Memory(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode memory <read|write|write-shared|write-global|context|search|list> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode memory <read|write|write-shared|write-global|context|search|list|stranded> [args...]\n")
 		os.Exit(1)
 	}
 
@@ -34,9 +35,73 @@ func Memory(args []string) {
 		memorySearch(subArgs)
 	case "list":
 		memoryList(subArgs)
+	case "stranded":
+		memoryStranded(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown memory subcommand: %s\n", subcmd)
-		fmt.Fprintf(os.Stderr, "Usage: muxcode memory <read|write|write-shared|write-global|context|search|list> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode memory <read|write|write-shared|write-global|context|search|list|stranded> [args...]\n")
+		os.Exit(1)
+	}
+}
+
+// memoryStranded lists `.muxcode/memory` directories stranded below the
+// checkout root by a pre-MUX-223 muxcode; --merge merges them entry by entry
+// into the project memory and keeps each original (bus.MergeStrandedMemory).
+// Exit 0 when the listing or merge completed, 1 on error.
+func memoryStranded(args []string) {
+	merge := false
+	for _, a := range args {
+		if a != "--merge" {
+			fmt.Fprintf(os.Stderr, "Usage: muxcode memory stranded [--merge]\n")
+			os.Exit(1)
+		}
+		merge = true
+	}
+	memDir, err := bus.ProjectMemoryDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	root, ok := bus.MainCheckoutRoot(wd)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Error: not inside a git checkout — nothing to scan for stranded memory\n")
+		os.Exit(1)
+	}
+	stranded, err := bus.FindStrandedMemory(root, memDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Project memory: %s\n", memDir)
+	if len(stranded) == 0 {
+		fmt.Println("No stranded memory directories.")
+		return
+	}
+	for _, s := range stranded {
+		fmt.Printf("stranded: %s (%s)\n", s.Rel, strings.Join(s.Files, ", "))
+	}
+	if !merge {
+		fmt.Println("Run `muxcode memory stranded --merge` to merge them; originals are kept.")
+		return
+	}
+	results, err := bus.MergeStrandedMemory(memDir, stranded, time.Now())
+	for _, r := range results {
+		for _, f := range r.Files {
+			line := fmt.Sprintf("merged %s/%s: +%d entries, %d duplicates skipped", r.Rel, f.File, f.Added, f.Duplicates)
+			if f.Backup != "" {
+				line += ", backup " + f.Backup
+			}
+			fmt.Println(line)
+		}
+		fmt.Printf("kept original %s at %s\n", r.Rel, r.KeptAt)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }

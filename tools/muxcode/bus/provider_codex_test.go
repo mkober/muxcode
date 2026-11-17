@@ -191,6 +191,7 @@ func TestCodexBuildExecArgs_OptOutNamesPolicyWithNoGrants(t *testing.T) {
 	}
 	codexTestHome(t)
 	t.Setenv("HOME", filepath.Join(file, "home"))
+	t.Setenv(MemoryDirEnv, filepath.Join(file, "project-memory"))
 	args := strings.Join(p.argsFor(t, "review"), " ")
 	if !strings.Contains(args, "-s workspace-write") {
 		t.Errorf("review on the opt-out must name workspace-write with no grants: %s", args)
@@ -365,9 +366,18 @@ func TestCodexBuildExecArgs_EveryRoleGetsMuxcodeState(t *testing.T) {
 
 // With no resolvable home the state paths come out relative; granting them
 // would create .config/muxcode inside the repo. Negative control for the test
-// above: the grant follows a real home, it is not unconditional.
+// above: the grant follows a real home, it is not unconditional. Project
+// memory likewise: outside a checkout with no BUS_MEMORY_DIR there is no root
+// to grant (MUX-223), never one relative to the working directory.
 func TestCodexMuxcodeStateRoots_DropsRelativePaths(t *testing.T) {
 	codexTestHome(t)
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(outside))
+	t.Setenv(MemoryDirEnv, "")
+	chdirTest(t, outside)
 	t.Setenv("HOME", "")
 	if got := muxcodeStateRoots(); len(got) != 0 {
 		t.Errorf("relative state paths must be dropped, got %v", got)
@@ -669,6 +679,7 @@ func codexTestHome(t *testing.T) string {
 	t.Setenv("XDG_STATE_HOME", "")
 	t.Setenv(BusDirBaseEnv, "")
 	t.Setenv(GlobalMemoryDirEnv, "")
+	t.Setenv(MemoryDirEnv, filepath.Join(home, "project", ".muxcode", "memory"))
 	saved := busDirOverride
 	ResetBusDirBase()
 	t.Cleanup(func() { busDirOverride = saved })
@@ -680,6 +691,7 @@ func codexStateDirs(home string) []string {
 		filepath.Join(home, ".config", "muxcode", "logs"),
 		filepath.Join(home, ".config", "muxcode", "memory"),
 		filepath.Join(home, ".local", "state", "muxcode", "bus"),
+		filepath.Join(home, "project", ".muxcode", "memory"),
 	}
 }
 

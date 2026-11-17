@@ -57,17 +57,22 @@ func TestDefaultBusBase_IsolatedFromRealState(t *testing.T) {
 }
 
 // TestDefaultMemoryDir_IsolatedFromSourceTree pins TestMain's BUS_MEMORY_DIR:
-// MemoryDir's default is the relative .muxcode/memory, so Init(session, "") in
-// a test that pins nothing seeded shared.md into this package's source tree —
-// tools/muxcode/bus/.muxcode/memory held one (MUX-137). Removing the pin fails
-// this test.
+// MemoryDir's default is the checkout root's .muxcode/memory — this repository's
+// real project memory when the suite runs in the tree — so Init(session, "") in
+// a test that pins nothing would seed shared.md there; before MUX-223 the
+// default was relative and tools/muxcode/bus/.muxcode/memory held one
+// (MUX-137). Removing the pin fails this test.
 func TestDefaultMemoryDir_IsolatedFromSourceTree(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	tree := wd
+	if root, ok := MainCheckoutRoot(wd); ok {
+		tree = root
+	}
 	dir := MemoryDir()
-	if !filepath.IsAbs(dir) || pathWithin(dir, wd) {
+	if !filepath.IsAbs(dir) || pathWithin(dir, tree) {
 		t.Fatalf("MemoryDir() = %q resolves into the source tree %s; TestMain must pin BUS_MEMORY_DIR", dir, wd)
 	}
 	useTempBusDir(t)

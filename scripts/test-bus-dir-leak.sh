@@ -24,7 +24,9 @@
 #      pointed at a scratch "real" state root. The same detector must report
 #      the two leaks, verbatim:
 #        LEAK <work>/fake-state/muxcode/bus/muxcode-bus-test-prelaunch-auto
-#        LEAK <work>/tree/muxcode/bus/.muxcode/memory/shared.md
+#        LEAK <work>/tree/.muxcode/memory/shared.md
+#      (the copy is a git checkout: since MUX-223 project memory resolves the
+#      checkout root, never the working directory)
 #      so a green main pass proves the check can see a leak.
 #   3. Global memory (MUX-224): the main pass also requires the real
 #      ~/.config/muxcode/memory byte for byte unchanged (or still absent). That
@@ -190,6 +192,9 @@ rm -rf "$SENT"
 echo "--- 2. control: fix reverted in a throwaway copy"
 TREE="$WORK/tree"
 mkdir -p "$TREE" && cp -R "$REPO/tools/muxcode" "$TREE/muxcode" && rm -rf "$TREE/muxcode/bus/.muxcode" "$TREE/muxcode/.muxcode"
+# A checkout: since MUX-223 an unpinned MemoryDir resolves the checkout root, so
+# outside one the reverted Init would have nowhere to leak and prove nothing.
+git init -q "$TREE"
 B="$TREE/muxcode/bus"
 
 perl -0pi -e 's/dir := useTempBusDir\(t\)\n\tsession := "test-prelaunch-auto"/dir := t.TempDir()\n\tt.Setenv("BUS_DIR_BASE", dir)\n\tsession := "test-prelaunch-auto"/' "$B/launch_test.go"
@@ -215,7 +220,7 @@ echo "  control detector output:"; sed 's/^/        /' "$WORK/ctl-leaks"
 grep -qFx 'LEAK <work>/fake-state/muxcode/bus/muxcode-bus-test-prelaunch-auto' "$WORK/ctl-leaks" \
   && ok "control: the reverted call site's bus dir is reported as a leak" \
   || { bad "control: bus-dir leak not reported — the main pass's silence proves nothing"; tail -5 "$WORK/ctl-test.log" | sed 's/^/        /'; }
-grep -qFx 'LEAK <work>/tree/muxcode/bus/.muxcode/memory/shared.md' "$WORK/ctl-leaks" \
+grep -qFx 'LEAK <work>/tree/.muxcode/memory/shared.md' "$WORK/ctl-leaks" \
   && ok "control: the empty memory dir's shared.md is reported as a leak" \
   || bad "control: memory leak not reported"
 

@@ -266,6 +266,7 @@ muxcode memory context [--no-global]
 muxcode memory context-global [--days N]
 muxcode memory search <query> [--role ROLE] [--limit N] [--scope project|global|all]
 muxcode memory list [--role ROLE] [--scope project|global|all]
+muxcode memory stranded [--merge]
 ```
 
 - `read` — read a specific role's memory or shared memory
@@ -277,8 +278,17 @@ muxcode memory list [--role ROLE] [--scope project|global|all]
 - `context-global` — output only global memory (shared + role)
 - `search` — keyword search across all memory entries with relevance scoring (header matches weighted 2x). Supports `--role` to filter by role, `--limit` to cap results, and `--scope` to filter by source (`project`, `global`, or `all`; default: `all`). Query terms are matched case-insensitively via substring matching. Silent output on no results.
 - `list` — show a columnar inventory of all memory sections across all roles. Supports `--role` to filter by role and `--scope` to filter by source.
+- `stranded` — list `.muxcode/memory` directories below the checkout root other than the project's own: memory a muxcode before MUX-223 wrote beside whatever directory the command ran in. It skips the project memory directory and its keep directory wherever `BUS_MEMORY_DIR` puts them, the root's own `.muxcode/memory`, `.git` and `node_modules`, and follows no symlink. `--merge` merges each one into project memory and deletes nothing:
 
-Project memory is stored in `.muxcode/memory/` relative to the project directory. Global (cross-session) memory is stored in `~/.config/muxcode/memory/` and persists across all projects.
+  | Step | What |
+  |------|------|
+  | Back up | The project's existing file is copied to `.muxcode/stranded-memory/backup-<stamp>-<random>/` before it is touched — one directory per invocation, the first copy of a file winning |
+  | Merge | Entry by entry into the same file under project memory: timestamp order, exact duplicates skipped. A file that adds nothing is not rewritten |
+  | Keep | The stranded directory is moved intact to `.muxcode/stranded-memory/<its path below the root>` |
+
+  The merge holds the project memory lock (`.memory.lock` in the memory directory), the one `memory write` and `session compact` take, so an entry appended while it runs is not lost. Exit 0 when the listing or merge completed, 1 on error or outside a git checkout.
+
+Project memory is stored in `.muxcode/memory/` at the project root, whatever directory the command runs from (MUX-223): an absolute `BUS_MEMORY_DIR` wins — the launcher exports one into every session — else the main checkout's root found through `git rev-parse --git-common-dir`, so a worktree shares it. With neither — outside a git checkout, `BUS_MEMORY_DIR` unset — a write (`memory write`, `session compact`) fails naming `BUS_MEMORY_DIR`, a read finds no project memory, and `context` returns global memory only. A relative `BUS_MEMORY_DIR` is an error. Global (cross-session) memory is stored in `~/.config/muxcode/memory/` and persists across all projects.
 
 **Search examples:**
 ```bash
@@ -2635,7 +2645,7 @@ Core code: `bus/remote.go`, `cmd/remote.go`, `tui/remote.go`.
 |----------|-------------|
 | `BUS_SESSION` | Session name for the bus directory |
 | `AGENT_ROLE` | Current agent's role name (auto-detected from tmux window if unset) |
-| `BUS_MEMORY_DIR` | Path to persistent memory directory (defaults to `.muxcode/memory/`) |
+| `BUS_MEMORY_DIR` | Absolute project memory directory, exported by the launcher. Unset, project memory is `.muxcode/memory` at the main checkout's root; outside a git checkout nothing resolves. A relative value is refused. See [Configuration](configuration.md) |
 | `BUS_GLOBAL_MEMORY_DIR` | Absolute directory replacing the global memory location (defaults to `~/.config/muxcode/memory`; a relative value is ignored). Pinned by each package `TestMain`; see [Configuration](configuration.md) |
 | `MUXCODE_ROLES` | Comma-separated extra roles to add to the known roles list |
 | `MUXCODE_SPLIT_LEFT` | Space-separated windows with agent in pane 1 (defaults: plan edit build test review deploy run commit watch) |

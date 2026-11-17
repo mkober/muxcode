@@ -38,7 +38,18 @@ func ReadMemory(role string) (string, error) {
 
 // AppendMemory appends a formatted section to a role's memory file.
 // On the first write of each day, the previous day's file is archived.
+// It fails with ErrNoMemoryRoot when no project memory directory resolves.
+// Rotation and append run under the project memory lock (withMemoryLock), so
+// a stranded-memory merge replacing the file cannot drop the entry.
 func AppendMemory(section, content, role string) error {
+	memDir, err := ProjectMemoryDir()
+	if err != nil {
+		return err
+	}
+	return withMemoryLock(memDir, func() error { return appendMemoryLocked(section, content, role) })
+}
+
+func appendMemoryLocked(section, content, role string) error {
 	memPath := MemoryPath(role)
 	if err := os.MkdirAll(filepath.Dir(memPath), 0755); err != nil {
 		return err

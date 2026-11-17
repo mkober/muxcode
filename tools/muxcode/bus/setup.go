@@ -106,17 +106,20 @@ func Init(session, memoryDir string) error {
 		return err
 	}
 
-	// Create memory directory and shared.md if not exists
+	// Create memory directory and shared.md if not exists; with no project
+	// root (ErrNoMemoryRoot) there is nowhere defined to create them.
 	if memoryDir == "" {
 		memoryDir = MemoryDir()
 	}
-	if err := os.MkdirAll(memoryDir, 0755); err != nil {
-		return err
-	}
-	sharedPath := filepath.Join(memoryDir, "shared.md")
-	if _, err := os.Stat(sharedPath); os.IsNotExist(err) {
-		if err := touchFile(sharedPath); err != nil {
+	if memoryDir != "" {
+		if err := os.MkdirAll(memoryDir, 0755); err != nil {
 			return err
+		}
+		sharedPath := filepath.Join(memoryDir, "shared.md")
+		if _, err := os.Stat(sharedPath); os.IsNotExist(err) {
+			if err := touchFile(sharedPath); err != nil {
+				return err
+			}
 		}
 	}
 
