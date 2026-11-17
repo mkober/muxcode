@@ -268,6 +268,22 @@ func TestFormatHistory(t *testing.T) {
 	}
 }
 
+// TestFormatHistoryWithIDs pins the line the run definition matches a
+// --reply-to id against (MUX-222); its negative control is that the default
+// listing still carries no id, so existing parsers of it are unaffected.
+func TestFormatHistoryWithIDs(t *testing.T) {
+	msgs := []Message{
+		{ID: "1700000000-edit-aaaa1111", TS: 1700000000, From: "edit", To: "run", Type: "request", Action: "run", Payload: "RUN: echo one"},
+	}
+	line := strings.Split(FormatHistoryWithIDs(msgs, "run"), "\n")[1]
+	if !strings.HasSuffix(line, "edit \u2192 run  [request:run] id=1700000000-edit-aaaa1111 RUN: echo one") {
+		t.Errorf("with ids: %q", line)
+	}
+	if plain := FormatHistory(msgs, "run"); strings.Contains(plain, "id=") || strings.Contains(plain, "aaaa1111") {
+		t.Errorf("default listing gained the id: %q", plain)
+	}
+}
+
 func TestExtractContext(t *testing.T) {
 	session := testSession(t)
 

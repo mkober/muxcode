@@ -154,13 +154,30 @@ func ReadLogHistory(session, role string, limit int) []Message {
 
 // FormatHistory formats messages as a human-readable history listing.
 func FormatHistory(messages []Message, role string) string {
+	return formatHistory(messages, role, false)
+}
+
+// FormatHistoryWithIDs is FormatHistory with each line's message id after its
+// [type:action] tag \u2014 "HH:MM  from \u2192 to  [type:action] id=<id> <payload>" \u2014
+// so an agent can match a delivered reply command's --reply-to id to its
+// logged request (MUX-222: a batch's requests can share a sender, and a
+// request's reply target can differ from its sender).
+func FormatHistoryWithIDs(messages []Message, role string) string {
+	return formatHistory(messages, role, true)
+}
+
+func formatHistory(messages []Message, role string, withIDs bool) string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("--- Message history for %s (last %d) ---\n", role, len(messages)))
 
 	for _, m := range messages {
 		t := time.Unix(m.TS, 0).Format("15:04")
-		b.WriteString(fmt.Sprintf("%s  %s \u2192 %s  [%s:%s] %s\n", t, m.From, m.To, m.Type, m.Action, m.Payload))
+		id := ""
+		if withIDs {
+			id = "id=" + m.ID + " "
+		}
+		b.WriteString(fmt.Sprintf("%s  %s \u2192 %s  [%s:%s] %s%s\n", t, m.From, m.To, m.Type, m.Action, id, m.Payload))
 	}
 
 	return b.String()
