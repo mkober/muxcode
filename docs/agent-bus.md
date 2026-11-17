@@ -733,12 +733,14 @@ See [Architecture](architecture.md#workflow-state-machine) for state definitions
 Show recent messages to/from an agent.
 
 ```bash
-muxcode history <role> [--limit N] [--context]
+muxcode history <role> [--limit N] [--context] [--ids]
 ```
 
 - `<role>` — show messages involving this role (from `log.jsonl`)
 - `--limit N` — show last N messages (default: 20)
 - `--context` — output as a markdown block for prompt injection
+- `--ids` — add each message's id to the default listing, as `id=<id>` after the `[type:action]`
+  tag (MUX-222). Without it the listing is unchanged. It has no effect with `--context`
 
 **Default output:**
 ```
@@ -748,6 +750,19 @@ $ muxcode history build
 14:31  build → test  [request:test] Build succeeded — run tests
 14:31  build → edit  [response:build] Build succeeded: Go binary built
 ```
+
+**With ids (`--ids`):**
+```
+$ muxcode history run --ids
+--- Message history for run (last 20) ---
+14:30  edit → run  [request:run] id=1794955124-edit-d077566a Run bash scripts/test-foo.sh
+14:31  run → edit  [response:run] id=1794955190-run-4bfe9c21 scripts/test-foo.sh EXIT=0
+```
+
+The id is what a delivered reply command names in `--reply-to`, so an agent holding several
+requests can find each one's logged payload by id rather than by sender or position. The run
+agent's definition reads its commands this way (`agents/command-runner.md`): a request's reply
+target can differ from its sender, and one sender can have two requests in a batch.
 
 **Context output (`--context`):**
 ```

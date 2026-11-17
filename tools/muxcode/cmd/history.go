@@ -9,16 +9,20 @@ import (
 )
 
 // History handles the "muxcode history" subcommand.
-// Usage: muxcode history <role> [--limit N] [--context]
+// Usage: muxcode history <role> [--limit N] [--context] [--ids]
+//
+// --ids adds each message's id to the listing (bus.FormatHistoryWithIDs); the
+// default listing is unchanged.
 func History(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode history <role> [--limit N] [--context]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode history <role> [--limit N] [--context] [--ids]\n")
 		os.Exit(1)
 	}
 
 	role := args[0]
 	limit := 20
 	contextMode := false
+	withIDs := false
 
 	remaining := args[1:]
 	for i := 0; i < len(remaining); i++ {
@@ -37,9 +41,11 @@ func History(args []string) {
 			limit = n
 		case "--context":
 			contextMode = true
+		case "--ids":
+			withIDs = true
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
-			fmt.Fprintf(os.Stderr, "Usage: muxcode history <role> [--limit N] [--context]\n")
+			fmt.Fprintf(os.Stderr, "Usage: muxcode history <role> [--limit N] [--context] [--ids]\n")
 			os.Exit(1)
 		}
 	}
@@ -63,6 +69,10 @@ func History(args []string) {
 			fmt.Fprintf(os.Stderr, "No messages found for %s\n", role)
 			return
 		}
-		fmt.Print(bus.FormatHistory(msgs, role))
+		if withIDs {
+			fmt.Print(bus.FormatHistoryWithIDs(msgs, role))
+		} else {
+			fmt.Print(bus.FormatHistory(msgs, role))
+		}
 	}
 }

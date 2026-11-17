@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -507,19 +506,9 @@ func missingRewriteKeys(defs map[string]string) []string {
 // repository root for every role nonHookBodyRewrites covers.
 func shippedRewriteDefinitions(t *testing.T) map[string]string {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("cannot locate test file")
-	}
-	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
 	defs := map[string]string{}
 	for role := range nonHookBodyRewrites {
-		path := filepath.Join(repoRoot, "agents", AgentFileName(role)+".md")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s's definition: %v", role, err)
-		}
-		defs[role] = string(data)
+		defs[role] = shippedAgentDefinition(t, AgentFileName(role))
 	}
 	return defs
 }

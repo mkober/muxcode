@@ -1,9 +1,81 @@
 package bus
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// shippedAgentDefinition reads agents/<name>.md from the repository root.
+func shippedAgentDefinition(t *testing.T, name string) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate test file")
+	}
+	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
+	data, err := os.ReadFile(filepath.Join(repoRoot, "agents", name+".md"))
+	if err != nil {
+		t.Fatalf("read agents/%s.md: %v", name, err)
+	}
+	return string(data)
+}
+
+// runProcedureProblems returns what is wrong with the run definition's
+// log-sourcing procedure — the text from "Procedure:" to "This ordering
+// matters" — for a batch delivery. MUX-222: steps 1–2 once said to find "the
+// most recent" request and execute only it while step 3 said to reply "one
+// per request", so a two-request batch was executed once and answered twice.
+func runProcedureProblems(def string) []string {
+	start := strings.Index(def, "Procedure:")
+	end := strings.Index(def, "This ordering matters")
+	if start < 0 || end < start {
+		return []string{"procedure section (\"Procedure:\" … \"This ordering matters\") not found"}
+	}
+	proc := strings.Join(strings.Fields(def[start:end]), " ")
+	var problems []string
+	if strings.Contains(proc, "most recent") {
+		problems = append(problems, "procedure selects \"the most recent\" request — a batch's other requests go unexecuted")
+	}
+	for _, want := range []string{
+		"every request the delivery lists",
+		"Execute only what this request's logged payload says.",
+		"this request's own** delivered reply command",
+		"Never send a reply for a request you did not execute",
+	} {
+		if !strings.Contains(proc, want) {
+			problems = append(problems, "procedure lacks "+strconv.Quote(want))
+		}
+	}
+	return problems
+}
+
+// TestRunDefinitionExecutesEveryRequestOfABatch pins agents/command-runner.md:
+// each request of a batch is taken from the log, executed and answered by its
+// own reply command, and no step narrows the procedure to one request.
+func TestRunDefinitionExecutesEveryRequestOfABatch(t *testing.T) {
+	for _, p := range runProcedureProblems(shippedAgentDefinition(t, "command-runner")) {
+		t.Errorf("agents/command-runner.md: %s", p)
+	}
+}
+
+// TestRunProcedureProblemsRejectsTheMostRecentWording is the negative control:
+// the pre-MUX-222 procedure — one request executed, one reply per request —
+// must be rejected, so the pin above cannot pass on wording it exists to stop.
+func TestRunProcedureProblemsRejectsTheMostRecentWording(t *testing.T) {
+	old := "Procedure:\n\n" +
+		"1. Read `muxcode history run` and find the most recent `[request:*]` addressed\n   to you from a known agent.\n" +
+		"2. **Execute only what that logged payload says.** Run nothing that is not in\n   it.\n" +
+		"3. Reply with the delivered reply command for that request, as written — one per request when several arrived together.\n\n" +
+		"This ordering matters."
+	got := runProcedureProblems(old)
+	if len(got) == 0 || !strings.Contains(got[0], "most recent") {
+		t.Errorf("old wording not rejected for selecting one request: %q", got)
+	}
+}
 
 // replyToCount counts the reply instructions in text that name id.
 func replyToCount(text, id string) int {
