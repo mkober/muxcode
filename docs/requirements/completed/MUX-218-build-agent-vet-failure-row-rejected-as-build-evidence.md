@@ -148,7 +148,7 @@ Verified by plan against the tree and the proc log. The Go sources are unchanged
 | No sentinel in the reply | The build node fails on the build agent's vet row |
 | Reply claims `EXIT=0` | The node holds, outcome unknown |
 | `graph-outcome-conflict` | Logged, naming the failing vet command |
-| Isolation | The scratch sessions live on a private tmux server; the user's real server holds none (added in the second run — the defect [MUX-226](../backlog/MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) records for another script) |
+| Isolation | The scratch sessions live on a private tmux server; the user's real server holds none (added in the second run — the defect [MUX-226](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) records for another script) |
 | Control | Role-aware attribution removed from a copy of the executor; that muxcode builds; under it the `EXIT=0` claim records success |
 
 Sections A–D (MUX-214) still pass. The review's nit — `CLAUDE.md` naming floor 32 — is fixed: the entry reads floor 34. `docs/hooks.md` gained one sentence on the "Test precheck patterns" bullet (plan), `CLAUDE.md` its hook-driven-chains clause and script entry (edit).
