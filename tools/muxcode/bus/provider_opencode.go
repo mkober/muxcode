@@ -150,7 +150,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 
 	// Deliver a bounded batch so a large inbox cannot build an argv that
 	// send-keys rejects outright; the remainder drains on later cycles.
-	keep, responses := splitWakeBatch(msgs)
+	keep, responses := splitWakeBatch(settleAnsweredRequests(session, role, msgs))
 	notice := settleWakeResponses(session, role, responses)
 	if len(keep) == 0 && notice == "" {
 		return nil
