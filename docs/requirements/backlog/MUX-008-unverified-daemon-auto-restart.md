@@ -75,6 +75,32 @@ Compare `bus/reload.go` `ReloadAgent()`, which polls for launch verification for
 
 Filed by the edit agent from a field report in the `is-advising-gateway` subsession (2026-08-17). Code fragility verified in-tree; the incident's symptom link is plausible, not proven. The same investigation surfaced CLAUDE.md drift in the `bus/agent_health.go` export list (phantom `StartAgent()`/`StopAgent()`/`CheckAgentHealth()`), fixed alongside this filing.
 
+## Findings at selection (2026-11-17) — parked, not activated
+
+`55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` reached this spec as its
+best-ranked unparked row (rank 19). Plan read it end to end against the tree at `cb6179e` and did
+not activate it. It was written against August's restart code; three months of rework
+(MUX-126, MUX-136, MUX-139, MUX-006, MUX-184) have overtaken part of it.
+
+| Spec says | Tree today |
+|-----------|------------|
+| `RestartLocalAgent` sends `C-c`, sleeps a fixed 500 ms, sends the launch line and returns `nil` | **Still true in substance.** `RestartLocalAgent` (`bus/health.go:309`) takes the reload marker and calls `scrapeAndRelaunch`, which scrapes the pane for a resume id, sends `C-c`, sleeps `restartInterruptDelay` (500 ms), sends the launch line and returns. No check that the old process exited or that an agent came up |
+| The daemon caller is at `daemon/daemon.go` ~`:1615` | `restartDeadAgent`, `:2293` |
+| A failed restart is recorded as `agent-recovered` | **No longer how it works.** `agent-recovered` is emitted on a later sweep that finds the agent alive, and for a daemon-restarted agent only once `verifyRestricted` and `definitionApplied` pass (`:2164–2175`). Whether a swallowed launch line can still read as alive there was not checked |
+| A failed restart should count toward the 3-attempt cap | **Already does.** `agentRestarts[role]++` runs before the restart is attempted |
+| Orphan detection: a role process not descended from the pane shell | Not there. MUX-184's reaper proves ownership for **dead** sessions only; a live session's detached agent is not covered. It would need `ps`, which a Codex sandbox denies |
+| Phase 3's script "requires a running muxcode session" | The suite's scripts are now hermetic — private tmux server, `claude-stub` — and live-session scripts are skipped by `test-all.sh` |
+
+**Why parked.** Criteria 1 and 2 stand. Criterion 3 is met or moot. Criterion 4 needs a design that
+does not exist, in territory two other specs have touched. And the restart path now carries rules
+this spec predates — edit is only ever resumed, an agent relaunched without its definition is
+stopped. Rewriting the criteria to today's code is a scoping decision, and it is not the loop's or
+plan's to make unattended.
+
+**What would unpark it:** the user's word on scope — at least whether orphan detection stays in
+this spec, and whether the remaining gap is "verify exit and liveness inside `scrapeAndRelaunch`"
+or something wider.
+
 ## Status
 
-Backlog
+**Backlog** — 0/15, parked 2026-11-17 at selection; see the findings above.

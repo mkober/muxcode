@@ -1001,6 +1001,19 @@ func IsHostedRole(role string) bool {
 	return ok
 }
 
+// hostedRoleRefusal is the one refusal for a lifecycle command aimed at a
+// hosted role, or nil for any other: the role runs inside its host's pane, so
+// acting on it acts on the host — `muxcode reload docs` stopped the planner
+// and relaunched its pane as docs (MUX-227). resume, ReloadAgent and
+// ReloadAgentReserved all refuse through it, so they cannot drift apart.
+func hostedRoleRefusal(role, command string) error {
+	if !IsHostedRole(role) {
+		return nil
+	}
+	host := WindowForRole(role)
+	return fmt.Errorf("%s runs inside %s's pane — use `muxcode %s %s`", role, host, command, host)
+}
+
 // IsSpawnRole returns true if the role is a spawn-prefixed role (e.g. "spawn-a1b2c3d4").
 func IsSpawnRole(role string) bool {
 	return strings.HasPrefix(role, "spawn-")

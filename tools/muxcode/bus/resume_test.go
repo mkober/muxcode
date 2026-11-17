@@ -173,8 +173,9 @@ func TestResumeAgent_RefusesHostedRoles(t *testing.T) {
 			}
 
 			err := ResumeAgent(f.session, c.role, true, "user")
-			if !errors.Is(err, ErrResumeRefused) || !strings.Contains(err.Error(), "muxcode resume "+c.host) {
-				t.Fatalf("err = %v, want a refusal naming `muxcode resume %s`", err, c.host)
+			want := c.role + " runs inside " + c.host + "'s pane — use `muxcode resume " + c.host + "`"
+			if !errors.Is(err, ErrResumeRefused) || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want a refusal %q", err, want)
 			}
 			f.typedNothing(t)
 			if f.stopped {

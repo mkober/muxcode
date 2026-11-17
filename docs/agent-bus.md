@@ -547,7 +547,7 @@ Use this when an agent has pending inbox messages it never processed — the rec
 
 Behavior:
 
-- Resolves hosted roles to their host pane (`docs`/`research`/`pr-read` → host window).
+- Resolves hosted roles to their host pane (`docs` → plan, `pr-read` → commit).
 - Delivers via the robust wake-up path (text → delay → Enter → verify for hook providers, `SendWakeUp()` for non-hook providers) — avoids the dropped-Enter failure of a single `tmux send-keys "text" Enter` write.
 - With `--force`, if all messages are already marked notified but still unconsumed (a prior send-keys was dropped), the notified markers are cleared so they re-deliver.
 - Clears stale parked input in an unfocused pane before injecting.
@@ -2524,6 +2524,21 @@ muxcode reload --all [--provider <cli>] --resume
 **Single agent**: writes runtime override to `$MUXCODE_BUS_DIR/config/{role}.env`, gracefully stops the agent (C-c, poll for exit, force-kill after 6s), regenerates provider config, relaunches via `muxcode agent launch`, and verifies liveness (15s timeout). Reload marker suppresses daemon health checks during the cycle.
 
 **Multi-role**: accepts multiple positional role arguments. Reloads agents sequentially via `ReloadBatch()` with a 3s gap between each. Per-agent results are printed as each completes, with a summary line at the end. Failure of one agent does not abort the batch.
+
+**A hosted role is refused** (MUX-227). `docs` runs inside plan's pane and `pr-read` inside commit's; they have no window of their own. (`research` is not hosted: it is a mode role with its own window, and reloads as any other.) `muxcode reload docs` exits 1 before anything is stopped, naming what to run instead — the same refusal `muxcode resume` gives:
+
+```
+docs runs inside plan's pane — use `muxcode reload plan`
+```
+
+| Form | A hosted role |
+|------|---------------|
+| `muxcode reload <role>` | Refused, exit 1 |
+| `muxcode reload <role1> <role2> …` | That role is refused as one batch error; the others reload |
+| `muxcode config set <role> cli\|model … --reload` | The reload is refused the same way |
+| `muxcode reload --all`, `--provider`, the selector modal | Never offered — they list reloadable roles only |
+
+The host's pane, process and conversation are untouched, and no reload marker is left on the role or its host. Before MUX-227 the role resolved to its host's window, so the reload stopped the host agent and relaunched its pane under the hosted role's definition. One check (`hostedRoleRefusal`, `bus/config.go`) serves `ReloadAgent`, the daemon's `ReloadAgentReserved` and `ResumeAgent`.
 
 **`--all` with overrides**: `--all` now supports `--cli` and `--model` flags — applies the same provider/model override to every active agent. Combined with `--provider`, only agents currently running on the specified CLI are reloaded (others are skipped).
 
