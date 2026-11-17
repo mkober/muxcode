@@ -129,7 +129,7 @@ lifecycle log — are this incident's evidence, not separate scope. They are lis
     ([MUX-211](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md),
     the definition rewrite at `bus/provider_opencode.go:619` no longer matches
     `agents/code-editor.md`) and `test-stall-redrive-busy`
-    ([MUX-212](../backlog/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md),
+    ([MUX-212](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md),
     a stale spinner pins the pane busy; root cause unknown)
   - **Excluded, environment — 1:** `test-prompt-mode` — no `MUXCODE_OPENCODE_API_KEY` in the
     environment or config, so the surface renders its keyless state and the frame and live checks,
@@ -415,4 +415,4 @@ acceptance criteria are checked; the full-suite criterion carries five exclusion
 see its annotation and [MUX-209](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md),
 [MUX-210](../backlog/MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md),
 [MUX-211](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) and
-[MUX-212](../backlog/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md).
+[MUX-212](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md).

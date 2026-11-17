@@ -89,7 +89,14 @@ render_rest() {
 # A pane that is idle NOW but whose scrollback still carries a spinner line.
 # The busy check reads only the live tail, so the interrupt hint must sit far
 # enough above the rest frame to fall outside it — hence the filler.
+#
+# The pane is respawned first (MUX-212): the provider-awareness section types a
+# whole request into this shell, and its apostrophe ("another role's") left bash
+# at its PS2 prompt, so the frame below became continuation input and the typed
+# command line — interrupt hint included — sat in the live tail, reading busy.
 render_stale_spinner() {
+  tmux respawn-pane -k -t "$SESSION:$1.1" -c "$WORK"
+  sleep 0.5
   tmux send-keys -t "$SESSION:$1.1" -l -- 'PS1="❯ "; clear; printf "✻ Cogitating… (2m 14s · esc to interrupt)\n⏺ Read(a)\n  ⎿ 1\n⏺ Read(b)\n  ⎿ 2\n⏺ Read(c)\n  ⎿ 3\n⏺ Read(d)\n  ⎿ 4\n⏺ Read(e)\n  ⎿ 5\n✻ Cooked for 2m 14s\n"'
   tmux send-keys -t "$SESSION:$1.1" Enter
 }
@@ -197,12 +204,13 @@ echo "-- stale spinner in scrollback"
 render_stale_spinner review
 sleep 1
 "$MUX" send review stale-row "a row after a stale spinner" --no-notify >/dev/null 2>&1
-"$MUX" deliver review --force >/dev/null 2>&1
+stale_out=$("$MUX" deliver review --force 2>&1)
 sleep 1
 if pane_text review | grep -q "a row after a stale spinner"; then
   ok "an idle pane with stale spinner history is still delivered to"
 else
-  fail "stale spinner history pinned the pane busy — force recovery refused forever"
+  fail "stale spinner history pinned the pane busy — force recovery refused forever: $stale_out"
+  pane_text review | grep -v '^[[:space:]]*$' | tail -12 | sed 's/^/        | /'
 fi
 
 # ── Phase B: the stall watchdog withholds from a working pane ────

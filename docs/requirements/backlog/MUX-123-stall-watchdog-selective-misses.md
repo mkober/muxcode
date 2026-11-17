@@ -178,7 +178,7 @@ activate it.
 | Phase 1 reconstructs three stalls of 2026-08-28 from the raw lifecycle log | The session's log now begins 2026-10-21 (5066 rows); those episodes are gone |
 | The gate chain in `checkStalledTasks` as tabled above | Reworked since: the pane gate is `PaneShowsRecoverableIdle` (MUX-171), a busy pane is skipped and logged once (`stall-skipped-busy`), the executor re-drives its own dispatches, and since MUX-232 the watchdog re-drives one stalled task first with its full request |
 | The spawn-role pane question | Still unanswered; MUX-120, which it leans on, is parked |
-| `scripts/test-stall-redrive.sh` | Does not exist. `scripts/test-stall-redrive-busy.sh` does, and fails ([MUX-212](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md)) |
+| `scripts/test-stall-redrive.sh` | Does not exist. `scripts/test-stall-redrive-busy.sh` does; it failed then, and was fixed later the same day ([MUX-212](../completed/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) — the script's fixture, not the watchdog) |
 
 **Why parked.** The first criterion — each of the three observed misses explained by a named gate,
 with evidence — cannot be met: the evidence no longer exists, and the fix is defined as whatever
