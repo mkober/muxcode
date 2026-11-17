@@ -274,17 +274,21 @@ func buildInstallRoots() []string {
 
 // muxcodeStateRoots returns the muxcode state outside the repo that an agent's
 // own `muxcode` calls write, whatever its role: the lifecycle log
-// (LifecycleLogDir), global memory (GlobalMemoryDir) and the bus base
-// (BusDirBase). Without them a Codex agent's lifecycle rows are dropped
-// silently, `memory write --global` fails, and — since MUX-208 moved the bus
-// out of the sandbox-writable /tmp — `muxcode send` cannot write an inbox;
-// per-role memory lives in the repo's .muxcode/memory and needs no grant.
-// A path that is not absolute (no resolvable home) is dropped rather than
-// granted relative to the repo.
+// (LifecycleLogDir), global memory (GlobalMemoryDir), the bus base
+// (BusDirBase) and project memory (ProjectMemoryDir). Without them a Codex
+// agent's lifecycle rows are dropped silently, `memory write --global` fails,
+// and — since MUX-208 moved the bus out of the sandbox-writable /tmp —
+// `muxcode send` cannot write an inbox. Project memory is granted by its own
+// directory alone, never the checkout around it: since MUX-223 a spawn worker
+// in a separate worktree, or an explicit BUS_MEMORY_DIR, puts it outside the
+// workspace, where `memory write` and `session compact` failed. A path that is
+// not absolute (no resolvable home), or no project memory root, is dropped
+// rather than granted relative to the repo.
 func muxcodeStateRoots() []string {
 	var roots []string
 	busBase, _ := busDirBase()
-	for _, dir := range []string{LifecycleLogDir(), GlobalMemoryDir(), busBase} {
+	memoryDir, _ := ProjectMemoryDir()
+	for _, dir := range []string{LifecycleLogDir(), GlobalMemoryDir(), busBase, memoryDir} {
 		if filepath.IsAbs(dir) {
 			roots = append(roots, dir)
 		}

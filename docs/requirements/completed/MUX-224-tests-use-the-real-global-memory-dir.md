@@ -28,7 +28,7 @@ rotates a file there — is not established here; Phase 1 finds out.
 
 Same family as [MUX-004](./MUX-004-lifecycle-log-test-leak.md) (lifecycle log) and
 MUX-137 (bus and session memory). Where project memory resolves in production is
-[MUX-223](../backlog/MUX-223-project-memory-resolves-against-the-callers-cwd.md).
+[MUX-223](./MUX-223-project-memory-resolves-against-the-callers-cwd.md).
 
 ## Requirements
 
