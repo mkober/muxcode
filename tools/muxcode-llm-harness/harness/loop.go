@@ -195,6 +195,7 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 	} else {
 		defer os.Remove(markerPath)
 	}
+	defer holdOwnerLock(cfg.BusDir, busRole)()
 
 	sink.Emit(Event{Kind: EventStartup, Time: time.Now(), Message: fmt.Sprintf("System prompt: %d bytes", len(systemPrompt))})
 	if cfg.BusRole != "" && cfg.BusRole != cfg.Role {

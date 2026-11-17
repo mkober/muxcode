@@ -17,6 +17,8 @@ type CleanupResult struct {
 	TriggerFiles []string // /tmp/muxcode-analyze-{session}.trigger
 	SpawnDirs    []string // /tmp/muxcode-spawn-{session}/
 	LogFiles     []string // /tmp/muxcode-log-*.txt
+	Reaped       []string // processes reaped first (planned, on a dry run)
+	Held         []string // bus dirs left in place: "<dir> — <processes> still running"
 }
 
 // ClaudeCleanupResult tracks Claude Code /tmp session cleanup.
@@ -47,7 +49,40 @@ func Cleanup(session string) error {
 // muxcode sessions (sessions whose tmux session no longer exists).
 // When dryRun is true, items are collected but not removed.
 // When includeActive is true, artifacts from the current session are included.
+//
+// Processes go before files (MUX-184): a stale session's processes are reaped
+// first (ReapOrphans, scoped to the sessions being cleaned), because a daemon
+// left running recreates the bus dir it is deleted from. A bus dir whose
+// session still has a live process afterwards — one the reaper could not prove
+// or could not stop — is left in place and listed in Held.
 func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupResult, error) {
+	return cleanupStale(currentSession, dryRun, false, func(s string) bool {
+		return shouldClean(s, currentSession, includeActive)
+	})
+}
+
+// CleanupSession is CleanupStale for one session, its own name included —
+// the session-closed hook's form, which before MUX-184 skipped the very
+// session that had closed. A session tmux still lists is left alone; a row
+// records the cleanup, or why its bus dir was held.
+func CleanupSession(session string, dryRun bool) (*CleanupResult, error) {
+	result, err := cleanupStale(session, dryRun, true, func(s string) bool {
+		return s == session && !isTmuxSessionAlive(s)
+	})
+	if err == nil && !dryRun {
+		if len(result.Held) > 0 {
+			LogLifecycle(session, "warn", "cleanup", "session-cleanup-held", strings.Join(result.Held, "; "))
+		} else if len(result.BusDirs) > 0 {
+			LogLifecycle(session, "info", "cleanup", "session-cleanup", strings.Join(result.BusDirs, ", "))
+		}
+	}
+	return result, err
+}
+
+// cleanupReap is the reaper cleanup runs; a var so tests can answer for it.
+var cleanupReap = ReapOrphans
+
+func cleanupStale(logSession string, dryRun, single bool, clean func(string) bool) (*CleanupResult, error) {
 	result := &CleanupResult{}
 	type scanned struct {
 		dir string
@@ -66,8 +101,13 @@ func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupRe
 			found = append(found, scanned{dir, e})
 		}
 	}
-	result.SpawnDirs = append(result.SpawnDirs, staleSpawnDirs(currentSession, includeActive)...)
+	owner := map[string]string{}
+	for _, dir := range staleSpawnDirs(clean) {
+		result.SpawnDirs = append(result.SpawnDirs, dir)
+		owner[dir] = filepath.Base(dir)
+	}
 
+	busDirSession := map[string]string{}
 	for _, s := range found {
 		e := s.e
 		name := e.Name()
@@ -76,29 +116,36 @@ func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupRe
 		switch {
 		case strings.HasPrefix(name, "muxcode-bus-") && e.IsDir():
 			session := strings.TrimPrefix(name, "muxcode-bus-")
-			if shouldClean(session, currentSession, includeActive) {
+			if clean(session) {
 				result.BusDirs = append(result.BusDirs, full)
+				busDirSession[full] = session
+				owner[full] = session
 			}
 
 		case strings.HasPrefix(name, "muxcode-preview-") && strings.HasSuffix(name, ".tmp"):
 			session := strings.TrimPrefix(name, "muxcode-preview-")
 			session = strings.TrimSuffix(session, ".tmp")
-			if shouldClean(session, currentSession, includeActive) {
+			if clean(session) {
 				result.PreviewFiles = append(result.PreviewFiles, full)
+				owner[full] = session
 			}
 
 		case strings.HasPrefix(name, "muxcode-analyze-") && strings.HasSuffix(name, ".trigger"):
 			session := strings.TrimPrefix(name, "muxcode-analyze-")
 			session = strings.TrimSuffix(session, ".trigger")
-			if shouldClean(session, currentSession, includeActive) {
+			if clean(session) {
 				result.TriggerFiles = append(result.TriggerFiles, full)
+				owner[full] = session
 			}
 
 		case strings.HasPrefix(name, "muxcode-spawn-") && e.IsDir():
 			session := strings.TrimPrefix(name, "muxcode-spawn-")
-			if shouldClean(session, currentSession, includeActive) {
+			if clean(session) {
 				result.SpawnDirs = append(result.SpawnDirs, full)
+				owner[full] = session
 			}
+
+		case single:
 
 		case strings.HasPrefix(name, "muxcode-log-") && strings.HasSuffix(name, ".txt"):
 			// Orphan log files don't have session names — always clean them
@@ -111,6 +158,7 @@ func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupRe
 		}
 	}
 
+	reapBeforeRemoving(result, busDirSession, owner, logSession, dryRun)
 	if dryRun {
 		return result, nil
 	}
@@ -142,16 +190,106 @@ func CleanupStale(currentSession string, dryRun, includeActive bool) (*CleanupRe
 	return result, nil
 }
 
+// reapBeforeRemoving reaps the processes of the sessions whose bus dirs are
+// about to go, then holds every session left unresolved: one with a live
+// process the bus dir or argv still attributes to it, or one the reaper could
+// not clear — a process it refused for want of proof (a lockless proc record)
+// or failed to stop (a group that outlived its leader and KILL), which may no
+// longer carry any record a later look could find. A held session keeps all
+// its artifacts — bus dir, spawn worktrees, trigger and preview files — since
+// its processes may still use them; owner maps each artifact to its session.
+// On a dry run the reaper only plans, and a process it plans to reap does not
+// hold its session.
+func reapBeforeRemoving(result *CleanupResult, busDirSession, owner map[string]string, logSession string, dryRun bool) {
+	if len(busDirSession) == 0 {
+		return
+	}
+	var sessions []string
+	for _, s := range busDirSession {
+		sessions = append(sessions, s)
+	}
+	rep := cleanupReap(ReapOptions{LogSession: logSession, DryRun: dryRun, Sessions: sessions})
+	reaped, planned := rep.Reaped, map[int]bool{}
+	if dryRun {
+		reaped = rep.Planned
+		for _, o := range rep.Planned {
+			planned[o.PID] = true
+		}
+	}
+	for _, o := range reaped {
+		result.Reaped = append(result.Reaped, fmt.Sprintf("%s %s pid %d (%s)", o.Session, o.Family, o.PID, o.Proof))
+	}
+	unresolved := map[string][]string{}
+	for _, o := range append(append([]Orphan{}, rep.Failed...), rep.Unproven...) {
+		unresolved[o.Session] = append(unresolved[o.Session], fmt.Sprintf("%s pid %d (%s)", o.Family, o.PID, o.Reason))
+	}
+	held := map[string]bool{}
+	for _, dir := range result.BusDirs {
+		session := busDirSession[dir]
+		why := append(sessionProcesses(dir, session, true, planned), unresolved[session]...)
+		if len(why) > 0 {
+			held[session] = true
+			result.Held = append(result.Held, fmt.Sprintf("%s — %s still running", dir, strings.Join(dedupe(why), ", ")))
+		}
+	}
+	keep := func(paths []string) []string {
+		var kept []string
+		for _, p := range paths {
+			if !held[owner[p]] {
+				kept = append(kept, p)
+			}
+		}
+		return kept
+	}
+	result.BusDirs = keep(result.BusDirs)
+	result.SpawnDirs = keep(result.SpawnDirs)
+	result.PreviewFiles = keep(result.PreviewFiles)
+	result.TriggerFiles = keep(result.TriggerFiles)
+}
+
+// dedupe keeps the first of each repeated entry, so a process both still
+// holding its lock and reported unproven is listed once by its pid.
+func dedupe(entries []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range entries {
+		key := e
+		if i := strings.Index(e, " ("); i > 0 {
+			key = e[:i]
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // FormatCleanupResult returns a human-readable summary of cleanup results.
 func FormatCleanupResult(r *CleanupResult, dryRun bool) string {
-	if r.TotalItems() == 0 {
+	if r.TotalItems() == 0 && len(r.Reaped) == 0 && len(r.Held) == 0 {
 		return "Nothing to clean up"
 	}
 
 	var b strings.Builder
 	verb := "Removed"
+	reapVerb := "Reaped"
 	if dryRun {
 		verb = "Would remove"
+		reapVerb = "Would reap"
+	}
+
+	if len(r.Reaped) > 0 {
+		fmt.Fprintf(&b, "%s %d orphaned process(es) first:\n", reapVerb, len(r.Reaped))
+		for _, p := range r.Reaped {
+			fmt.Fprintf(&b, "  %s\n", p)
+		}
+	}
+	if len(r.Held) > 0 {
+		fmt.Fprintf(&b, "Left %d bus directory(s) in place — processes still running that could not be proved and reaped:\n", len(r.Held))
+		for _, p := range r.Held {
+			fmt.Fprintf(&b, "  %s\n", p)
+		}
 	}
 
 	if len(r.BusDirs) > 0 {
@@ -213,7 +351,7 @@ func cleanupScanRoots() []string {
 // staleSpawnDirs returns the stale sessions' worktree bases in the
 // StateDir()/spawn/{session} layout. With an overridden base the worktrees sit
 // beside the bus as muxcode-spawn-{session} and the root scan finds them.
-func staleSpawnDirs(currentSession string, includeActive bool) []string {
+func staleSpawnDirs(clean func(string) bool) []string {
 	if busDirBaseOverridden() {
 		return nil
 	}
@@ -224,7 +362,7 @@ func staleSpawnDirs(currentSession string, includeActive bool) []string {
 	}
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() && shouldClean(e.Name(), currentSession, includeActive) {
+		if e.IsDir() && clean(e.Name()) {
 			dirs = append(dirs, filepath.Join(root, e.Name()))
 		}
 	}

@@ -31,7 +31,7 @@ in a narrower form than filed.
 ### What this spec no longer carries
 
 The daemon-side poller census and reaper are handed to
-[MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md), which already claims them
+[MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md), which already claims them
 ("its daemon-side census is this reaper") and holds the open decision they depend on: what proves a
 process is the daemon's to kill. That spec was parked on it. Three items below are ticked as deferred
 for that reason — plan's call at activation, **confirmed by the user on 2026-11-15** (MUX-184
@@ -183,7 +183,7 @@ check, the daemon no reaper, the receipt no consumer pid. Every acceptance crite
       polling
 - [x] The daemon detects more than one live poller for a role and terminates any whose parent is dead,
       logging a lifecycle event naming the pid — deferred to
-      [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md)
+      [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] A receipt records **which process** consumed the message (pid, and whether its parent was alive),
       so an orphan-consumed message is distinguishable after the fact
 - [x] `IsPolling` cannot be satisfied by an orphan alone — a poller with a dead parent does not count
@@ -268,7 +268,7 @@ review at 18:00:51 with 0 must-fix, 0 should-fix, 0 nits (`/tmp/muxcode-review-1
 
 - [x] Health sweep counts pollers per role; kills any with a dead parent; `listener-orphan-reaped`
       lifecycle event with the pid — deferred to
-      [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md)
+      [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] `IsPolling` excludes pollers with a dead parent
 - [x] Receipts record `acked_pid` and whether the consumer's parent was alive
 - [x] Negative control: healthy listeners unaffected, `IsPolling` unchanged for them
@@ -298,7 +298,7 @@ resolved.
 - [x] Test: orphan a listener → it exits on its own within one poll interval; the next message is
       consumed by a live listener and its receipt names that pid
 - [x] Test: with the self-exit disabled (env), the daemon reaps the orphan and logs the event —
-      deferred to [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md)
+      deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] Test: `IsPolling` is false while only an orphan exists
 - [x] Negative control: a live listener never exits by itself and keeps its receipts
 - [x] Coverage floor keeps a skipped section from reporting green

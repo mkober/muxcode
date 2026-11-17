@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
@@ -56,6 +58,12 @@ type Daemon struct {
 	lastDiskPressureCheck int64
 	lastAutoClearCheck    int64
 	lastPromptAgentStart  int64
+	childMu               sync.Mutex  // guards starting a child against the shutdown handler
+	stopping              bool        // set under childMu once TERM/INT arrives
+	harness               *os.Process // the prompt harness this run started, under childMu
+	tmuxSocketRecorded    bool
+	lastSessionGoneCheck  time.Time
+	unlockInstance        func() // releases the instance locks; set by trapShutdown
 	ollamaWarmingSince    int64
 
 	lastIdleCheck        int64
@@ -348,6 +356,7 @@ func (d *Daemon) Run() error {
 		return err
 	}
 	defer unlock()
+	d.trapShutdown(unlock)
 
 	build := bus.BuildInfo()
 	bus.LogLifecycleWithPID(d.session, "info", "daemon", "started",
@@ -411,9 +420,46 @@ func (d *Daemon) Run() error {
 		d.checkDiskPressure()
 		d.checkAutoClear()
 		d.checkPromptAgent()
+		d.checkTmuxSocket()
+		d.checkSessionGone()
 		d.checkBranchTime()
 		time.Sleep(d.pollInterval)
 	}
+}
+
+// shutdownHarnessGrace bounds the harness stop on TERM/INT, inside the 2 s an
+// upgrade-daemons rollout or the reaper allows the daemon before KILL.
+const shutdownHarnessGrace = 1500 * time.Millisecond
+
+// trapShutdown makes TERM and INT stop this daemon's children before it exits
+// (MUX-184 Decision 4): before, the harness it started survived every daemon
+// kill, reparented to launchd, and polled forever — sub-defect C, the source
+// of 14 orphaned harnesses on 2026-09-14. Its only children are the headless
+// harnesses StartPromptAgent launches; procs are started by the CLI, not the
+// daemon, and are left alone. The harness this run started is stopped through
+// its process handle (bus.StopOwnChild), which covers the moment before it
+// takes its owner lock; any other is stopped on the proof of that lock
+// (bus.StopSessionHarness), never the pid in its marker file. childMu keeps
+// the poll loop from starting one after the stop has begun. An
+// upgrade-daemons re-exec sends no signal, so its children carry on across it.
+func (d *Daemon) trapShutdown(unlock func()) {
+	d.unlockInstance = unlock
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		d.childMu.Lock()
+		d.stopping = true
+		var stopped []string
+		if d.harness != nil && bus.StopOwnChild(d.harness, shutdownHarnessGrace) {
+			stopped = append(stopped, fmt.Sprintf("prompt pid %d", d.harness.Pid))
+		}
+		stopped = append(stopped, bus.StopSessionHarness(d.session, shutdownHarnessGrace)...)
+		bus.LogLifecycle(d.session, "info", "daemon", "daemon-stopped",
+			fmt.Sprintf("%v: stopped %d harness process(es) %v before exit", sig, len(stopped), stopped))
+		unlock()
+		os.Exit(0)
+	}()
 }
 
 // checkRestartRequest re-execs this daemon's own executable on an
@@ -4467,6 +4513,47 @@ const promptAgentRestartCoolSecs int64 = 60
 // owns start and restart. Alert-free by design: start failures go to the
 // lifecycle log and retry after the cooldown instead of paging edit every
 // tick; a persistent failure surfaces through Ollama health, not here.
+// checkTmuxSocket records the session's tmux server once per daemon run
+// (bus.RecordTmuxSocket), retrying each poll until the session exists.
+// sessionGoneCheckInterval paces checkSessionGone, which bounds how long a
+// closed session's processes outlive it.
+const sessionGoneCheckInterval = 10 * time.Second
+
+// checkSessionGone ends this daemon once its own session is positively gone
+// from the tmux server it recorded (bus.SessionPositivelyGone), first reaping
+// the session's other processes — monitor, listeners, harness, webhook, proc
+// groups — on the reaper's proofs (MUX-184). It is the road for a session
+// closed with no close hook to run: the tmux server killed or crashed, where
+// before the daemon and its harness ran on until some later launch's sweep.
+// Checked only once this run has seen the session (tmuxSocketRecorded) — at a
+// launch the daemon starts before its session exists. MUXCODE_ORPHAN_REAP=0
+// turns it off with the launch sweep.
+func (d *Daemon) checkSessionGone() {
+	if bus.OrphanReapDisabled() || !d.tmuxSocketRecorded || time.Since(d.lastSessionGoneCheck) < sessionGoneCheckInterval {
+		return
+	}
+	d.lastSessionGoneCheck = time.Now()
+	if !bus.SessionPositivelyGone(d.session) {
+		return
+	}
+	d.childMu.Lock()
+	d.stopping = true
+	bus.StopOwnChild(d.harness, shutdownHarnessGrace)
+	rep := bus.ReapOrphans(bus.ReapOptions{LogSession: d.session, Sessions: []string{d.session}})
+	bus.LogLifecycle(d.session, "info", "daemon", "daemon-session-gone",
+		fmt.Sprintf("tmux session gone from its server: reaped %d process(es), %d failed, %d unproven; exiting", len(rep.Reaped), len(rep.Failed), len(rep.Unproven)))
+	if d.unlockInstance != nil {
+		d.unlockInstance()
+	}
+	os.Exit(0)
+}
+
+func (d *Daemon) checkTmuxSocket() {
+	if !d.tmuxSocketRecorded {
+		d.tmuxSocketRecorded = bus.RecordTmuxSocket(d.session)
+	}
+}
+
 func (d *Daemon) checkPromptAgent() {
 	if !bus.PromptAgentEnabled() {
 		return
@@ -4478,15 +4565,21 @@ func (d *Daemon) checkPromptAgent() {
 	if bus.PromptAgentAlive(d.session) {
 		return
 	}
+	d.childMu.Lock()
+	defer d.childMu.Unlock()
+	if d.stopping {
+		return
+	}
 	d.lastPromptAgentStart = now
-	pid, err := bus.StartPromptAgent(d.session)
+	p, err := bus.StartPromptAgentProcess(d.session)
 	if err != nil {
 		bus.LogLifecycle(d.session, "warn", "daemon", "prompt-agent-start-failed", err.Error())
 		return
 	}
+	d.harness = p
 	bus.LogLifecycle(d.session, "info", "daemon", "prompt-agent-start",
-		fmt.Sprintf("headless prompt-agent started (pid %d)", pid))
-	fmt.Printf("  %s  Prompt-agent started (pid %d)\n", time.Now().Format("15:04:05"), pid)
+		fmt.Sprintf("headless prompt-agent started (pid %d)", p.Pid))
+	fmt.Printf("  %s  Prompt-agent started (pid %d)\n", time.Now().Format("15:04:05"), p.Pid)
 }
 
 // branchTimeFlushSecs is how often accrued in-memory branch time is written to

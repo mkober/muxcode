@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // The prompt-agent (MUX-109) runs headless: no tmux window, no harness
@@ -237,13 +239,26 @@ func PromptAgentAlive(session string) bool {
 // harness writes its own PID marker once its loop starts; callers gate
 // re-starts on a cooldown rather than the marker to cover the write gap.
 func StartPromptAgent(session string) (int, error) {
+	p, err := StartPromptAgentProcess(session)
+	if err != nil {
+		return 0, err
+	}
+	return p.Pid, nil
+}
+
+// StartPromptAgentProcess is StartPromptAgent returning the child's process
+// handle, which the caller may signal safely for as long as it holds it: once
+// the child is reaped the handle reports it finished rather than reach a
+// reused pid. The daemon keeps it to stop the harness on TERM even before
+// the harness has taken its owner lock (MUX-184).
+func StartPromptAgentProcess(session string) (*os.Process, error) {
 	bin, err := exec.LookPath("muxcode-llm-harness")
 	if err != nil {
-		return 0, fmt.Errorf("muxcode-llm-harness not in PATH: %w", err)
+		return nil, fmt.Errorf("muxcode-llm-harness not in PATH: %w", err)
 	}
 	logf, err := os.OpenFile(PromptAgentLogPath(session), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer logf.Close()
 
@@ -257,11 +272,34 @@ func StartPromptAgent(session string) (int, error) {
 	cmd.Stderr = logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		return 0, err
+		return nil, err
 	}
-	pid := cmd.Process.Pid
 	go func() { _ = cmd.Wait() }() // reap; the marker liveness check owns restart
-	return pid, nil
+	return cmd.Process, nil
+}
+
+// StopOwnChild stops a child this process started and still holds the handle
+// of: TERM, up to grace, then KILL. A finished child is left alone, so the
+// signal never reaches a reused pid. Reports whether the child is gone.
+func StopOwnChild(p *os.Process, grace time.Duration) bool {
+	if p == nil {
+		return true
+	}
+	if err := p.Signal(syscall.SIGTERM); errors.Is(err, os.ErrProcessDone) {
+		return true
+	}
+	for deadline := time.Now().Add(grace); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		if errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+			return true
+		}
+	}
+	_ = p.Signal(syscall.SIGKILL)
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		if errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+			return true
+		}
+	}
+	return false
 }
 
 // StopPromptAgent terminates the prompt-agent process recorded in the

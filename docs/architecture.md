@@ -1709,6 +1709,33 @@ When a MuxCode session restarts with the same name, `Init()` in `bus/setup.go` d
 
 Core code: `bus/setup.go` (`Init()`, `resetFile()`, `purgeStaleFiles()`), `daemon/daemon.go` (`New()`)
 
+### What a closed session leaves behind, and the orphan reaper
+
+Killing a tmux session kills its panes and nothing else. The daemon and its headless harness are detached and reparent to pid 1; measured on 2026-11-16, they are the two processes left after `tmux kill-session`, after a same-name relaunch and after `kill -9` of the tmux server (the monitor exits by itself within a check; agents, their listeners and spawn workers die with their panes). On 2026-09-14 that had left four stray sessions' daemons and nineteen other orphans running for up to four days ([MUX-184](requirements/completed/MUX-184-orphaned-session-processes-never-reaped.md)).
+
+**The reaper** (`bus/reaper.go`, `ReapOrphans`) kills only what it can prove a dead session owns:
+
+| Question | Answer |
+|----------|--------|
+| Is the session dead? | Positive absence, asked of **the tmux server the session ran on**. Each daemon records its server's socket in `<bus dir>/tmux.socket` at start (`RecordTmuxSocket`) — the socket on line one, the tmux **session id** on line two; a session is judged only when that record names the server being asked, and is dead only when **neither its name nor its id** is listed there. The id survives `tmux rename-session`, so a renamed session reads as live ("renamed: its session id … is still listed") and is never reaped; a record written before the id was added has one line and is judged on the name alone until its daemon next restarts. No record, an unreadable one, or another server's socket → not judged, its processes logged `orphan-unproven`. A tmux that cannot be asked at all → nothing is reaped (`orphan-sweep-skipped`). Without the socket rule, a launch from inside a test's private tmux server would read every real session as gone |
+| Whose process is it? | A **kernel-held owner lock** under the dead session's bus directory — `lock/daemon.owner`, `lock/monitor.owner`, or one file per process in `lock/owners/` (`<family>.<role>.<pid>.owner`, held for the process's life by the listener, the webhook, the harness and every `muxcode proc` child, which is launched through `muxcode proc exec-held` so the lock survives the exec). The kernel names the holder, so a recycled pid is never mistaken for it. Or **the session name in argv**, from a `ps` census: a daemon, a monitor, a launch helper, or a legacy `inbox-listener.sh` whose path runs through one of this installation's bus directories. Nothing else counts — never a bare process name, never an environment probe |
+| What if it cannot be proved? | It is left running and logged `orphan-unproven` with the reason — a `bash -c` listener loop, a harness or listener at pid 1 that no owner lock accounts for, a `proc.jsonl` entry with no lock |
+| In what order? | Monitor, then daemon, then the rest. TERM, a 2 s grace, then KILL — the proof and the session's absence re-checked before each signal. A kill counts only once the process, or for a proc its whole process group, is confirmed gone; otherwise `orphan-kill-failed`. A surviving monitor holds back that session's daemon and everything after it |
+| Without `ps`? | The argv census is skipped (`orphan-census-unavailable`); the owner-lock road still runs |
+
+A leftover integration-test tmux server, `tmux -L escabs-<pid>`, is not session-owned: it is reaped when the pid in its socket name is dead (`escabs-reaped`).
+
+**When it runs.**
+
+| Trigger | Scope |
+|---------|-------|
+| Every session launch — `PrepareSessionLaunch`, before the tmux session is created | Every dead session on the machine, the name being launched included. `MUXCODE_ORPHAN_REAP=0` skips the sweep |
+| `muxcode cleanup`, and the tmux close hook — a **global** `session-closed[184]` hook on the server (`InstallSessionClosedHook`) running `muxcode cleanup --session #{q:hook_session_name}`. A hook set on the session itself never fires for the session tmux is destroying, so before MUX-184 the close hook never ran | The sessions being cleaned; processes are reaped before their files are removed, and a bus directory whose processes could not all be proved is left in place (`session-cleanup-held`) |
+| The daemon itself, every 10 s (`checkSessionGone`), once it has recorded its server's socket | Its own session only. When the recorded server positively reports the session gone, the daemon stops its harness, runs the reaper scoped to its session, logs `daemon-session-gone` and exits. This is the road that covers a tmux **server** dying, where no close hook runs; it needs no launch and no cleanup to happen first. It removes no files. Off under `MUXCODE_ORPHAN_REAP=0` |
+| The daemon's own exit on TERM or INT | Its harness only — stopped before the daemon exits (`daemon-stopped`). An in-place re-exec for `upgrade-daemons` sends no signal, so the harness keeps running under the same daemon pid |
+
+**A launch can be refused.** `PrepareSessionLaunch` replaced `killStaleProcesses`, which killed any `muxcode watch <name>` by name. After the sweep, if a daemon or monitor of the name being launched is still alive — one on another tmux server, one that recorded no socket, one whose monitor could not be killed — the launch stops with `ErrLaunchBlocked` and a `launch-blocked` row naming each survivor's pid and why. Under `MUXCODE_ORPHAN_REAP=0` nothing is reaped, so any surviving same-name daemon blocks the launch. A daemon started by a binary older than MUX-184 recorded no socket; `muxcode upgrade-daemons` restarts live daemons, which then record one.
+
 ## Workflow state machine
 
 The workflow state machine tracks the editing lifecycle as code moves from editing through validation to ready-for-commit. It observes events (file edits, chain outcomes, agent messages) and maintains a single persisted state — it never blocks actions.
@@ -1772,13 +1799,14 @@ Persistent JSONL logs at `~/.config/muxcode/logs/{session}.log` record the full 
 
 | Component | Source | Key events |
 |-----------|--------|------------|
-| `LaunchSession()` | `launcher` | session-start, bus-init, stale-kill, daemon-start, monitor-start, session-create, session-ready |
+| `LaunchSession()` | `launcher` | session-start, bus-init, launch-blocked, daemon-start, monitor-start, session-create, session-ready |
+| `bus/reaper.go` | `reaper` | orphan-reaped, escabs-reaped, orphan-unproven, orphan-kill-failed, orphan-census-unavailable, orphan-sweep-skipped |
 | `AutoAccept()` | `auto-accept` | trust-prompt, update-prompt, update-skip-failed, bypass-prompt, agent-ready, complete |
 | `RunAgentLaunch()` | `agent` | launch (role + CLI type) |
 | `bus/setup.go` | `init` | init, re-init |
-| `daemon/daemon.go` | `daemon` | started, lock-failed, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
+| `daemon/daemon.go` | `daemon` | started, lock-failed, daemon-stopped, daemon-session-gone, inbox-notify, startup-notify, trigger-route, cron-fire, proc/spawn-complete, loop/compact alerts, ollama/agent health |
 | `cmd/watch.go` (`--monitor`) | `monitor` | session-gone, stale-detected, daemon-restart |
-| `bus/cleanup.go` | `cleanup` | session-cleanup |
+| `bus/cleanup.go` | `cleanup` | session-cleanup, session-cleanup-held |
 
 **Dual-writer pattern:** Go code calls `bus.LogLifecycle()` directly (using source `daemon` for the bus daemon). Bash scripts call `muxcode lifecycle log` (CLI wrapper) which handles JSON formatting and flock-protected writes. Both converge on the same JSONL file.
 

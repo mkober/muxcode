@@ -130,7 +130,11 @@ func ReadProcEntries(session string) ([]ProcEntry, error) {
 		}
 		return nil, err
 	}
+	return parseProcEntries(data)
+}
 
+// parseProcEntries decodes proc.jsonl content, skipping malformed lines.
+func parseProcEntries(data []byte) ([]ProcEntry, error) {
 	var entries []ProcEntry
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	for scanner.Scan() {
@@ -245,7 +249,11 @@ func StartProc(session, command, dir, owner string) (ProcEntry, error) {
 	// the EXIT_CODE sentinel from being written.
 	wrapped := fmt.Sprintf("(%s); echo EXIT_CODE:$? >> %s", command, logFile)
 
-	cmd := exec.Command("sh", "-c", wrapped)
+	argv := []string{"sh", "-c", wrapped}
+	if self, ok := procHolderBinary(); ok {
+		argv = append([]string{self, "proc", "exec-held", OwnerLockDir(session), id, "--"}, argv...)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.Stdout = lf
 	cmd.Stderr = lf

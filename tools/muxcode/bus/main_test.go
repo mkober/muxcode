@@ -36,10 +36,15 @@ import (
 // expects an agent refused. Tests needing a value use pinGateAuthorityConfig.
 //
 // Under orphanReceiptEnv the binary runs no tests: it is the reparented
-// receipt writer runOrphanReceiptWriter describes.
+// receipt writer runOrphanReceiptWriter describes. Under ownerHolderEnv it is
+// the owner-lock holder runOwnerHolder describes.
 func TestMain(m *testing.M) {
 	if spec := os.Getenv(orphanReceiptEnv); spec != "" {
 		runOrphanReceiptWriter(spec)
+		os.Exit(0)
+	}
+	if spec := os.Getenv(ownerHolderEnv); spec != "" {
+		runOwnerHolder(spec)
 		os.Exit(0)
 	}
 	gateAuthorityConfigPaths = func() []string { return nil }

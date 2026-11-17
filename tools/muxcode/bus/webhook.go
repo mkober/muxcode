@@ -60,6 +60,7 @@ func ServeWebhook(ctx context.Context, cfg WebhookConfig) error {
 	if err := WriteWebhookPid(cfg.Session, cfg.Port, os.Getpid()); err != nil {
 		return fmt.Errorf("writing PID file: %w", err)
 	}
+	defer HoldOwnerLock(cfg.Session, OwnerFamilyWebhook, "")()
 
 	// Clean up PID file on shutdown
 	go func() {
