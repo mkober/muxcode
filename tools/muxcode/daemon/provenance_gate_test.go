@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
@@ -287,7 +288,42 @@ func TestCheckActiveSpec_FollowsCloseOutMove(t *testing.T) {
 	}
 }
 
-func TestCheckActiveSpec_DanglingAlertedOnce(t *testing.T) {
+// specDanglingAlerts counts spec-dangling events in edit's inbox and rows in
+// the lifecycle log.
+func specDanglingAlerts(t *testing.T, session string) (events, rows int) {
+	t.Helper()
+	msgs, err := bus.Peek(session, "edit")
+	if err != nil {
+		t.Fatalf("peek edit: %v", err)
+	}
+	for _, m := range msgs {
+		if m.Action == "spec-dangling" {
+			events++
+		}
+	}
+	entries, err := bus.ReadLifecycleLog(session)
+	if err != nil {
+		t.Fatalf("read lifecycle: %v", err)
+	}
+	for _, e := range entries {
+		if e.Event == "spec-dangling" {
+			rows++
+		}
+	}
+	return events, rows
+}
+
+// pastSpecDanglingDebounce moves the recorded first sighting back beyond the
+// debounce, as if the pointer had dangled that long across checks.
+func pastSpecDanglingDebounce(d *Daemon) {
+	d.specDanglingSince = d.specDanglingSince.Add(-specDanglingDebounceDefault - time.Second)
+}
+
+// TestCheckActiveSpec_DanglingAlertedOnceAfterDebounce is the negative
+// control for the MUX-228 debounce: a pointer that stays dangling past it is
+// reported exactly once, and never silently cleared.
+func TestCheckActiveSpec_DanglingAlertedOnceAfterDebounce(t *testing.T) {
+	t.Setenv("MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS", "")
 	session := testSession(t)
 	repo := seedRepoSpec(t, session)
 	if err := os.Remove(filepath.Join(repo, "docs/requirements/drafts/test-spec.md")); err != nil {
@@ -296,24 +332,76 @@ func TestCheckActiveSpec_DanglingAlertedOnce(t *testing.T) {
 	d := New(session, 5, 2)
 
 	d.checkActiveSpec()
-	d.checkActiveSpec()
+	if events, rows := specDanglingAlerts(t, session); events != 0 || rows != 0 {
+		t.Fatalf("first sighting: %d events, %d rows, want none inside the debounce", events, rows)
+	}
 
-	msgs, err := bus.Peek(session, "edit")
-	if err != nil {
-		t.Fatalf("peek edit: %v", err)
+	pastSpecDanglingDebounce(d)
+	d.checkActiveSpec()
+	d.checkActiveSpec()
+	if events, rows := specDanglingAlerts(t, session); events != 1 || rows != 1 {
+		t.Errorf("past the debounce: %d events, %d rows, want exactly 1 of each", events, rows)
 	}
-	alerts := 0
-	for _, m := range msgs {
-		if m.Action == "spec-dangling" {
-			alerts++
-		}
-	}
-	if alerts != 1 {
-		t.Errorf("expected exactly 1 spec-dangling alert, got %d", alerts)
-	}
-	// Detected and reported, never silently cleared.
 	if got := bus.ReadActiveSpec(session); got == "" {
 		t.Error("dangling pointer was cleared instead of reported")
+	}
+}
+
+// TestCheckActiveSpec_TransientGapNotAlerted is the 2026-11-14 ship gap: the
+// spec is absent at one check and back at the next, so nothing is reported;
+// and an absence after that restarts the debounce rather than inheriting the
+// earlier sighting.
+func TestCheckActiveSpec_TransientGapNotAlerted(t *testing.T) {
+	t.Setenv("MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS", "")
+	session := testSession(t)
+	repo := seedRepoSpec(t, session)
+	spec := filepath.Join(repo, "docs/requirements/drafts/test-spec.md")
+	body, err := os.ReadFile(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := New(session, 5, 2)
+
+	if err := os.Remove(spec); err != nil {
+		t.Fatal(err)
+	}
+	d.checkActiveSpec()
+	pastSpecDanglingDebounce(d)
+	if err := os.WriteFile(spec, body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	d.checkActiveSpec()
+
+	if err := os.Remove(spec); err != nil {
+		t.Fatal(err)
+	}
+	d.checkActiveSpec()
+
+	if events, rows := specDanglingAlerts(t, session); events != 0 || rows != 0 {
+		t.Errorf("transient gaps: %d events, %d rows, want none", events, rows)
+	}
+}
+
+// TestCheckActiveSpec_DanglingDebounceRestartsOnPointerChange: a pointer moved
+// to another missing path is a new sighting, not a continuation.
+func TestCheckActiveSpec_DanglingDebounceRestartsOnPointerChange(t *testing.T) {
+	t.Setenv("MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS", "")
+	session := testSession(t)
+	repo := seedRepoSpec(t, session)
+	if err := os.Remove(filepath.Join(repo, "docs/requirements/drafts/test-spec.md")); err != nil {
+		t.Fatal(err)
+	}
+	d := New(session, 5, 2)
+
+	d.checkActiveSpec()
+	pastSpecDanglingDebounce(d)
+	if err := bus.WriteActiveSpec(session, "docs/requirements/drafts/other-spec.md"); err != nil {
+		t.Fatal(err)
+	}
+	d.checkActiveSpec()
+
+	if events, rows := specDanglingAlerts(t, session); events != 0 || rows != 0 {
+		t.Errorf("after a pointer change: %d events, %d rows, want none", events, rows)
 	}
 }
 
