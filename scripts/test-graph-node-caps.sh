@@ -16,13 +16,25 @@
 #   3. Control: the old shape — a send to edit on the default cap — is still
 #      running when backdated 300 s and expires when backdated 700 s, failing
 #      its run and logging task-timeout.
+#   4. Isolation (MUX-226): during the run the private server holds the session
+#      and the user's server does not; the fix worker's launcher is
+#      $WORK/bin/muxcode and resolves to the binary under test (negative
+#      control: resolved with the scratch bin off PATH, a decoy leading it, the
+#      check fails); after the run the user's server holds no scratch session
+#      and the real HOME gained no lifecycle log.
 #
 # Time is simulated by backdating the node's started_at and the task's
 # sent_at on disk; the daemon re-reads both each tick.
 #
 # ISOLATION: scratch BUS_SESSION, HOME, repo, lifecycle log and empty config;
 # the spawn worker's CLI is a stub that shows an idle prompt (no AI CLI, no
-# network) and this script plays every agent over the bus.
+# network) and this script plays every agent over the bus. The session lives
+# on a private tmux server under $WORK (TMUX_TMPDIR), killed on exit, so its
+# panes inherit this script's environment rather than the user's server's —
+# before MUX-226 a worker pane ran with the real HOME and left a lifecycle log
+# in ~/.config/muxcode/logs. $WORK/bin/muxcode links to the binary under test
+# and leads PATH for the script, the server and the session, so every muxcode a
+# worker resolves (findMuxcodeBinary: ~/.local/bin, then PATH) is that binary.
 #
 # REQUIRES: installed muxcode >= v0.1.0, tmux, jq.
 #
@@ -30,11 +42,17 @@
 set -uo pipefail
 export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
-FLOOR=29
+FLOOR=37
 DOCS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/agent-bus.md"
 
 MUX="${MUXCODE_BIN:-muxcode}"
 MUX="$(command -v "$MUX" 2>/dev/null || echo "$MUX")"
+# Absolute, so the $WORK/bin/muxcode symlink below resolves from any directory
+# — a relative MUXCODE_BIN would leave it dangling.
+case "$MUX" in
+  /*) ;;
+  *) [ -e "$MUX" ] && MUX="$(cd "$(dirname "$MUX")" && pwd)/$(basename "$MUX")" ;;
+esac
 if [ ! -x "$MUX" ]; then
   echo "  FAIL  cannot resolve muxcode binary ('$MUX') — set MUXCODE_BIN"
   exit 1
@@ -52,6 +70,20 @@ ok()  { echo "  ${GREEN}PASS${NC}  $*"; pass=$((pass + 1)); }
 bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); }
 
 # --- Isolation -------------------------------------------------------------
+# The caller's tmux server, HOME and PATH, kept to prove nothing reaches them.
+# The server is the one $TMUX names (a -L/-S server included), else the default
+# socket, and is probed by -S alone: tmux falls back to the default socket when
+# a socket directory is missing, which would test the wrong server.
+REAL_HOME="$HOME"
+ORIG_PATH="$PATH"
+if [ -n "${TMUX:-}" ]; then
+  REAL_SOCK="${TMUX%%,*}"
+  CALLER_SESSION="$(tmux display-message -p '#S' 2>/dev/null || true)"
+else
+  REAL_SOCK="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+  CALLER_SESSION=""
+fi
+real_tmux() { env -u TMUX -u TMUX_TMPDIR tmux -S "$REAL_SOCK" "$@"; }
 export BUS_SESSION="nodecaps-test-$$"
 WORK="/tmp/nodecaps-work-$$"
 REPO="$WORK/repo"
@@ -69,17 +101,24 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
+unset TMUX
+export TMUX_TMPDIR="$WORK/tmux"
+mkdir -p "$TMUX_TMPDIR" "$WORK/bin"
+ln -sf "$MUX" "$WORK/bin/muxcode"
+export PATH="$WORK/bin:$PATH"
 BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/$BUS_SESSION.log"
 
 DPID=""
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
-  tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  tmux kill-server 2>/dev/null
   [ "${MUXCODE_TEST_KEEP:-}" = "1" ] && { echo "  (kept for diagnosis: $WORK)"; return; }
   rm -rf "$BD" "$WORK"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 approve_gate() { AGENT_ROLE=test-approver "$MUX" graph approve "$@"; }
 run_state()  { "$MUX" graph status "$1" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | head -1 | sed 's/.*\[\([a-z]*\)\].*/\1/'; }
@@ -207,6 +246,7 @@ while :; do
 done
 STUB
 chmod +x "$WORK/stub-agent"
+tmux set-environment -t "$BUS_SESSION" PATH "$PATH"
 tmux set-environment -t "$BUS_SESSION" BUS_SESSION "$BUS_SESSION"
 tmux set-environment -t "$BUS_SESSION" MUXCODE_CONFIG "$WORK/empty-config"
 tmux set-environment -t "$BUS_SESSION" MUXCODE_EDIT_CLI "$WORK/stub-agent"
@@ -244,6 +284,58 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 [ -n "$SPAWN_ROLE" ] && ok "fix worker spawned: $SPAWN_ROLE" || bad "fix worker never spawned"
+
+# MUX-226: the session, worker window included, is on the private server only.
+tmux has-session -t "$BUS_SESSION" 2>/dev/null \
+  && ok "the private server holds the scratch session (the next check can fail)" \
+  || bad "the private server does not list $BUS_SESSION"
+# Sentinel: the probe reaches the caller's server — its own session is visible
+# through it — so the absence checks below look at the right server.
+if [ -n "$CALLER_SESSION" ]; then
+  real_tmux has-session -t "=$CALLER_SESSION" 2>/dev/null \
+    && ok "the probe reaches the caller's tmux server ($REAL_SOCK holds $CALLER_SESSION)" \
+    || bad "the probe at $REAL_SOCK does not see the caller's session $CALLER_SESSION"
+elif real_tmux list-sessions >/dev/null 2>&1; then
+  ok "the probe reaches the caller's default tmux server ($REAL_SOCK)"
+else
+  ok "no caller tmux server at $REAL_SOCK — nothing to leak onto"
+fi
+real_tmux has-session -t "=$BUS_SESSION" 2>/dev/null \
+  && bad "the user's tmux server holds $BUS_SESSION during the run" \
+  || ok "the user's tmux server holds no scratch session during the run"
+
+# The launcher the daemon resolved for the worker (findMuxcodeBinary) is typed
+# into the worker's console pane as "<launcher> console <role>".
+resolves_to_mux() { [ -n "$1" ] && [ "$(realpath "$1" 2>/dev/null)" = "$(realpath "$MUX")" ]; }
+LAUNCHER=""
+for _ in $(seq 1 20); do
+  LAUNCHER="$(for p in $(tmux list-panes -t "$BUS_SESSION:$SPAWN_ROLE" -F '#{pane_index}' 2>/dev/null); do
+      tmux capture-pane -p -J -t "$BUS_SESSION:$SPAWN_ROLE.$p" -S -50 2>/dev/null
+    done | grep -oE "[^ ]*/muxcode console $SPAWN_ROLE" | head -1 | awk '{print $1}')"
+  [ -n "$LAUNCHER" ] && break
+  sleep 0.5
+done
+[ "$LAUNCHER" = "$WORK/bin/muxcode" ] \
+  && ok "the worker's launcher is the scratch bin's muxcode" \
+  || bad "the worker's launcher is '${LAUNCHER:-none}', want $WORK/bin/muxcode"
+resolves_to_mux "$LAUNCHER" \
+  && ok "the worker's launcher is the binary under test ($(realpath "$MUX"))" \
+  || bad "the worker's launcher resolves to '$(realpath "$LAUNCHER" 2>/dev/null)', want $(realpath "$MUX")"
+
+# Negative control: the launcher findMuxcodeBinary would pick with the scratch
+# bin left off PATH ($HOME/.local/bin, then PATH). A decoy leads that PATH, so
+# the control discriminates whichever muxcode the caller has installed.
+mkdir -p "$WORK/decoy"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/decoy/muxcode"
+chmod +x "$WORK/decoy/muxcode"
+if [ -x "$HOME/.local/bin/muxcode" ]; then
+  OFF_PATH_LAUNCHER="$HOME/.local/bin/muxcode"
+else
+  OFF_PATH_LAUNCHER="$(PATH="$WORK/decoy:$ORIG_PATH" command -v muxcode)"
+fi
+resolves_to_mux "$OFF_PATH_LAUNCHER" \
+  && bad "negative control: with the scratch bin off PATH the launcher '$OFF_PATH_LAUNCHER' still passed" \
+  || ok "negative control: with the scratch bin off PATH the binary check fails ($OFF_PATH_LAUNCHER)"
 if [ -n "$SPAWN_ROLE" ] && wait_request "$SPAWN_ROLE" spawn-task; then
   ok "fix seed delivered to the worker"
 else
@@ -313,6 +405,17 @@ for _ in $(seq 1 20); do
 done
 [ "$logged" -eq 1 ] && ok "task-timeout logged for the expired dispatch" || bad "no task-timeout row in $LIFELOG"
 [ "$(node_state "$RIDC" d)" != "running" ] && ok "control d never dispatched" || bad "control d dispatched after an expired c"
+
+# --- 4. Nothing reached the user's server or HOME (MUX-226) ---------------
+echo "--- 4. isolation after the run"
+[ -n "$DPID" ] && kill "$DPID" 2>/dev/null && DPID=""
+tmux kill-server 2>/dev/null
+real_tmux has-session -t "=$BUS_SESSION" 2>/dev/null \
+  && bad "the user's tmux server holds $BUS_SESSION after the run" \
+  || ok "the user's tmux server holds no scratch session after the run"
+[ -e "$REAL_HOME/.config/muxcode/logs/$BUS_SESSION.log" ] \
+  && bad "a lifecycle log for $BUS_SESSION was written to the real HOME" \
+  || ok "no lifecycle log for the scratch session in the real HOME"
 
 # --- Summary ---------------------------------------------------------------
 echo
