@@ -543,7 +543,7 @@ muxcode deliver <role> --force              # skip the idle check and inject reg
 muxcode deliver <role> --session <name>     # target a different session (e.g. a subsession) from anywhere
 ```
 
-Use this when an agent has pending inbox messages it never processed — the recovery for `active-with-stale-messages`, `wake-blocked-by-task`, `stale-notified-ids`, `missed-send-keys`, and `pending-input-blocking` findings from `muxcode diagnose`.
+Use this when an agent has pending inbox messages it never processed — the recovery for `active-with-stale-messages`, `wake-blocked-by-task`, `stale-notified-ids`, `missed-send-keys`, and `pending-input-blocking` findings from `muxcode diagnose`. With `--force` it is also the recovery for `consumed-unanswered` (MUX-232) — a request the agent's listener read and the agent never answered, which no inbox check sees because the row is gone; `diagnose` reports it as a warning with the number of re-drives the lifecycle log shows, and as critical only once the stall watchdog has logged its own give-up (`task-stall-giveup`) for that task since the daemon last started — a daemon restart resets the watchdog's retries, so an earlier give-up reads as a warning.
 
 Behavior:
 
@@ -552,6 +552,19 @@ Behavior:
 - With `--force`, if all messages are already marked notified but still unconsumed (a prior send-keys was dropped), the notified markers are cleared so they re-deliver.
 - Clears stale parked input in an unfocused pane before injecting.
 - On send failure, notified markers are rolled back so a later attempt can retry.
+- With `--force` and nothing left in the inbox, the role's in-flight tasks are **re-driven**: requests its listener already consumed and the agent never answered. A re-drive is not a wake — the row is gone, so `muxcode inbox` would show nothing — and it carries each request whole (MUX-232), on one line:
+
+  ```
+  Re-drive (consumed but never completed) — this request was already read from your inbox, so `muxcode inbox` will not show it; do it and reply with its command: | [<id>] from <sender> [request:<action>]: <full payload> — To reply: muxcode send <target> <action> "<your summary>" --type response --reply-to <id>
+  ```
+
+  | Part | Rule |
+  |------|------|
+  | Payload | Whole, newlines flattened to ` ⏎ ` so nothing submits the prompt early |
+  | Reply target | The request's reply target, read from its log line: a `daemon` dispatch answers edit, a request naming a `reply_role` answers that role. Never the raw sender |
+  | Bound | At most 10 requests and 4000 bytes, cut between whole requests; the first is always shown, and `[N more re-driven request(s) not shown]` counts the rest. Only the requests shown are counted as delivered (`force-redrive … <shown> of <n> in-flight task(s)`) |
+
+  The stall watchdog and the graph executor's own re-drive type the same text. The watchdog re-drives one stalled task at a time with that task placed first (`ForceDeliverFor`), so the task whose retry is being spent is always the one shown, never one cut off by the bound. Before MUX-232 it was the wake notification — the payload cut at 80 characters, no id, no reply command — which an agent could act on and not answer.
 
 **Prefer `muxcode deliver` over manual `tmux send-keys` wake-ups** — manual text+Enter in one pty write is the known dropped-Enter pitfall.
 

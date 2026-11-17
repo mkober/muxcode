@@ -30,14 +30,23 @@ type DiagnosticReport struct {
 // role. AnsweredBy names a response that already answers it — by
 // correlation or under another request id — or is empty. BlocksWake is the
 // shared wake gate's own decision (wakeBlockedByTask): true only for the task
-// that withholds an unforced wake right now.
+// that withholds an unforced wake right now. Received is a delivery receipt on
+// the request (the role read it); Stalled is TaskStalled's verdict; Redrives
+// counts the re-drives the retained lifecycle log attributes to this task, by
+// the stall watchdog and the graph executor alike — observed attempts, not a
+// budget; WatchdogGaveUp is the running daemon's task-stall-giveup row naming
+// it, the one proof its watchdog's re-drive budget is spent (MUX-232).
 type InFlightTaskEvidence struct {
-	ID         string `json:"id"`
-	From       string `json:"from"`
-	Action     string `json:"action"`
-	AgeSecs    int64  `json:"age_secs"`
-	AnsweredBy string `json:"answered_by,omitempty"`
-	BlocksWake bool   `json:"blocks_wake"`
+	ID             string `json:"id"`
+	From           string `json:"from"`
+	Action         string `json:"action"`
+	AgeSecs        int64  `json:"age_secs"`
+	AnsweredBy     string `json:"answered_by,omitempty"`
+	BlocksWake     bool   `json:"blocks_wake"`
+	Received       bool   `json:"received"`
+	Stalled        bool   `json:"stalled"`
+	Redrives       int    `json:"redrives"`
+	WatchdogGaveUp bool   `json:"watchdog_gave_up"`
 }
 
 // AgentStateEvidence captures the current state of the agent process and pane.
@@ -319,6 +328,7 @@ func CollectInFlightTasks(session, role string) []InFlightTaskEvidence {
 	tasks, _ := ListTasks(session, TaskInFlight)
 	blocker, _, blocked := wakeBlockedByTask(session, role)
 	now := time.Now().Unix()
+	lifecycle, _ := ReadLifecycleLog(session)
 	var out []InFlightTaskEvidence
 	for _, t := range tasks {
 		if t.To != role {
@@ -326,9 +336,14 @@ func CollectInFlightTasks(session, role string) []InFlightTaskEvidence {
 		}
 		ev := InFlightTaskEvidence{
 			ID: t.ID, From: t.From, Action: t.Action, AgeSecs: now - t.SentAt,
-			BlocksWake: blocked && blocker.ID == t.ID,
+			BlocksWake:     blocked && blocker.ID == t.ID,
+			Stalled:        TaskStalled(t, now, TaskStallSecs()),
+			Redrives:       countTaskRedrives(lifecycle, t.ID),
+			WatchdogGaveUp: watchdogGaveUp(lifecycle, t.ID),
 		}
-		if ds, err := ReadDeliveryStatus(session, t.ID); err == nil && ds.Status == StatusResponded {
+		ds, dsErr := ReadDeliveryStatus(session, t.ID)
+		ev.Received = dsErr == nil && ds.AckedAt > 0
+		if dsErr == nil && ds.Status == StatusResponded {
 			ev.AnsweredBy = ds.ResponseID
 		} else if respID, ok := TaskAnsweredElsewhere(session, t); ok {
 			ev.AnsweredBy = respID
@@ -569,6 +584,7 @@ var diagnosticChecks = []DiagnosticCheck{
 	checkReloadMarkerStuck,
 	checkPendingInputBlocking,
 	checkWakeBlockedByTask,
+	checkConsumedUnanswered,
 	checkActiveWithStaleMessages,
 	checkNoActionableMessages,
 	checkDaemonVersionMismatch,
@@ -1055,6 +1071,84 @@ func checkWakeBlockedByTask(report *DiagnosticReport) *DiagnosticFinding {
 		Remediation: []string{
 			fmt.Sprintf("Force-deliver past the in-flight task %s: muxcode deliver %s --force (still refuses a mid-turn pane)", first.ID, report.Role),
 			fmt.Sprintf("Inspect the task: muxcode tasks — %s clears when its answer is found, else at its timeout", first.ID),
+		},
+	}
+}
+
+// countTaskRedrives counts the re-drives the retained lifecycle log attributes
+// to task id: the stall watchdog's task-stall-redrive rows and the graph
+// executor's targeted force-redrive rows both name it. A role-wide
+// force-redrive row names no task and is not counted, so no re-drive is
+// counted twice. The two roads keep separate budgets, the log rotates, and the
+// watchdog's budget resets with the daemon, so the count is what was observed,
+// never what remains.
+func countTaskRedrives(rows []LifecycleEntry, id string) int {
+	n := 0
+	for _, r := range rows {
+		if (r.Event == "task-stall-redrive" || r.Event == "force-redrive") && strings.Contains(r.Detail, "task "+id) {
+			n++
+		}
+	}
+	return n
+}
+
+// watchdogGaveUp reports the stall watchdog's own task-stall-giveup row naming
+// task id, written by the running daemon: its re-drive budget lives in daemon
+// memory and starts afresh on every daemon start, so a give-up before the
+// latest `started` row proves nothing about the retries left now.
+func watchdogGaveUp(rows []LifecycleEntry, id string) bool {
+	gaveUp := false
+	for _, r := range rows {
+		switch {
+		case r.Source == "daemon" && r.Event == "started":
+			gaveUp = false
+		case r.Event == "task-stall-giveup" && strings.Contains(r.Detail, "task "+id):
+			gaveUp = true
+		}
+	}
+	return gaveUp
+}
+
+// checkConsumedUnanswered reports a request the role read and never answered,
+// past the stall threshold (MUX-232). Its inbox row is consumed, so no inbox
+// check sees it; on 2026-11-17 three such requests in the tibo session left
+// commit idle, two graph runs failed at 600 s, and diagnose said "No issues
+// detected". Critical only on proof the watchdog has given up on the task (its
+// task-stall-giveup row) — only the task timeout is left to end it; a count of
+// observed re-drives, however high, stays a warning, since another road or a
+// restarted daemon may still have attempts left.
+func checkConsumedUnanswered(report *DiagnosticReport) *DiagnosticFinding {
+	var stuck []InFlightTaskEvidence
+	for _, t := range report.InFlightTasks {
+		if t.Received && t.Stalled && t.AnsweredBy == "" {
+			stuck = append(stuck, t)
+		}
+	}
+	if len(stuck) == 0 {
+		return nil
+	}
+	first := stuck[0]
+	severity := "warning"
+	evidence := []string{}
+	for _, t := range stuck {
+		gaveUp := ""
+		if t.WatchdogGaveUp {
+			severity = "critical"
+			gaveUp = "; the stall watchdog has given up on it"
+		}
+		evidence = append(evidence, fmt.Sprintf("In-flight request %s (%s→%s:%s, %ds old) — read by %s (receipt), never answered, %d re-drive(s) observed in the lifecycle log%s",
+			t.ID, t.From, report.Role, t.Action, t.AgeSecs, report.Role, t.Redrives, gaveUp))
+	}
+	return &DiagnosticFinding{
+		Severity:    severity,
+		FailureMode: "consumed-unanswered",
+		Summary: fmt.Sprintf("%s read request %s %ds ago and never answered it — %d re-drive(s) observed; its inbox row is consumed, so `muxcode inbox` shows nothing",
+			report.Role, first.ID, first.AgeSecs, first.Redrives),
+		Evidence: evidence,
+		Remediation: []string{
+			fmt.Sprintf("Re-drive it with its full text, id and reply command: muxcode deliver %s --force (refuses a mid-turn pane)", report.Role),
+			fmt.Sprintf("Look at the %s pane: did a turn start? An agent that did the work replies with the re-drive's `To reply:` command", report.Role),
+			fmt.Sprintf("Inspect the task: muxcode tasks — %s otherwise ends at its timeout", first.ID),
 		},
 	}
 }

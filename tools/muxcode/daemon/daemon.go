@@ -3623,14 +3623,14 @@ func (d *Daemon) checkStalledTasks() {
 				fmt.Sprintf("%s→%s:%s working — re-drive withheld", t.From, t.To, t.Action))
 		case stallGiveUp:
 			bus.LogLifecycle(d.session, "warn", "daemon", "task-stall-giveup",
-				fmt.Sprintf("%s→%s:%s still stalled after 2 redrives — task timeout owns it", t.From, t.To, t.Action))
+				fmt.Sprintf("%s→%s:%s still stalled after 2 redrives — task timeout owns it (task %s)", t.From, t.To, t.Action, t.ID))
 		case stallRedrive:
-			if res, err := bus.ForceDeliver(d.session, role, true); err == nil && res.Delivered > 0 {
+			if res, err := bus.ForceDeliverFor(d.session, role, true, t.ID); err == nil && res.Delivered > 0 {
 				ts := time.Now().Format("15:04:05")
 				fmt.Printf("  %s  Task %s→%s:%s stalled (consumed, agent idle) — re-driven (%d/2)\n",
 					ts, t.From, t.To, t.Action, d.taskRedrives[t.ID])
 				bus.LogLifecycle(d.session, "info", "daemon", "task-stall-redrive",
-					fmt.Sprintf("%s→%s:%s redrive %d/2", t.From, t.To, t.Action, d.taskRedrives[t.ID]))
+					fmt.Sprintf("%s→%s:%s redrive %d/2 (task %s)", t.From, t.To, t.Action, d.taskRedrives[t.ID], t.ID))
 			}
 		}
 	}
