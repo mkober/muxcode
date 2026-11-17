@@ -189,27 +189,54 @@ else
   ok "no skip message under force"
 fi
 
-# Non-forced delivery against the same in-flight task must surface the
-# skip — never a silent success (the sentinel, end to end).
+# Non-forced delivery follows MUX-192's wake gate (bus/wake_gate.go): an
+# in-flight task withholds an unforced wake only while it is younger than
+# wakeSendGraceSecs (5 s), unanswered, and no longer pending in the inbox.
+# Until 531e003 any in-flight task withheld it, and this section pinned that
+# with a pending request aged 6 s — which the gate now delivers by design
+# (MUX-209). Both sides are pinned, so reverting either half of the rule fails.
 export MUXCODE_TEST_CLI=opencode
-"$MUX" send test skipcheck "skip surfacing payload" --no-notify --track >/dev/null
-if "$MUX" inbox --role test --peek 2>/dev/null | grep -qF "skip surfacing payload"; then
-  ok "skip-surfacing message landed in the test inbox"
+# Withheld: test has read request A (its task in flight, unanswered, no longer
+# pending); B queues behind it inside the grace, and the skip must be surfaced.
+"$MUX" send test gate-read "gate request A, read by test" --no-notify --track >/dev/null
+AGENT_ROLE=test "$MUX" inbox >/dev/null 2>&1 || true
+"$MUX" send test gate-queued "gate request B, queued behind A" --no-notify --track >/dev/null
+gate_out=$("$MUX" deliver test 2>&1 || true)
+if "$MUX" inbox --role test --peek 2>/dev/null | grep -qF "gate request B, queued behind A"; then
+  ok "request B queued behind A in the test inbox"
 else
-  fail "skip-surfacing message landed in the test inbox — send was suppressed"
+  fail "request B queued behind A in the test inbox — send was suppressed or consumed"
 fi
-sleep 6
-nonforce_out=$("$MUX" deliver test 2>&1 || true)
-if printf '%s' "$nonforce_out" | grep -qE "skip|in-flight"; then
-  ok "non-forced deliver surfaces the skip"
+if printf '%s' "$gate_out" | grep -qF "skipping test injection — in-flight task"; then
+  ok "non-forced deliver inside the grace, behind a read unanswered task, surfaces the skip"
 else
-  fail "non-forced deliver surfaces the skip (got: $nonforce_out)"
+  fail "non-forced deliver inside the grace surfaces the skip (got: $gate_out)"
+fi
+if printf '%s' "$gate_out" | grep -q "woke test"; then
+  fail "the withheld deliver reported a wake"
+else
+  ok "the withheld deliver reports no wake — never a silent success"
+fi
+# Delivered (negative control): a request still pending in the inbox, aged
+# past the grace, is what the wake exists to deliver — no skip.
+"$MUX" send test gate-pending "gate request C, pending past the grace" --no-notify --track >/dev/null
+if "$MUX" inbox --role test --peek 2>/dev/null | grep -qF "gate request C, pending past the grace"; then
+  ok "request C landed in the test inbox"
+else
+  fail "request C landed in the test inbox — send was suppressed"
+fi
+sleep 6 # past wakeSendGraceSecs, and A's task with it
+pending_out=$("$MUX" deliver test 2>&1 || true)
+if printf '%s' "$pending_out" | grep -q "woke test" && ! printf '%s' "$pending_out" | grep -q "skipping test injection"; then
+  ok "non-forced deliver of a pending request past the grace wakes test, no skip"
+else
+  fail "non-forced deliver of a pending request past the grace (got: $pending_out)"
 fi
 
 # ── Summary ──────────────────────────────────────────────────
 
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
-[ "$PASS" -ge 13 ] || { echo "FAIL: coverage floor not met ($PASS < 13)"; exit 1; }
+[ "$PASS" -ge 18 ] || { echo "FAIL: coverage floor not met ($PASS < 18)"; exit 1; }
 [ "$FAIL" -eq 0 ] || exit 1
 echo "OK"

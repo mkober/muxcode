@@ -552,6 +552,15 @@ Behavior:
 - With `--force`, if all messages are already marked notified but still unconsumed (a prior send-keys was dropped), the notified markers are cleared so they re-deliver.
 - Clears stale parked input in an unfocused pane before injecting.
 - On send failure, notified markers are rolled back so a later attempt can retry.
+- Without `--force`, a wake to a listenerless role (OpenCode, scrape-road Codex) passes the **wake gate** (`unforcedWakeGate`, `bus/wake_gate.go`, MUX-192). An in-flight task withholds the wake only while all three hold; then `deliver` prints `skipping <role> injection — in-flight task …`, reports no wake, and writes a `wake-skipped` row:
+
+  | Condition | Why |
+  |-----------|-----|
+  | The task is younger than 5 s (`wakeSendGraceSecs`) | The window after an injection in which the agent has its work but its pane may not show it yet |
+  | The task is unanswered | An answered task says nothing about what the agent is doing |
+  | Its request is **no longer pending** in the role's inbox | A pending request is what the wake delivers, not evidence the agent is working on it |
+
+  Past the grace, or for a request still pending, the wake goes through; from then on only a mid-turn pane withholds it. `--force` bypasses the task check, never the mid-turn one. Before `531e003` (2026-09-26) any in-flight task withheld an unforced wake, which once kept a Codex agent idle for minutes behind a stale task. `scripts/test-force-respond.sh` pins both sides (MUX-209).
 - With `--force` and nothing left in the inbox, the role's in-flight tasks are **re-driven**: requests its listener already consumed and the agent never answered. A re-drive is not a wake — the row is gone, so `muxcode inbox` would show nothing — and it carries each request whole (MUX-232), on one line:
 
   ```

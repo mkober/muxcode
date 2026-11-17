@@ -120,7 +120,7 @@ lifecycle log — are this incident's evidence, not separate scope. They are lis
     `test-node-outcome-attribution` (48/0) in the 15:53 run (proc `1794603193-proc-13e7baab`), and
     `test-pane-targeting` (22/0) at 15:58
   - **Excluded, filed as their own defects — 4:** `test-force-respond`
-    ([MUX-209](../backlog/MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md),
+    ([MUX-209](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md),
     the non-forced deliver skip; `bus/deliver.go` and `bus/task.go` are unchanged by this spec),
     `test-graph-tui`
     ([MUX-210](../backlog/MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md),
@@ -412,7 +412,7 @@ Complete
 
 Closed out 2026-11-13 by `55-defect-backlog-loop` run `1794602128`. All four phases and seven
 acceptance criteria are checked; the full-suite criterion carries five exclusions set by the user —
-see its annotation and [MUX-209](../backlog/MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md),
+see its annotation and [MUX-209](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md),
 [MUX-210](../backlog/MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md),
 [MUX-211](../backlog/MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) and
 [MUX-212](../backlog/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md).

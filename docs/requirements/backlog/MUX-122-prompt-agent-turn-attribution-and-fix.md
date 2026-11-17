@@ -125,6 +125,19 @@ Both become cheap to evaluate once the attribution exists, and one may become ob
 | A green suite that never ran the new assertions | A `-run` filter silently skipped a negative control during MUX-115 | Run the package, never a filtered pattern; check the count against the test inventory |
 | Fix moves the number without fixing the cause | 26/2/1 → 25/3/1 could be noise | Require the attribution to explain the movement |
 
+## Findings at selection (2026-11-17) — parked, not activated
+
+`55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` reached this spec at
+rank 24. Plan read it end to end and did not activate it.
+
+**Why parked.** Its first deliverable is one traced run of `scripts/test-prompt-mode.sh`, and
+everything after is chosen from that trace. On 2026-11-13 that script was excluded from MUX-208's
+full-suite criterion as environment-dependent — this environment held no `MUXCODE_OPENCODE_API_KEY`
+for the model it drives. Plan did not re-check today whether the script can run here. A worker that
+cannot produce the trace can only guess a fifth fix, which this spec forbids in so many words.
+
+**What would unpark it:** a session where `scripts/test-prompt-mode.sh` runs to its 26/2/1.
+
 ## Status
 
-Backlog
+**Backlog** — 0/25, parked 2026-11-17 at selection; see the findings above.
