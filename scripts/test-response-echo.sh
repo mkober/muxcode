@@ -22,13 +22,23 @@
 #
 # Sections:
 #   A  edit asks build to build: build asks test once, test answers, and the
-#      answer is not typed into build's pane — one request:test, one typed line
-#      in build's pane, one wake-response-dropped row, no response left queued
+#      answer is not typed into build's pane — one request:test, edit's request
+#      the only payload in build's pane; the answer replies to build's own request,
+#      so since MUX-220 it is kept with no dropped row, build's pane gets a
+#      data-only result notice, and build reads the answer from its inbox
 #   B  control — the same exchange on the pre-fix build re-fires: the answer is
 #      typed into build's pane and build sends request:test again
 #   C  responses queued alone for build, then `muxcode deliver build --force`:
 #      nothing typed, the inbox drained with no receipt, two dropped rows
 #   D  control — the same on the pre-fix build types the responses in
+#   E  MUX-220: build's own tracked request to test is answered while build is
+#      listenerless, beside an uncorrelated response, and a wake is forced:
+#      only the data-only result notice is typed, never a response's text, the
+#      stray is dropped with one row counting 1 kept, and build's stub reads
+#      its reply on the notice and starts no work; a scratch daemon completes
+#      the task, and its wake of build types no repeat notice
+#   F  control — the same on a pre-MUX-220 build (answersOwnDelegation patched
+#      to false): the wake consumes build's own reply with the stray
 # A coverage floor keeps a skipped section from reporting green.
 # Requires go, tmux, jq.
 set -uo pipefail
@@ -36,7 +46,7 @@ export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxe
 
 PASS=0
 FAIL=0
-EXPECTED_PASS=17
+EXPECTED_PASS=29
 for t in tmux go jq; do
   command -v "$t" >/dev/null 2>&1 || { echo "SKIP: $t is required"; exit 2; }
 done
@@ -56,8 +66,26 @@ export MUXCODE_DEDUP_WINDOW=0 MUXCODE_RELAY_SUPPRESS_THRESHOLD=1000 MUXCODE_BRAN
 mkdir -p "$WORK/bin" "$WORK/bin-pre" "$WORK/home" "$WORK/tmux" "$WORK/lifecycle" "$WORK/project"
 cd "$WORK/project" || exit 1
 
+DPID=""
+# start_daemon BIN — a scratch daemon for the current session, started only
+# after section E's forced wake so that wake is the one under test; it
+# completes tracked tasks (checkTrackedTasks) and then wakes the sender.
+start_daemon() {
+  (
+    export MUXCODE_EDIT_AUTO_RESTART_DISABLE=1 MUXCODE_FORCE_RESPOND_DISABLE=1 MUXCODE_CONTROL_PANE_DISABLE=1
+    export MUXCODE_AGENTDEFS_WATCH_DISABLE=1 MUXCODE_ACTIVE_WATCHDOG_SECS=0 MUXCODE_STUCK_RELOAD_DISABLE=1
+    export MUXCODE_TMP_CLEANUP_THRESHOLD=0 MUXCODE_PROMPT_AGENT_DISABLE=1
+    exec "$1" watch "$SESSION" --poll 1 >>"$WORK/daemon-$SESSION.log" 2>&1
+  ) &
+  DPID=$!
+}
+stop_daemon() {
+  if [ -n "$DPID" ]; then kill "$DPID" 2>/dev/null; wait "$DPID" 2>/dev/null; DPID=""; fi
+}
+
 cleanup() {
   local s
+  stop_daemon
   tmux kill-server 2>/dev/null
   for s in "${SESSIONS[@]:-}"; do
     [ -n "$s" ] && rm -rf "$(muxcode_bus_dir "$MUX" "$s" 2>/dev/null)"
@@ -86,6 +114,18 @@ else
 fi
 MUX_PRE="$WORK/bin-pre/muxcode"
 
+mkdir -p "$WORK/pre220" "$WORK/bin-pre220"
+cp -R "$REPO/tools/muxcode" "$WORK/pre220/"
+sed -i.orig 's/^func answersOwnDelegation(session, role string, m Message) bool {$/& if true { return false }/' \
+  "$WORK/pre220/muxcode/bus/provider.go"
+if [ "$(grep -c '^func answersOwnDelegation(session, role string, m Message) bool { if true { return false }$' "$WORK/pre220/muxcode/bus/provider.go")" = 1 ] \
+  && (cd "$WORK/pre220/muxcode" && go build -buildvcs=false -o "$WORK/bin-pre220/muxcode" .); then
+  ok "pre-MUX-220 muxcode built: answersOwnDelegation never keeps a reply"
+else
+  fail "pre-MUX-220 build: the answersOwnDelegation patch did not apply exactly once, or the copy failed to build"
+fi
+MUX_PRE220="$WORK/bin-pre220/muxcode"
+
 # fake-agent ROLE SESSION BIN LOG — an OpenCode-shaped composer that logs each
 # typed line, redraws at once (so the injection confirm sees the composer
 # empty), then acts as ROLE's agent.
@@ -110,6 +150,12 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | grep -oE -- '--reply-to [0-9A-Za-z_-]+' | head -1 | awk '{print $2}')
   case $role in
     build)
+      # The MUX-220 result notice: read the inbox, as an agent told so does,
+      # and start no work.
+      if printf '%s' "$line" | grep -q 'of your own requests are waiting in your inbox'; then
+        AGENT_ROLE=build "$bin" inbox >>"$log.inbox" 2>&1
+        continue
+      fi
       # A request is answered first, as a real agent does, so its task stops
       # blocking the next wake; then, like the 2026-08-17 agent, ANY typed
       # prompt sends request:test (at most three). --force: no daemon runs
@@ -176,11 +222,15 @@ wait_for 20 "A: test answered build" answered
 sleep 6 # room for an echo to re-fire
 [ "$(test_reqs)" = 1 ] && ok "A: build sent request:test exactly once — the answer did not re-fire its chain" \
   || fail "A: build sent request:test $(test_reqs) times"
-[ "$(typed a)" = 1 ] && ok "A: only edit's request was typed into build's pane" \
+! grep -q 'All 4 packages passed' "$WORK/typed-a-build.log" 2>/dev/null && [ "$(typed a)" = 2 ] \
+  && grep -q 'of your own requests are waiting in your inbox' "$WORK/typed-a-build.log" \
+  && ok "A: build's pane got edit's request and the data-only result notice, never the answer's text" \
   || fail "A: build's pane was typed $(typed a) lines: $(cat "$WORK/typed-a-build.log")"
-[ "$(dropped)" -ge 1 ] && ok "A: wake-response-dropped logged for the answer" || fail "A: no wake-response-dropped row"
-[ "$(queued_resp)" = 0 ] && ok "A: no response left queued to be typed in later" \
-  || fail "A: $(queued_resp) response(s) still queued for build"
+[ "$(dropped)" = 0 ] && ok "A: no wake-response-dropped row — the answer replies to build's own request:test (MUX-220)" \
+  || fail "A: build's own reply was dropped: $(grep wake-response-dropped "$LIFELOG")"
+grep -q 'All 4 packages passed' "$WORK/typed-a-build.log.inbox" 2>/dev/null && [ "$(queued_resp)" = 0 ] \
+  && ok "A: build read its own answer from its inbox on the notice" \
+  || fail "A: build's inbox read: $(cat "$WORK/typed-a-build.log.inbox" 2>/dev/null); $(queued_resp) response(s) queued"
 
 # ── B: control — the pre-fix build re-fires ────────────────────────
 echo "-- B: control — the same exchange on the pre-fix build"
@@ -219,6 +269,65 @@ done
 "$MUX_PRE" deliver build --force >"$WORK/deliver-d.out" 2>&1
 typed_d() { grep -q 'Queued answer' "$WORK/typed-d-build.log" 2>/dev/null; }
 wait_for 10 "D: the pre-fix build typed the responses into build's pane" typed_d
+
+# own_reply_round BIN — build sends test a tracked request; test reads it and
+# answers with --reply-to while build is listenerless (--no-notify), review's
+# uncorrelated response lands beside it, and a wake of build is forced. Sets
+# RID, REPLY_ID and STRAY_ID.
+own_reply_round() {
+  AGENT_ROLE=build "$1" send test test "Run tests OWN-REQUEST" --track --no-notify >/dev/null 2>&1
+  RID=$(jq -r 'select(.payload == "Run tests OWN-REQUEST") | .id' "$BUSDIR/inbox/test.jsonl" 2>/dev/null | tail -1)
+  AGENT_ROLE=test "$1" inbox >/dev/null 2>&1
+  AGENT_ROLE=test "$1" send build test "All tests passed OWN-REPLY" --type response --reply-to "$RID" --no-notify >/dev/null 2>&1
+  AGENT_ROLE=review "$1" send build review "LGTM STRAY-RESPONSE" --type response --no-notify >/dev/null 2>&1
+  REPLY_ID=$(jq -r 'select(.payload == "All tests passed OWN-REPLY") | .id' "$BUSDIR/inbox/build.jsonl" 2>/dev/null | tail -1)
+  STRAY_ID=$(jq -r 'select(.payload == "LGTM STRAY-RESPONSE") | .id' "$BUSDIR/inbox/build.jsonl" 2>/dev/null | tail -1)
+  "$1" deliver build --force >"$WORK/deliver-$SESSION.out" 2>&1
+  sleep 1
+}
+in_build()     { jq -e --arg id "$1" 'select(.id == $id)' "$BUSDIR/inbox/build.jsonl" >/dev/null 2>&1; }
+task_status()  { jq -r '.status' "$BUSDIR/tasks/$1.json" 2>/dev/null; }
+task_done()    { [ "$(task_status "$RID")" = completed ]; }
+dropped_rows() { jq -r 'select(.event == "wake-response-dropped") | .detail' "$LIFELOG" 2>/dev/null; } # decoded: Go escapes > as >
+
+# ── E: MUX-220 — build's own reply survives the wake ───────────────
+echo "-- E: build's own delegation is answered while it is listenerless"
+new_session e "$MUX"
+own_reply_round "$MUX"
+[ -n "$RID" ] && [ "$(task_status "$RID")" = in-flight ] && ok "E: build's tracked request to test is in flight ($RID)" \
+  || fail "E: request '$RID', task '$(task_status "$RID")'"
+[ -n "$REPLY_ID" ] && [ -n "$STRAY_ID" ] && ok "E: the correlated reply and the stray response were queued for build" \
+  || fail "E: reply '$REPLY_ID', stray '$STRAY_ID'"
+[ "$(typed e)" = 1 ] && grep -q '1 result(s) of your own requests are waiting in your inbox' "$WORK/typed-e-build.log" \
+  && ! grep -qE 'OWN-REPLY|STRAY-RESPONSE' "$WORK/typed-e-build.log" \
+  && ok "E: only the data-only result notice was typed into build's pane, no response text" \
+  || fail "E: build's pane was typed: $(cat "$WORK/typed-e-build.log")"
+read_own() { grep -q 'OWN-REPLY' "$WORK/typed-e-build.log.inbox" 2>/dev/null && ! in_build "$REPLY_ID"; }
+wait_for 10 "E: build's stub read its own reply from its inbox on the notice" read_own
+in_build "$STRAY_ID" && fail "E: the uncorrelated response was left queued" \
+  || ok "E: the uncorrelated response was dropped"
+[ "$(dropped_rows | wc -l | tr -d ' ')" = 1 ] && dropped_rows | grep -q 'build: 1 response(s)' \
+  && dropped_rows | grep -q '1 kept' && dropped_rows | grep -q 'review>review' && ! dropped_rows | grep -q 'test>test' \
+  && ok "E: one wake-response-dropped row drops review>review and counts 1 kept" \
+  || fail "E: dropped rows: $(dropped_rows)"
+start_daemon "$MUX"
+wait_for 20 "E: the daemon completed build's tracked task" task_done
+sleep 2 # the completing daemon wakes build (Notify) — room for that wake to run
+stop_daemon
+[ "$(typed e)" = 1 ] && [ "$(dropped_rows | wc -l | tr -d ' ')" = 1 ] \
+  && ok "E: the daemon's wake of build typed no repeat notice and logged no new drop" \
+  || fail "E: after the daemon's wake — typed $(typed e), rows $(dropped_rows | wc -l | tr -d ' ')"
+[ "$(test_reqs)" = 1 ] && ok "E: the notice started no work — build sent test nothing more" \
+  || fail "E: build sent request:test $(test_reqs) times"
+
+# ── F: control — a pre-MUX-220 build consumes the reply ────────────
+echo "-- F: control — the same on a pre-MUX-220 build"
+new_session f "$MUX_PRE220"
+own_reply_round "$MUX_PRE220"
+[ -n "$REPLY_ID" ] && ! in_build "$REPLY_ID" && ok "F: the pre-MUX-220 wake consumed build's own reply — the defect" \
+  || fail "F: reply '$REPLY_ID' survived on the pre-MUX-220 build"
+dropped_rows | grep -q 'build: 2 response(s)' && ok "F: its dropped row counts both responses" \
+  || fail "F: dropped rows: $(dropped_rows)"
 
 # ── Coverage floor ─────────────────────────────────────────────────
 echo
