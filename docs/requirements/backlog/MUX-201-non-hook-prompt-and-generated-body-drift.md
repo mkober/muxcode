@@ -105,6 +105,14 @@ backstop.
   from; its guards are the backstop this spec sits in front of
 - [MUX-159](../completed/MUX-159-codex-hooks-provider.md) — the provider capability split that defines
   "non-hook"
+- [MUX-211](../completed/MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) —
+  one instance of this drift, **fixed there, not folded into this spec** (recorded 2026-11-17). The
+  edit role's hook-guard rewrite keyed on a whole sentence of `agents/code-editor.md` that had been
+  edited in July, so it matched nothing and an OpenCode edit agent was told a hook enforced its
+  delegation. MUX-211 corrects that key and adds a Go test that fails when any rewrite key no longer
+  occurs in its shipped definition (`TestNonHookBodyRewriteKeysMatchShippedDefinitions`). That
+  closes the silent-miss road for the rewrite table only. This spec's own scope — the prompt
+  carve-out and generated bodies going stale — is untouched by it and stays open.
 
 ## Status
 
