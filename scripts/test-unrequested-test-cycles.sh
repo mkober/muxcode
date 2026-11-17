@@ -210,9 +210,15 @@ reviews()       { count_log '.from == "review" and .type == "response" and .acti
 edit_reviews()  { jq -c 'select(.from == "review")' "$BUSDIR/inbox/edit.jsonl" 2>/dev/null | wc -l | tr -d ' '; }
 withheld_rows() { grep '"event":"chain-withheld"' "$LIFELOG" 2>/dev/null | grep -c 'no unanswered request'; }
 ask_test()      { AGENT_ROLE=edit "$MUX" send test test "Run ./test.sh and report" --no-notify >/dev/null 2>&1; }
+# review_reply_to_test [TAG] — a review reply delivered to test. It carries no
+# --reply-to: the id it once named was made up, correlated to nothing, and
+# since MUX-225 a response naming no message is refused when review holds no
+# open request from test, so the reply would never land. Without that id the
+# response brake (MUX-175) refuses an identical repeat, so a second reply in
+# one session passes a TAG to differ, as two real reviews would.
 review_reply_to_test() {
-  AGENT_ROLE=review "$MUX" send test review-complete "Review: 0 must-fix, 0 should-fix, 0 nits — LGTM EXIT=0" \
-    --type response --reply-to "1794610293-test-2d1b85a4" --no-notify >/dev/null 2>&1
+  AGENT_ROLE=review "$MUX" send test review-complete "Review: 0 must-fix, 0 should-fix, 0 nits — LGTM EXIT=0${1:+ ($1)}" \
+    --type response --no-notify >/dev/null 2>&1
 }
 
 echo "=== MUX-213: unrequested test cycles ==="
@@ -224,7 +230,7 @@ review_reply_to_test
 test_turn fixed
 [ "$(runs)" = 0 ] && ok "A: a request-only test agent starts no run for a review reply" \
   || fail "A: fixed stub ran $(runs) time(s) for a reply"
-review_reply_to_test
+review_reply_to_test second
 test_turn legacy
 [ "$(runs)" = 1 ] && ok "A: the legacy stub ran for the reply, as the Codex agent did (the fixture reaches the gate)" \
   || fail "A: legacy stub runs = $(runs), want 1"

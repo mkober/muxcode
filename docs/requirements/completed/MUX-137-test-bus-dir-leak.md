@@ -243,7 +243,7 @@ Verified by plan against the tree and the proc log. The script's last edit (1794
 |--------------|---------|------------|
 | First (`1794684714`) | A cached `go test` result would let the leak check pass without running anything | `-count=1` appended to `GOFLAGS`; package logs captured and a cached result rejected |
 | First | "Live session dirs survive" checked existence only | The sentinel bus and its checksum manifest, with mutation and deletion controls |
-| Between rounds | The graph's test node expired at 600 s on a passing suite — the test agent's reply carried a mangled `--reply-to` | No code defect here; filed as [MUX-225](../backlog/MUX-225-reply-to-unknown-id-accepted-silently.md) |
+| Between rounds | The graph's test node expired at 600 s on a passing suite — the test agent's reply carried a mangled `--reply-to` | No code defect here; filed as [MUX-225](./MUX-225-reply-to-unknown-id-accepted-silently.md) |
 
 No production file changed in this spec: every change under `tools/` is a `*_test.go` file, plus the new script.
 

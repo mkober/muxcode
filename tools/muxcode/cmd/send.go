@@ -49,6 +49,7 @@ func notSent(format string, args ...any) {
 func Send(args []string) {
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: muxcode send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]\n")
+		fmt.Fprintf(os.Stderr, "  --reply-to on a response must name the request it answers; an id naming no message is attached to your one open request from <to>, else the reply is refused (exit 1) and a reply command printed for each open request\n")
 		os.Exit(1)
 	}
 
@@ -221,6 +222,21 @@ func Send(args []string) {
 			awaitOrTrack(session, from, to, action, existing.ID)
 			return
 		}
+	}
+
+	if resolved, open, err := bus.ResolveResponseReplyTo(session, from, to, msgType, replyTo); err != nil {
+		var cmds strings.Builder
+		for _, t := range open {
+			fmt.Fprintf(&cmds, "\n  %s", bus.ReplyCommandFor(t))
+		}
+		if len(open) == 0 {
+			cmds.WriteString("\n  (you hold no open request)")
+		}
+		notSent("%v — re-run the reply for the request you are answering, copying its id exactly:%s", err, cmds.String())
+		return
+	} else if resolved != replyTo {
+		fmt.Fprintf(os.Stderr, "Note: --reply-to %s names no message; attached to %s, your one open request from %s\n", replyTo, resolved, to)
+		replyTo = resolved
 	}
 
 	msg := bus.NewMessage(from, to, msgType, action, payload, replyTo)

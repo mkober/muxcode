@@ -56,13 +56,39 @@ func OpenRequestFor(session, role string) (string, bool) {
 	if !AckDeliveryActive(session) {
 		return "", true
 	}
-	statuses, err := ListDeliveryStatuses(session)
+	received, err := receivedOpenRequests(session, role)
 	if err != nil {
 		return "", true
 	}
+	spent := ""
+	for _, m := range received {
+		if requestReviewSpent(session, m.ID) {
+			if spent == "" {
+				spent = m.ID
+			}
+			continue
+		}
+		return m.ID, true
+	}
+	if spent != "" {
+		return spent, true
+	}
+	return "", false
+}
+
+// receivedOpenRequests is the one definition of a request role holds open by
+// receipt: received by role's inbox (acked or delivered, under
+// openRequestMaxAge), not marked responded, a request addressed to that inbox,
+// and neither a startup bootstrap nor a self-send. OpenRequestFor and
+// OpenRequestsFor both read it.
+func receivedOpenRequests(session, role string) ([]Message, error) {
+	statuses, err := ListDeliveryStatuses(session)
+	if err != nil {
+		return nil, err
+	}
 	window := WindowForRole(role)
 	cutoff := time.Now().Add(-openRequestMaxAge).Unix()
-	spent := ""
+	var open []Message
 	for _, ds := range statuses {
 		if ds.Status != StatusAcked && ds.Status != StatusDelivered {
 			continue
@@ -77,18 +103,9 @@ func OpenRequestFor(session, role string) (string, bool) {
 		if isStartupBootstrap(m) || isLoopingSelfSend(m) {
 			continue
 		}
-		if requestReviewSpent(session, ds.ID) {
-			if spent == "" {
-				spent = ds.ID
-			}
-			continue
-		}
-		return ds.ID, true
+		open = append(open, m)
 	}
-	if spent != "" {
-		return spent, true
-	}
-	return "", false
+	return open, nil
 }
 
 func spentRequestPath(session, id string) string {
