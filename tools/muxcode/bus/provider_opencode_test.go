@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -390,7 +392,7 @@ func TestResolveOpenCodeModel_EditOverride(t *testing.T) {
 }
 
 func TestAdaptBodyForNonHookProvider_Edit(t *testing.T) {
-	hookGuard := "A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt."
+	hookGuard := "A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands AND direct writes to `docs/**/*.md` are blocked before execution. Always delegate on the first attempt."
 	chainRef := "**The automated chain stops at review.** After review completes, report the results and wait for the user."
 	body := "Some preamble text.\n" + hookGuard + "\nMiddle text.\n" + chainRef + "\nEnd text."
 
@@ -402,6 +404,9 @@ func TestAdaptBodyForNonHookProvider_Edit(t *testing.T) {
 	}
 	if !strings.Contains(result, "MUST self-enforce delegation rules") {
 		t.Error("missing self-enforcement instruction")
+	}
+	if !strings.Contains(result, "never write or edit `docs/**/*.md` yourself") {
+		t.Error("self-enforcement instruction omits the docs write rule")
 	}
 
 	// Automated chain reference should be replaced
@@ -478,6 +483,77 @@ func TestAdaptBodyForNonHookProvider_TestNoContradiction(t *testing.T) {
 	}
 	if !strings.Contains(result, "muxcode send review review") {
 		t.Errorf("missing concrete manual review send command:\n%s", result)
+	}
+}
+
+// missingRewriteKeys returns, sorted, one "role: key" line per
+// nonHookBodyRewrites key that does not occur in defs[role] — the body
+// adaptBodyForNonHookProvider would rewrite for that role. A role absent
+// from defs reports every key, so a missing definition is a miss too.
+func missingRewriteKeys(defs map[string]string) []string {
+	var missing []string
+	for role, rewrites := range nonHookBodyRewrites {
+		for key := range rewrites {
+			if !strings.Contains(defs[role], key) {
+				missing = append(missing, role+": "+key)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+// shippedRewriteDefinitions reads agents/<AgentFileName(role)>.md from the
+// repository root for every role nonHookBodyRewrites covers.
+func shippedRewriteDefinitions(t *testing.T) map[string]string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate test file")
+	}
+	repoRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(thisFile))))
+	defs := map[string]string{}
+	for role := range nonHookBodyRewrites {
+		path := filepath.Join(repoRoot, "agents", AgentFileName(role)+".md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s's definition: %v", role, err)
+		}
+		defs[role] = string(data)
+	}
+	return defs
+}
+
+// TestNonHookBodyRewriteKeysMatchShippedDefinitions pins every rewrite key to
+// the definition it targets: strings.ReplaceAll reports nothing on a miss, so
+// before MUX-211 an edited sentence in agents/code-editor.md left OpenCode's
+// edit agent told that a PreToolUse hook enforced its delegation.
+func TestNonHookBodyRewriteKeysMatchShippedDefinitions(t *testing.T) {
+	for _, miss := range missingRewriteKeys(shippedRewriteDefinitions(t)) {
+		t.Errorf("rewrite key matches nothing in its shipped definition — %s", miss)
+	}
+}
+
+// TestMissingRewriteKeysReportsAnEditedSentence is the negative control for
+// the test above: one key's sentence edited in an otherwise intact copy of the
+// definitions must be reported, by role and key, and only that one.
+func TestMissingRewriteKeysReportsAnEditedSentence(t *testing.T) {
+	defs := map[string]string{}
+	for role, rewrites := range nonHookBodyRewrites {
+		for key := range rewrites {
+			defs[role] += key + "\n"
+		}
+	}
+	if got := missingRewriteKeys(defs); len(got) != 0 {
+		t.Fatalf("intact definitions reported misses: %v", got)
+	}
+
+	const key = "**The automated chain stops at review.** After review completes, report the results and wait for the user."
+	defs["edit"] = strings.Replace(defs["edit"], key, "**The automated chain stops at review.** Report the results and wait.", 1)
+
+	got := missingRewriteKeys(defs)
+	if len(got) != 1 || got[0] != "edit: "+key {
+		t.Errorf("edited sentence: misses = %q, want exactly [%q]", got, "edit: "+key)
 	}
 }
 

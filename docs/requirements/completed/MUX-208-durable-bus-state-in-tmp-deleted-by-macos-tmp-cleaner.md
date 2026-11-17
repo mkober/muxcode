@@ -126,7 +126,7 @@ lifecycle log — are this incident's evidence, not separate scope. They are lis
     ([MUX-210](../backlog/MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md),
     the narrow flat fallback and failed-before-done order; no `tui` source is changed by this spec),
     `test-opencode-edit`
-    ([MUX-211](../backlog/MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md),
+    ([MUX-211](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md),
     the definition rewrite at `bus/provider_opencode.go:619` no longer matches
     `agents/code-editor.md`) and `test-stall-redrive-busy`
     ([MUX-212](../backlog/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md),
@@ -414,5 +414,5 @@ Closed out 2026-11-13 by `55-defect-backlog-loop` run `1794602128`. All four pha
 acceptance criteria are checked; the full-suite criterion carries five exclusions set by the user —
 see its annotation and [MUX-209](./MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md),
 [MUX-210](../backlog/MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md),
-[MUX-211](../backlog/MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) and
+[MUX-211](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) and
 [MUX-212](../backlog/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md).

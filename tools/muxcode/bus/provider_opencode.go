@@ -583,43 +583,40 @@ func isUIChrome(line string) bool {
 	return false
 }
 
+// nonHookBodyRewrites maps a role to the definition sentences that describe
+// hook behaviour, each with the text a hookless provider's agent reads instead:
+// build and test send their chain request manually, edit self-enforces
+// delegation and orchestrates build→test→review itself.
+//
+// Keys match WHOLE sentences of agents/<AgentFileName(role)>.md. A narrower
+// substring rule (e.g. only "the bash hook auto-chains build->test on success")
+// mangles "do NOT send a test request — <justification>" into a
+// self-contradiction ("do NOT send a test request — send a test request
+// manually"). The cost is that editing a sentence silently disables its
+// rewrite — MUX-211, where edit's key went stale and OpenCode's edit agent kept
+// being told a PreToolUse hook enforced its delegation — so
+// TestNonHookBodyRewriteKeysMatchShippedDefinitions pins every key.
+var nonHookBodyRewrites = map[string]map[string]string{
+	"build": {
+		"The bash hook automatically chains to the test agent — do NOT send a test request yourself.":                                                                               "Your CLI does not support automatic hooks. After a successful build, send the test request manually:\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
+		"Do NOT run tests yourself and do NOT send a test request — the bash hook auto-chains build->test on success. No `pnpm test`/`jest`/`go test`/`pytest`, not even to debug.": "Do NOT run tests yourself to debug — no `pnpm test`/`jest`/`go test`/`pytest`. After a successful build, send the test request manually (no auto-chain):\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
+	},
+	"test": {
+		"**Do NOT send a review request — the bash hook auto-chains test->review on success.**":                                                      "**After tests pass, send a review request manually** (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
+		"Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.": "Send exactly ONE reply per request to the requester. After tests pass, send a review request manually (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
+	},
+	"edit": {
+		"A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands AND direct writes to `docs/**/*.md` are blocked before execution. Always delegate on the first attempt.": "Your CLI does not have a PreToolUse hook to enforce this. The permission system blocks prohibited commands, but you MUST self-enforce delegation rules: never attempt a prohibited command and never write or edit `docs/**/*.md` yourself — delegate on the first attempt.",
+		"**The automated chain stops at review.** After review completes, report the results and wait for the user.":                                                                                             "There is no automated hook chain. After code changes, you MUST manually orchestrate: (1) send build, (2) on success send test, (3) on success send review. The chain stops at review — wait for the user before committing.",
+	},
+}
+
 // adaptBodyForNonHookProvider rewrites agent definition body text to replace
 // Claude Code hook chain references with manual bus messaging instructions.
 // The source agent definitions assume hooks auto-chain (build→test→review),
 // but OpenCode and local LLM providers don't support hooks.
 func adaptBodyForNonHookProvider(body, role string) string {
-	replacements := map[string]map[string]string{
-		"build": {
-			// Replace "don't send test — hooks handle it" with "send test manually".
-			// These match WHOLE sentences. A narrower substring rule (e.g. replacing
-			// only "the bash hook auto-chains build->test on success") would mangle
-			// "do NOT send a test request — <justification>" into a self-contradiction
-			// ("do NOT send a test request — send a test request manually"), so always
-			// rewrite the entire clause coherently.
-			"The bash hook automatically chains to the test agent — do NOT send a test request yourself.":                                                                               "Your CLI does not support automatic hooks. After a successful build, send the test request manually:\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
-			"Do NOT run tests yourself and do NOT send a test request — the bash hook auto-chains build->test on success. No `pnpm test`/`jest`/`go test`/`pytest`, not even to debug.": "Do NOT run tests yourself to debug — no `pnpm test`/`jest`/`go test`/`pytest`. After a successful build, send the test request manually (no auto-chain):\n`muxcode send test test \"Build succeeded, run tests\" --type request`",
-		},
-		"test": {
-			// Replace "don't send review — hooks handle it" with "send review manually".
-			// Whole-sentence rewrites only — see the build note above for why a bare
-			// substring rule would create a contradiction.
-			"**Do NOT send a review request — the bash hook auto-chains test->review on success.**":                                                      "**After tests pass, send a review request manually** (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
-			"Send exactly ONE reply per request. Do NOT send additional messages to edit or review — the bash hook auto-chains test->review on success.": "Send exactly ONE reply per request to the requester. After tests pass, send a review request manually (no auto-chain):\n`muxcode send review review \"Tests passed, review changes\" --type request`",
-		},
-		"edit": {
-			// Replace hook guard reference with self-enforcement instruction
-			"A PreToolUse hook (`muxcode hook guard`) enforces this at the tool level — prohibited commands are blocked before execution. Always delegate on the first attempt.": "Your CLI does not have a PreToolUse hook to enforce this. The permission system blocks prohibited commands, but you MUST self-enforce delegation rules. Never attempt a prohibited command — delegate on the first attempt.",
-			// Replace automated chain reference with manual orchestration steps
-			"**The automated chain stops at review.** After review completes, report the results and wait for the user.": "There is no automated hook chain. After code changes, you MUST manually orchestrate: (1) send build, (2) on success send test, (3) on success send review. The chain stops at review — wait for the user before committing.",
-		},
-	}
-
-	roleReplacements, ok := replacements[role]
-	if !ok {
-		return body
-	}
-
-	for old, new := range roleReplacements {
+	for old, new := range nonHookBodyRewrites[role] {
 		body = strings.ReplaceAll(body, old, new)
 	}
 	return body

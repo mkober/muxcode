@@ -72,6 +72,7 @@ demand. Each keeps its Defects rank.
 | MUX-123 | 0/22 | [#110](https://github.com/mkober/muxcode/issues/110) | Parked 2026-11-17 by plan at `defect-select`, not on a user decision: Phase 1 reconstructs three stalls of 2026-08-28 from a lifecycle log that now starts 2026-10-21, and the fix is whatever that evidence shows; the watchdog has been reworked since |
 | MUX-122 | 0/25 | [#109](https://github.com/mkober/muxcode/issues/109) | Parked 2026-11-17 by plan at `defect-select`, not on a user decision: its first deliverable is a traced run of `scripts/test-prompt-mode.sh`, excluded on 2026-11-13 as environment-dependent (no model API key here); not re-checked today |
 | MUX-032 | 0/22 | [#32](https://github.com/mkober/muxcode/issues/32) | Parked 2026-11-17 by plan at `defect-select`, not on a user decision: its three observed false alerts no longer fire — the ping-pong pass was fixed on other grounds; what remains (a content-aware tuple pass) has no recorded false positive behind it |
+| MUX-210 | 4/15 | [#181](https://github.com/mkober/muxcode/issues/181) | Parked 2026-11-17 after Phase 1, on edit's instruction following plan's recommendation; the user has not answered. Its criteria 2–3 ask for the flat fallback on width overflow, which the renderer deliberately replaced with wrapping (`72e5fa2`; `c3faf7e` cites a user request of 2026-09-18). Restating them is the user's call; the proposed restatement is in the spec |
 | MUX-191 | — | — | Parked 2026-11-17 by plan at `defect-select`, not on a user decision: `muxcode bus-dir` exists since MUX-208, so the defect as titled is gone; closing it as overtaken is the user's call |
 
 MUX-223 and MUX-225 were parked at filing and unparked 2026-11-14 once the user's decisions,
@@ -128,12 +129,11 @@ criteria and phases rewritten to them:
 | 31 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
 | 32 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
 | 33 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
-| 34 | 6 | [`MUX-211`](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) | An OpenCode edit agent is told a PreToolUse hook enforces its delegation rules — the definition rewrite no longer matches | Medium | ⇄ [MUX-201](./MUX-201-non-hook-prompt-and-generated-body-drift.md) |
-| 35 | 6 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` fails: a stale spinner in scrollback pins the pane busy | Medium | — |
-| 36 | 6 | [`MUX-222`](./MUX-222-command-runner-executes-one-request-and-replies-to-all.md) | The run agent's definition executes one request of a batch and replies to all of them | Medium | — |
-| 37 | 6 | [`MUX-226`](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` runs on the user's real tmux server and may mix in the installed binary | Medium | — |
-| 38 | 6 | [`MUX-228`](./MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` alerts on the transient gap during a ship merge | Low | — |
-| 39 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
+| 34 | 6 | [`MUX-212`](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` fails: a stale spinner in scrollback pins the pane busy | Medium | — |
+| 35 | 6 | [`MUX-222`](./MUX-222-command-runner-executes-one-request-and-replies-to-all.md) | The run agent's definition executes one request of a batch and replies to all of them | Medium | — |
+| 36 | 6 | [`MUX-226`](./MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` runs on the user's real tmux server and may mix in the installed binary | Medium | — |
+| 37 | 6 | [`MUX-228`](./MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` alerts on the transient gap during a ship merge | Low | — |
+| 38 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
 
 ### Reliability & observability
 
@@ -201,7 +201,6 @@ criteria and phases rewritten to them:
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
-| [`MUX-211`](./MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) | An OpenCode Edit Agent Is Told a PreToolUse Hook Enforces Its Delegation Rules | Medium | ⇄ [MUX-201](./MUX-201-non-hook-prompt-and-generated-body-drift.md) |
 | [`MUX-201`](./MUX-201-non-hook-prompt-and-generated-body-drift.md) | Non-Hook Prompt Text and Generated Agent Bodies Drift From the Definition | Medium | [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
 | [`MUX-190`](./MUX-190-codex-agent-drops-a-consumed-request-after-a-guard-denial.md) | A Codex Agent Drops a Consumed Request After a Guard Denial | Medium | — |
 | [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | A Codex Test Agent Structurally Cannot Run This Repo's Suite | High | — |
@@ -394,6 +393,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-219`](../completed/MUX-219-graph-run-review-fires-verify-spec-twice.md) | A Graph Run's Review Fires `verify-spec` Twice |
 | [`MUX-227`](../completed/MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) | `muxcode reload <hosted-role>` Replaces the Host Agent Instead of Refusing |
 | [`MUX-209`](../completed/MUX-209-force-respond-script-non-forced-deliver-no-longer-surfaces-in-flight-skip.md) | `test-force-respond.sh` Fails — a Non-Forced `deliver` No Longer Surfaces the In-Flight Skip |
+| [`MUX-211`](../completed/MUX-211-opencode-edit-agent-told-a-pretooluse-hook-enforces-delegation.md) | An OpenCode Edit Agent Is Told a PreToolUse Hook Enforces Its Delegation Rules |
 
 ## Ideas without specs
 
