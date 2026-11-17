@@ -391,6 +391,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-220`](../completed/MUX-220-wake-batch-drops-a-roles-own-delegation-reply.md) | The Wake Batch Drops a Listenerless Role's Own Delegation Reply, and May Re-Inject an Answered Request |
 | [`MUX-223`](../completed/MUX-223-project-memory-resolves-against-the-callers-cwd.md) | Project Memory Resolves Against the Caller's Working Directory, Stranding Session Summaries |
 | [`MUX-225`](../completed/MUX-225-reply-to-unknown-id-accepted-silently.md) | A Reply Whose `--reply-to` Names No Message Is Accepted Silently, and the Task Waits Out Its Cap |
+| [`MUX-232`](../completed/MUX-232-redrive-arrives-truncated-with-no-id-and-no-reply-route.md) | A Re-Driven Request Arrives Truncated, With No Message Id and No Reply Route |
 
 ## Ideas without specs
 

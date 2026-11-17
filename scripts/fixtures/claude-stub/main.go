@@ -33,6 +33,14 @@
 // reload's GracefulStop then holds the reload marker that long, so a graph
 // dispatch can be placed inside the stop-to-relaunch window deterministically.
 // Absent, empty or 0, /exit is immediate.
+//
+// Every typed line is appended to the file named by CLAUDE_STUB_TYPED_LOG,
+// when set (MUX-232's scripts/test-redrive-reply-route.sh). While the file
+// named by CLAUDE_STUB_REPLY_FILE holds "1", a typed line carrying a re-drive's
+// `To reply: <command>` runs that command as written, its summary placeholder
+// filled — what an agent that did the work does. The stub never answers its
+// listener's messages, so a request it consumed stays unanswered until a
+// re-drive hands it a command to run.
 package main
 
 import (
@@ -117,9 +125,34 @@ func main() {
 			teardown()
 			return
 		}
+		handleTyped(line)
 		fmt.Print("❯ \n")
 	}
 	teardown()
+}
+
+// handleTyped logs a typed line and, when replies are on, runs the reply
+// command a re-drive carries — see the package doc.
+func handleTyped(line string) {
+	if p := os.Getenv("CLAUDE_STUB_TYPED_LOG"); p != "" {
+		if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, line)
+			f.Close()
+		}
+	}
+	i := strings.LastIndex(line, "To reply: ")
+	if i < 0 {
+		return
+	}
+	if b, err := os.ReadFile(os.Getenv("CLAUDE_STUB_REPLY_FILE")); err != nil || strings.TrimSpace(string(b)) != "1" {
+		return
+	}
+	cmd := line[i+len("To reply: "):]
+	if j := strings.Index(cmd, " | "); j >= 0 {
+		cmd = cmd[:j]
+	}
+	cmd = strings.ReplaceAll(cmd, "<your one-line summary>", "Re-drive answered. EXIT=0")
+	_ = exec.Command("bash", "-c", cmd).Run()
 }
 
 // exitDelay holds a /exit — see the package doc.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,15 @@ type DeliverResult struct {
 //     cannot see.
 //   - Clears stale parked input in an unfocused pane before injecting.
 func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
+	return ForceDeliverFor(session, role, force, "")
+}
+
+// ForceDeliverFor is ForceDeliver whose in-flight re-drive puts the task
+// firstTaskID first, so a bounded re-drive always holds it. The stall
+// watchdog spends a stalled task's retry before it calls here, and a
+// role-wide re-drive that cut that task from the tail would spend its
+// retries on the leading requests and leave it unanswerable (MUX-232 review).
+func ForceDeliverFor(session, role string, force bool, firstTaskID string) (DeliverResult, error) {
 	role = WindowForRole(role)
 	res := DeliverResult{Role: role}
 
@@ -77,7 +87,7 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 		// requests as a fresh injection so the work restarts — graph runs
 		// take delivery priority and must not wait out the task timeout.
 		if force {
-			if n := redriveInFlightTasks(session, role, provider); n > 0 {
+			if n := redriveInFlightTasks(session, role, provider, firstTaskID); n > 0 {
 				res.Delivered = n
 				return res, nil
 			}
@@ -128,14 +138,15 @@ func ForceDeliver(session, role string, force bool) (DeliverResult, error) {
 // redriveInFlightTasks re-injects the requests behind a role's live
 // in-flight tasks — the recovery for consumed-but-never-started work,
 // which no inbox-based path can reach (the rows are already drained).
-// Returns how many requests were re-driven. ForceDeliver, its only caller,
-// has already refused a working pane.
-func redriveInFlightTasks(session, role string, provider Provider) int {
+// Returns how many requests the typed text held — not how many were in flight:
+// the bound can leave a tail out. firstTaskID, when set, leads the batch.
+// ForceDeliverFor, its only caller, has already refused a working pane.
+func redriveInFlightTasks(session, role string, provider Provider, firstTaskID string) int {
 	tasks, err := ListTasks(session, TaskInFlight)
 	if err != nil {
 		return 0
 	}
-	msgs := redriveMessages(tasks, role, time.Now().Unix())
+	msgs := redriveFirst(redriveMessages(tasks, role, time.Now().Unix()), firstTaskID)
 	if len(msgs) == 0 {
 		return 0
 	}
@@ -144,13 +155,13 @@ func redriveInFlightTasks(session, role string, provider Provider) int {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
+	text, shown := redriveNotification(session, msgs)
 	if err := redriveText(session, role, provider, text); err != nil {
 		return 0
 	}
 	LogLifecycle(session, "info", "deliver", "force-redrive",
-		fmt.Sprintf("%s: %d in-flight task(s)", role, len(msgs)))
-	return len(msgs)
+		fmt.Sprintf("%s: %d of %d in-flight task(s)", role, shown, len(msgs)))
+	return shown
 }
 
 // redriveText delivers a redrive's explicit text and reports whether it
@@ -195,7 +206,7 @@ func RedriveTask(session string, t Task) bool {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	text := "Re-drive (consumed but never completed): " + BuildCombinedNotification(msgs)
+	text, _ := redriveNotification(session, msgs)
 	if err := redriveText(session, role, provider, text); err != nil {
 		return false
 	}
@@ -238,6 +249,64 @@ func TaskStalled(t Task, now int64, stallSecs int) bool {
 		}
 	}
 	return now-t.SentAt >= int64(stallSecs)
+}
+
+// redriveNotification is the text both re-drive roads type into the pane: one
+// line holding, per request, its id, sender, full payload and the reply
+// command to its reply target (redriveBlock), bounded like a wake-up batch —
+// at most wakeUpMaxMessages requests and wakeUpMaxBytes, cut between whole
+// requests with a count of those left out, the first always included. The
+// row it re-drives is already consumed, so `muxcode inbox` returns nothing:
+// before MUX-232 this was the wake notification — the payload cut at 80
+// runes, no id, no reply route — and on 2026-11-17 the commit agent could do
+// the work and not answer it, failing two graph runs at 600 s each.
+//
+// It returns how many of msgs the text holds — the leading ones — so a caller
+// counts only what it typed: a request cut off by the bound was not re-driven.
+func redriveNotification(session string, msgs []Message) (text string, shown int) {
+	var b strings.Builder
+	b.WriteString("Re-drive (consumed but never completed) — this request was already read from your inbox, so `muxcode inbox` will not show it; do it and reply with its command:")
+	for i, m := range msgs {
+		block := redriveBlock(session, m)
+		if i > 0 && (i >= wakeUpMaxMessages || b.Len()+len(block) > wakeUpMaxBytes) {
+			break
+		}
+		b.WriteString(block)
+		shown++
+	}
+	if left := len(msgs) - shown; left > 0 {
+		fmt.Fprintf(&b, " | [%d more re-driven request(s) not shown]", left)
+	}
+	return b.String(), shown
+}
+
+// redriveFirst moves the request with id to the front of msgs, so a bounded
+// re-drive always holds it: the first request is never cut.
+func redriveFirst(msgs []Message, id string) []Message {
+	for i, m := range msgs {
+		if m.ID == id && i > 0 {
+			out := append([]Message{m}, msgs[:i]...)
+			return append(out, msgs[i+1:]...)
+		}
+	}
+	return msgs
+}
+
+// redriveNewlines flattens a payload to one line: a newline typed into the
+// pane would submit the prompt before the reply command.
+var redriveNewlines = strings.NewReplacer("\r\n", " ⏎ ", "\n", " ⏎ ", "\r", " ⏎ ")
+
+// redriveBlock renders one re-driven request. Its reply goes to the request's
+// ReplyTarget — read from its log line (replyTargetFor), so a `daemon`
+// dispatch answers edit and a chain request its reply_role — never the raw
+// sender, which may be no bus role at all.
+func redriveBlock(session string, m Message) string {
+	target := replyTargetFor(session, Task{ID: m.ID, From: m.From})
+	if target == "" || !IsKnownRole(target) {
+		target = "edit"
+	}
+	return fmt.Sprintf(" | [%s] from %s [%s:%s]: %s — To reply: %s",
+		m.ID, m.From, m.Type, m.Action, redriveNewlines.Replace(m.Payload), buildReplyCommand(target, m.ID))
 }
 
 // redriveMessages maps a role's live in-flight tasks back to injectable
