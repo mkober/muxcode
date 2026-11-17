@@ -1,5 +1,7 @@
 # OpenCode Plugin Hook Bridge
 
+**Tracking:** [mkober/muxcode#11](https://github.com/mkober/muxcode/issues/11)
+
 OpenCode has no Claude Code-style shell hooks, so muxcode treats it as a non-hook provider and chains degrade to natural-language instructions the LLM must follow — the direct cause of observed chain-retrigger storms. But OpenCode *does* ship a typed plugin system (JS/TS event hooks including `tool.execute.before/after` and `session.idle`). A small muxcode-authored plugin, auto-installed at agent launch, can shell out to the muxcode CLI on those events and restore deterministic build→test→review chains for OpenCode agents.
 
 ## Context

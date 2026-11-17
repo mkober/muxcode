@@ -1,5 +1,7 @@
 # Remove gated pane-scrape delivery machinery
 
+**Tracking:** [mkober/muxcode#12](https://github.com/mkober/muxcode/issues/12)
+
 Physically delete the daemon's pane-scrape delivery machinery — the notified-IDs subsystem,
 churn-suppression, safety-net retries, and the active-with-stale-messages watchdog — now that
 receipt-based delivery ([delivery-acknowledgement](../completed/MUX-050-delivery-acknowledgement.md))

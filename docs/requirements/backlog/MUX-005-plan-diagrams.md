@@ -1,5 +1,7 @@
 # Plan-agent Diagrams (render → store → embed across req docs, Jira, Confluence)
 
+**Tracking:** [mkober/muxcode#5](https://github.com/mkober/muxcode/issues/5)
+
 ## Context
 
 The plan agent can already update Confluence pages and Jira issues directly via the

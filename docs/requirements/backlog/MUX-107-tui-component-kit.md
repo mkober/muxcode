@@ -1,5 +1,7 @@
 # Shared TUI Component Kit
 
+**Tracking:** [mkober/muxcode#43](https://github.com/mkober/muxcode/issues/43)
+
 Extract the layout primitives now duplicated across `tui/graph.go`, `tui/graph_ui.go`, `tui/remote.go`, and `tui/model.go` into a small shared kit — tab bar, footer, list, confirm, empty state — with pinning tests, so the conventions in [`docs/tui-style.md`](../../tui-style.md) are enforced by code rather than by review diligence.
 
 ## Context

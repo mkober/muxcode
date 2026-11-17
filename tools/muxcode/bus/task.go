@@ -115,12 +115,26 @@ func expireTaskBecause(session, taskID, cause string) error {
 	return writeTask(session, t)
 }
 
-// ClearInFlightTasksForRole times out every in-flight task addressed to role (or
-// a hosted role it fronts). Called when an agent (re)launches: a fresh agent
-// instance cannot be mid-processing a task that was delivered to a previous
-// instance, so any task still marked in-flight is stale by definition.
+// ClearInFlightTasksForRole times out the in-flight tasks addressed to role (or
+// a hosted role it fronts) whose request a previous instance consumed. Called
+// when an agent (re)launches: a fresh instance cannot be mid-processing a task
+// delivered to a previous one, so such a task is stale.
 //
-// Left stranded, such a task blocks EVERY new send of the same (to, action) via
+// A task whose request carries no receipt and still sits in the role's inbox
+// is kept on its own clock: the relaunched agent will read and answer it. On
+// 2026-09-28 a reload cleared such a dispatch 250 s into a 3600 s ci-watch
+// node and failed the run seconds before the answer (MUX-196). The receipt is
+// the addressee's alone (MUX-216), so an auto-CC copy edit read proves
+// nothing. Every task considered writes one row — inflight-task-kept or
+// inflight-task-cleared — naming it and whether its request was consumed.
+//
+// Absence from the inbox is proven, never assumed. The inbox is read under
+// its capacity lock, which the partial consumes hold while they rename the
+// whole inbox away and restore the rows they did not take; and a
+// `.consuming` file — the unlocked full drain mid-read — counts as queued. A
+// lock or read failure proves nothing, so it keeps every receipt-less task.
+//
+// Left stranded, a consumed task blocks EVERY new send of the same (to, action) via
 // HasInFlightTaskForRole until the 600s TaskExpired grace elapses — the exact
 // wedge that made a crashed-and-restarted review agent silently undeliverable:
 // the crash left its chain task in-flight, and the dedup guard then dropped each
@@ -139,14 +153,73 @@ func ClearInFlightTasksForRole(session, role, cause string) int {
 		return 0
 	}
 	host := WindowForRole(role)
-	cleared := 0
+	var mine []Task
 	for _, t := range tasks {
 		if WindowForRole(t.To) == host {
-			_ = expireTaskBecause(session, t.ID, cause)
-			cleared++
+			mine = append(mine, t)
 		}
 	}
+	if len(mine) == 0 {
+		return 0
+	}
+	cleared := 0
+	settle := func(queued map[string]bool, unknown error) {
+		for _, t := range mine {
+			if clearUnlessQueued(session, role, cause, t, queued, unknown) {
+				cleared++
+			}
+		}
+	}
+	if err := withInboxCapLock(session, host, func() error {
+		settle(queuedIDs(session, host))
+		return nil
+	}); err != nil {
+		settle(nil, err)
+	}
 	return cleared
+}
+
+// clearUnlessQueued times out t unless its request is unconsumed and queued —
+// or unconsumed while the inbox could not be read (unknown), which proves
+// nothing — writing the row that names the decision, and reports whether it
+// cleared t.
+func clearUnlessQueued(session, role, cause string, t Task, queued map[string]bool, unknown error) bool {
+	what := fmt.Sprintf("%s: task %s %s→%s:%s", role, t.ID, t.From, t.To, t.Action)
+	_, consumed := ReadReceipt(session, t.ID)
+	if !consumed && unknown != nil {
+		LogLifecycle(session, "warn", "launch", "inflight-task-kept",
+			fmt.Sprintf("%s kept — consumed=no, and the inbox could not be read (%v), which is no proof the request is gone", what, unknown))
+		return false
+	}
+	if !consumed && queued[t.ID] {
+		LogLifecycle(session, "info", "launch", "inflight-task-kept",
+			what+" kept — consumed=no, its request waits in the inbox for the relaunched agent")
+		return false
+	}
+	_ = expireTaskBecause(session, t.ID, cause)
+	detail := "consumed=yes"
+	if !consumed {
+		detail = "consumed=no, its request is gone from the inbox"
+	}
+	LogLifecycle(session, "info", "launch", "inflight-task-cleared", what+" cleared — "+detail)
+	return true
+}
+
+// queuedIDs returns the ids of the messages queued for role: its inbox, and a
+// `.consuming` file a full drain (Receive) has renamed it to but not yet read.
+func queuedIDs(session, role string) (map[string]bool, error) {
+	ids := map[string]bool{}
+	inbox := InboxPath(session, role)
+	for _, path := range []string{inbox, inbox + ".consuming"} {
+		msgs, err := readMessages(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range msgs {
+			ids[m.ID] = true
+		}
+	}
+	return ids, nil
 }
 
 // ReadTask reads a task by its message ID.

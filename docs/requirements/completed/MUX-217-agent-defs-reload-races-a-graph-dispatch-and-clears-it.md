@@ -35,12 +35,12 @@ passed.
 |------|-------|--------|
 | The watchdog reloads only when `AutoReloadSafe` holds: no reload under way, no pending actionable inbox, no live in-flight task, pane not working | `bus/agentdefs.go:91` | Read by plan |
 | That check and the reload are not atomic with the executor's dispatch: a request sent after the check passes and before the relaunch is neither seen by the check nor protected from it | rows at 20:42:16 | Plan's reading — the order within the second is not logged |
-| Every launch times out every in-flight task for the role (`ClearInFlightTasksForRole`), consumed or not, and the executor fails the node on `timed-out` without consulting `timeout_secs` | [MUX-196](../backlog/MUX-196-agent-launch-expires-in-flight-graph-dispatch.md), verified there at `14f3a73` | Not re-read for this spec |
+| Every launch times out every in-flight task for the role (`ClearInFlightTasksForRole`), consumed or not, and the executor fails the node on `timed-out` without consulting `timeout_secs` | [MUX-196](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md), verified there at `14f3a73` | Not re-read for this spec |
 
 ### Relation to MUX-196
 
 The second half — a relaunch clearing an unconsumed dispatch and the node failing on it — is
-[MUX-196](../backlog/MUX-196-agent-launch-expires-in-flight-graph-dispatch.md)'s mechanism, observed there
+[MUX-196](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md)'s mechanism, observed there
 on a manual `muxcode reload`. This is a second occurrence on a different road, with one thing
 MUX-196 does not cover: the reload was the daemon's own, issued by a watchdog whose safety check
 exists to prevent exactly this and lost a race. Fixing MUX-196 would have kept this node alive;
@@ -264,7 +264,7 @@ rather than failing — are untouched.
 
 ## Related
 
-- [MUX-196](../backlog/MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) — the launch-time clearing
+- [MUX-196](./MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) — the launch-time clearing
   this occurrence ran into
 - [MUX-215](../backlog/MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) — the run it
   happened in

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -262,8 +263,10 @@ func TestExecReservedReloadHoldsDispatchThroughCondition(t *testing.T) {
 }
 
 // MUX-217: a dispatch a relaunch cleared fails its node naming the relaunch and
-// how far into its allowance it came — never a bare "task timed-out". Negative
-// control: a task timed out with no recorded cause keeps the plain reason.
+// how far into its allowance it came — never a bare "task timed-out". Since
+// MUX-196 that failure needs a consumed dispatch and a spent allowance, so the
+// fixture writes the receipt and ages the node. Negative control: a task timed
+// out with no recorded cause keeps the plain reason.
 func TestExecClearedDispatchNamesTheRelaunch(t *testing.T) {
 	for _, tc := range []struct {
 		name, cause string
@@ -277,6 +280,11 @@ func TestExecClearedDispatchNamesTheRelaunch(t *testing.T) {
 			run := createTestRun(t, linearGraph())
 			step(t, runTestSession, run.ID)
 			if tc.cause != "" {
+				st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+				WriteReceipt(runTestSession, st.TaskID, "build", ReceiptKindAck)
+				if err := MutateNodeStatus(runTestSession, run.ID, "a", func(s *GraphNodeStatus) { s.StartedAt -= 600 }); err != nil {
+					t.Fatal(err)
+				}
 				if n := ClearInFlightTasksForRole(runTestSession, "build", tc.cause); n != 1 {
 					t.Fatalf("cleared %d tasks, want the dispatch", n)
 				}
@@ -299,6 +307,234 @@ func TestExecClearedDispatchNamesTheRelaunch(t *testing.T) {
 			}
 			if tc.cause == "" && strings.Contains(st.Output, "relaunch") {
 				t.Errorf("a task with no recorded cause blamed a relaunch: %q", st.Output)
+			}
+		})
+	}
+}
+
+// relaunchClearedCIWatch runs a one-node ci-watch graph with an hour's
+// allowance, ages its dispatch 250 s, has the watch agent consume it and a
+// relaunch clear it — the 2026-09-28 case — and returns the run and the
+// cleared task id.
+func relaunchClearedCIWatch(t *testing.T) (*GraphRun, string) {
+	t.Helper()
+	isolateLifecycle(t)
+	run := createTestRun(t, &Graph{
+		Name:  "t",
+		Start: "ci-watch",
+		Nodes: []Node{{ID: "ci-watch", Type: NodeSend, Role: "watch", Action: "watch", Message: "wait for CI", TimeoutSec: 3600}},
+	})
+	step(t, runTestSession, run.ID)
+	st, err := ReadNodeStatus(runTestSession, run.ID, "ci-watch")
+	if err != nil || st.State != GraphNodeRunning {
+		t.Fatalf("fixture: ci-watch %+v %v, want running", st, err)
+	}
+	if err := MutateNodeStatus(runTestSession, run.ID, "ci-watch", func(s *GraphNodeStatus) { s.StartedAt -= 250 }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ConsumeByID(runTestSession, "watch", st.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if n := ClearInFlightTasksForRole(runTestSession, "watch", "watch relaunched (reason=reload)"); n != 1 {
+		t.Fatalf("cleared %d tasks, want the consumed dispatch", n)
+	}
+	return run, st.TaskID
+}
+
+// MUX-196, the Phase 1 pin inverted: a send node whose consumed dispatch a
+// relaunch clears 250 s into its 3600 s allowance is re-sent on what is left of
+// it, not failed, and the relaunched agent's answer finishes the node.
+func TestExecRelaunchClearedDispatchIsResent(t *testing.T) {
+	run, cleared := relaunchClearedCIWatch(t)
+
+	step(t, runTestSession, run.ID)
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "ci-watch")
+	if st.State != GraphNodeRunning || st.TaskID == cleared || !slices.Contains(st.ClearedTasks, cleared) {
+		t.Fatalf("ci-watch %q on %q cleared %v, want running on a re-sent task with %s recorded", st.State, st.TaskID, st.ClearedTasks, cleared)
+	}
+	resent, err := ReadTask(runTestSession, st.TaskID)
+	if err != nil || resent.Status != TaskInFlight || resent.Timeout < 3349 || resent.Timeout > 3350 {
+		t.Errorf("re-sent task %+v %v, want in flight on the 3350s left", resent, err)
+	}
+	if msgs, _ := Peek(runTestSession, "watch"); len(msgs) != 1 || msgs[0].ID != st.TaskID || msgs[0].GraphNode != "ci-watch" {
+		t.Errorf("watch inbox %+v, want the re-sent dispatch", msgs)
+	}
+	if log := lifecycleText(t); !strings.Contains(log, "graph-dispatch-resent") || !strings.Contains(log, "agent relaunched: watch relaunched (reason=reload)") {
+		t.Errorf("no graph-dispatch-resent row naming the relaunch:\n%s", log)
+	}
+
+	completeSendNodeWithReply(t, runTestSession, run.ID, "ci-watch", "watch", "CI-GREEN EXIT=0")
+	step(t, runTestSession, run.ID)
+	if st, _ := ReadNodeStatus(runTestSession, run.ID, "ci-watch"); st.Outcome != OutcomeSuccess {
+		t.Errorf("ci-watch %q/%q %q after the relaunched agent answered, want success", st.State, st.Outcome, st.Output)
+	}
+}
+
+// MUX-196: a resumed agent can still answer the dispatch its prior instance
+// consumed. That late answer finishes the node, and the re-sent copy is
+// withdrawn unread and expired so it is not worked twice.
+func TestExecLateAnswerToClearedDispatchFinishesNode(t *testing.T) {
+	run, cleared := relaunchClearedCIWatch(t)
+	step(t, runTestSession, run.ID)
+	resentID := sendNodeTaskID(t, run.ID, "ci-watch")
+
+	resp := NewMessage("watch", "edit", "response", "watch", "CI-GREEN EXIT=0", "")
+	if err := Send(runTestSession, resp); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(runTestSession, cleared, resp.ID)
+	step(t, runTestSession, run.ID)
+
+	st, _ := ReadNodeStatus(runTestSession, run.ID, "ci-watch")
+	if st.Outcome != OutcomeSuccess || !strings.Contains(st.Output, "CI-GREEN") {
+		t.Fatalf("ci-watch %q/%q %q, want success on the late answer", st.State, st.Outcome, st.Output)
+	}
+	if resent, _ := ReadTask(runTestSession, resentID); resent.Status != TaskTimedOut {
+		t.Errorf("re-sent task %q, want expired once superseded", resent.Status)
+	}
+	if msgs, _ := Peek(runTestSession, "watch"); len(msgs) != 0 {
+		t.Errorf("watch inbox %+v, want the unread re-send withdrawn", msgs)
+	}
+}
+
+// MUX-196 review must-fix: dispatch A is cleared and re-sent as B, and a second
+// relaunch clears B while a reload marker holds the next re-send. A's late
+// answer must finish the node then — not be ignored while the node waits to
+// send a third copy or runs out its allowance.
+func TestExecLateAnswerAfterSecondRelaunchFinishesNode(t *testing.T) {
+	run, first := relaunchClearedCIWatch(t)
+	step(t, runTestSession, run.ID)
+	second := sendNodeTaskID(t, run.ID, "ci-watch")
+	if _, err := ConsumeByID(runTestSession, "watch", second); err != nil {
+		t.Fatal(err)
+	}
+	if n := ClearInFlightTasksForRole(runTestSession, "watch", "watch relaunched (reason=restart)"); n != 1 {
+		t.Fatalf("second relaunch cleared %d tasks, want the re-send", n)
+	}
+	release, err := ReserveReload(runTestSession, "watch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	step(t, runTestSession, run.ID)
+	if st, _ := ReadNodeStatus(runTestSession, run.ID, "ci-watch"); st.State != GraphNodeRunning || st.TaskID != second {
+		t.Fatalf("fixture: ci-watch %q on %q, want running and holding its re-send under the reload marker", st.State, st.TaskID)
+	}
+
+	resp := NewMessage("watch", "edit", "response", "watch", "CI-GREEN EXIT=0", "")
+	if err := Send(runTestSession, resp); err != nil {
+		t.Fatal(err)
+	}
+	CompleteTask(runTestSession, first, resp.ID)
+	step(t, runTestSession, run.ID)
+
+	if st, _ := ReadNodeStatus(runTestSession, run.ID, "ci-watch"); st.Outcome != OutcomeSuccess || !strings.Contains(st.Output, "CI-GREEN") {
+		t.Fatalf("ci-watch %q/%q %q, want success on the first dispatch's late answer", st.State, st.Outcome, st.Output)
+	}
+	if msgs, _ := Peek(runTestSession, "watch"); len(msgs) != 0 {
+		t.Errorf("watch inbox %+v, want no third dispatch", msgs)
+	}
+}
+
+func sendNodeTaskID(t *testing.T, runID, nodeID string) string {
+	t.Helper()
+	st, err := ReadNodeStatus(runTestSession, runID, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st.TaskID
+}
+
+// MUX-196: a mutation the dead instance may have half-run — a node the gate
+// rule guards, or a deploy — is never re-sent: the node holds for a late
+// answer while its allowance lasts, then fails naming the relaunch. Negative
+// control for the re-send road.
+func TestContinueAfterRelaunchHoldsMutations(t *testing.T) {
+	for _, tc := range []struct{ role, action string }{
+		{"commit", "commit"}, {"commit", "checkout"}, {"plan", "jira-write"}, {"deploy", "deploy"},
+	} {
+		t.Run(tc.role+"/"+tc.action, func(t *testing.T) {
+			isolateLifecycle(t)
+			run := createTestRun(t, linearGraph())
+			step(t, runTestSession, run.ID)
+			st, _ := ReadNodeStatus(runTestSession, run.ID, "a")
+			n := &Node{ID: "a", Type: NodeSend, Role: tc.role, Action: tc.action, Message: "go"}
+			now := time.Now().Unix()
+			task := Task{ID: st.TaskID, To: tc.role, Action: tc.action, Status: TaskTimedOut, SentAt: now - 30, Timeout: 600,
+				ClearedBy: tc.role + " relaunched (reason=restart)"}
+
+			if !continueAfterRelaunch(runTestSession, run, n, st, task, now) {
+				t.Fatal("a cleared mutation inside its allowance was not held")
+			}
+			if msgs, _ := Peek(runTestSession, WindowForRole(tc.role)); len(msgs) != 0 {
+				t.Errorf("%s inbox %+v, want no second request", tc.role, msgs)
+			}
+			if got := sendNodeTaskID(t, run.ID, "a"); got != st.TaskID {
+				t.Errorf("node task %q, want the held dispatch %q", got, st.TaskID)
+			}
+			if log := lifecycleText(t); strings.Count(log, "graph-dispatch-held") != 1 {
+				t.Errorf("want one graph-dispatch-held row:\n%s", log)
+			}
+			if !continueAfterRelaunch(runTestSession, run, n, st, task, now+1) || strings.Count(lifecycleText(t), "graph-dispatch-held") != 1 {
+				t.Error("a second tick of the hold must hold again without another row")
+			}
+			if continueAfterRelaunch(runTestSession, run, n, st, task, st.StartedAt+600) {
+				t.Error("a hold past the node's allowance must let the node fail")
+			}
+		})
+	}
+}
+
+// MUX-196 review: a held mutation that outlives an explicit timeout_secs fails
+// naming the relaunch, not a bare "node timeout" — the explicit deadline is
+// checked before the send road that names it. Negative control: an ordinary
+// dispatch nobody answered still reads "node timeout" past the same deadline.
+func TestExecExplicitTimeoutKeepsRelaunchCause(t *testing.T) {
+	for _, cleared := range []bool{true, false} {
+		t.Run(fmt.Sprintf("cleared=%v", cleared), func(t *testing.T) {
+			isolateLifecycle(t)
+			run := createTestRun(t, &Graph{
+				Name:  "t",
+				Start: "deploy",
+				Nodes: []Node{{ID: "deploy", Type: NodeSend, Role: "deploy", Action: "deploy", Message: "ship", TimeoutSec: 3600}},
+			})
+			step(t, runTestSession, run.ID)
+			st, err := ReadNodeStatus(runTestSession, run.ID, "deploy")
+			if err != nil || st.State != GraphNodeRunning {
+				t.Fatalf("fixture: deploy %+v %v, want running", st, err)
+			}
+			if cleared {
+				if _, err := ConsumeByID(runTestSession, "deploy", st.TaskID); err != nil {
+					t.Fatal(err)
+				}
+				if n := ClearInFlightTasksForRole(runTestSession, "deploy", "deploy relaunched (reason=restart)"); n != 1 {
+					t.Fatalf("cleared %d tasks, want the consumed dispatch", n)
+				}
+				step(t, runTestSession, run.ID)
+				if s := nodeState(t, runTestSession, run.ID, "deploy"); s != GraphNodeRunning {
+					t.Fatalf("fixture: a cleared mutation inside its allowance must hold, got %q", s)
+				}
+			}
+			if err := MutateNodeStatus(runTestSession, run.ID, "deploy", func(s *GraphNodeStatus) { s.StartedAt -= 3601 }); err != nil {
+				t.Fatal(err)
+			}
+			step(t, runTestSession, run.ID)
+			st, err = ReadNodeStatus(runTestSession, run.ID, "deploy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Outcome != OutcomeFailure {
+				t.Fatalf("deploy outcome %q, want failure past its explicit deadline", st.Outcome)
+			}
+			want := "node timeout"
+			if cleared {
+				want = "dispatch cleared by a relaunch — deploy relaunched (reason=restart)"
+			}
+			if !strings.Contains(st.Output, want) {
+				t.Errorf("deploy output %q lacks %q", st.Output, want)
+			}
+			if !cleared && strings.Contains(st.Output, "relaunch") {
+				t.Errorf("an unanswered dispatch blamed a relaunch: %q", st.Output)
 			}
 		})
 	}

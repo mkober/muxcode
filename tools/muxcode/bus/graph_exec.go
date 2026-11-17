@@ -1265,9 +1265,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 			deferDispatch(session, run, n, st, fmt.Errorf("%w: %s", errRoleReloading, n.Role))
 			return
 		}
-		msg := seedVerdictToken(n.Action, interpolateGraphMessage(session, run, n.Message, ""))
-		m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
-		m.GraphRun, m.GraphNode = run.ID, n.ID
+		m := graphSendMessage(session, run, n)
 		if err := SendNoCC(session, m); err != nil {
 			if errors.Is(err, ErrSendSuppressed) {
 				taskID := m.ID // suppressed = duplicate exists; adopt it only if it is this node's — see doc comment
@@ -1402,6 +1400,14 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 	}
 }
 
+// graphSendMessage builds a send node's dispatch, carrying its run and node.
+func graphSendMessage(session string, run *GraphRun, n *Node) Message {
+	msg := seedVerdictToken(n.Action, interpolateGraphMessage(session, run, n.Message, ""))
+	m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
+	m.GraphRun, m.GraphNode = run.ID, n.ID
+	return m
+}
+
 // deferDispatch leaves a ready spawn or map node ready while another node of
 // its run holds the run's worker (errRunWorkerBusy) — the competing nodes run
 // one after the other on the one worker, each harvesting its own seed — or
@@ -1477,6 +1483,100 @@ func taskEndReason(task Task, now int64) string {
 	}
 	return fmt.Sprintf("dispatch cleared by a relaunch — %s, %ds into its %ds allowance, before any answer",
 		task.ClearedBy, now-task.SentAt, task.Timeout)
+}
+
+// explicitTimeoutReason is the output of a node failed at its explicit
+// timeout_secs. A send node whose current dispatch a relaunch cleared — a
+// mutation held for a late answer that never came — names that relaunch, as
+// the implicit deadline does through continueAfterRelaunch; otherwise the
+// explicit deadline, checked first in harvestRunningNode, would hide it behind
+// a bare "node timeout" (MUX-196 review).
+func explicitTimeoutReason(session string, n *Node, st *GraphNodeStatus, now int64) string {
+	if n.Type == NodeSend {
+		if task, err := ReadTask(session, st.TaskID); err == nil && task.ClearedBy != "" {
+			return taskEndReason(task, now)
+		}
+	}
+	return "node timeout"
+}
+
+// continueAfterRelaunch keeps a send node whose dispatch a relaunch cleared
+// running while the node's own allowance lasts, and reports whether it did;
+// false leaves the node to fail naming the relaunch. A launch clears only a
+// dispatch no longer waiting in the inbox — consumed by the prior instance, or
+// gone unread (ClearInFlightTasksForRole) — so the relaunched agent will never
+// see it: the node re-sends it on a task holding what is left of the
+// allowance (graph-dispatch-resent). A mutation — a node the gate rule guards
+// (nodeRequiresGate: git, tracker writes) or a deploy — is held for a late
+// answer instead (graph-dispatch-held): the dead instance may have half-run
+// it, and a second send could repeat it with no human asked. Before MUX-196
+// every cleared dispatch failed its node on the spot, 250 s into a 3600 s
+// ci-watch.
+func continueAfterRelaunch(session string, run *GraphRun, n *Node, st *GraphNodeStatus, task Task, now int64) bool {
+	started := st.StartedAt
+	if started == 0 {
+		started = task.SentAt
+	}
+	limit := int64(nodeTimeoutSecs(n))
+	if now-started >= limit {
+		return false
+	}
+	if nodeRequiresGate(n) || isDeployNode(n) {
+		if !slices.Contains(st.ClearedTasks, task.ID) {
+			_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) { s.ClearedTasks = append(s.ClearedTasks, task.ID) })
+			st.ClearedTasks = append(st.ClearedTasks, task.ID)
+			LogLifecycle(session, "warn", "daemon", "graph-dispatch-held", fmt.Sprintf(
+				"%s: %s — agent relaunched: %s; its %s dispatch %s is a mutation the dead instance may have half-run, not re-sent — waiting up to %ds for its answer",
+				run.ID, n.ID, task.ClearedBy, n.Action, task.ID, limit-(now-started)))
+		}
+		return true
+	}
+	if roleReloading(session, n.Role) {
+		return true
+	}
+	m := graphSendMessage(session, run, n)
+	if err := SendNoCC(session, m); err != nil {
+		if errors.Is(err, ErrSendSuppressed) {
+			return true // another request holds (to, action); retried each tick within the allowance
+		}
+		finishNode(session, run, n, OutcomeFailure, fmt.Sprintf("re-send after %s failed: %v", task.ClearedBy, err))
+		return true
+	}
+	_ = CreateTask(session, m, int(limit-(now-started)))
+	_ = MutateNodeStatus(session, run.ID, n.ID, func(s *GraphNodeStatus) {
+		s.TaskID = m.ID
+		s.ClearedTasks = append(s.ClearedTasks, task.ID)
+		s.Redrives, s.LastRedrive = 0, 0
+	})
+	LogLifecycle(session, "info", "daemon", "graph-dispatch-resent", fmt.Sprintf(
+		"%s: %s — agent relaunched: %s; dispatch %s cleared %ds into its %ds allowance, re-sent as %s",
+		run.ID, n.ID, task.ClearedBy, task.ID, now-started, limit, m.ID))
+	return true
+}
+
+// adoptLateAnswerToCleared finishes a send node on a late answer to a
+// dispatch a relaunch cleared — a resumed agent can still answer what its
+// prior instance consumed — and reports whether it did. The node's current
+// dispatch is expired, and withdrawn from the inbox if not yet read, so it is
+// not worked twice. It is asked whether the current dispatch is in flight or
+// itself cleared: after a second relaunch the re-send may be held (a reload
+// marker, a suppressed send) while the first dispatch's answer has arrived,
+// and the node must finish on it rather than time out or send a third.
+func adoptLateAnswerToCleared(session string, run *GraphRun, n *Node, st *GraphNodeStatus, current Task) bool {
+	for _, id := range st.ClearedTasks {
+		old, err := ReadTask(session, id)
+		if err != nil || old.Status != TaskCompleted || sendResponseIsNonResult(session, old) {
+			continue
+		}
+		if _, read := ReadReceipt(session, current.ID); !read {
+			_, _ = ConsumeByID(session, WindowForRole(current.To), current.ID)
+		}
+		_ = expireTaskBecause(session, current.ID, "superseded by the late answer to "+old.ID)
+		outcome, output := deriveSendOutcome(session, n, st, old)
+		finishNode(session, run, n, outcome, output)
+		return true
+	}
+	return false
 }
 
 // errRoleReloading defers a send node while its role's agent is being reloaded.
@@ -1607,7 +1707,7 @@ func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *Gr
 		return
 	}
 	if n.TimeoutSec > 0 && st.StartedAt > 0 && now-st.StartedAt > int64(n.TimeoutSec) {
-		finishNode(session, run, n, OutcomeFailure, "node timeout")
+		finishNode(session, run, n, OutcomeFailure, explicitTimeoutReason(session, n, st, now))
 		return
 	}
 
@@ -1630,8 +1730,17 @@ func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *Gr
 			outcome, output := deriveSendOutcome(session, n, st, task)
 			finishNode(session, run, n, outcome, output)
 		case TaskTimedOut, TaskFailed:
+			if adoptLateAnswerToCleared(session, run, n, st, task) {
+				return
+			}
+			if task.Status == TaskTimedOut && task.ClearedBy != "" && continueAfterRelaunch(session, run, n, st, task, now) {
+				return
+			}
 			finishNode(session, run, n, OutcomeFailure, taskEndReason(task, now))
 		default:
+			if adoptLateAnswerToCleared(session, run, n, st, task) {
+				return
+			}
 			if TaskExpired(task, now) {
 				finishNode(session, run, n, OutcomeFailure, "task expired")
 				return

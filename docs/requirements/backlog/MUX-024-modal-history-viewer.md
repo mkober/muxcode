@@ -1,5 +1,7 @@
 # Modal: History Viewer
 
+**Tracking:** [mkober/muxcode#24](https://github.com/mkober/muxcode/issues/24)
+
 Full-screen modal for browsing agent command history with filtering, search, and detail expansion. Replaces the `muxcode history <role>` CLI output with an interactive navigable view.
 
 **Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)
