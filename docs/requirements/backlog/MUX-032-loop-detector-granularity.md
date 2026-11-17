@@ -106,6 +106,23 @@ A detector that is almost always wrong trains the operator to dismiss it. The ge
 
 Filed by the plan agent on 2026-08-24 from an edit-relayed, user-approved brief documenting three same-day false positives. The MUX-032 id was freed by renumbering the delivered agent-mode spec to MUX-102.
 
+## Findings at selection (2026-11-17) — parked, not activated
+
+`55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` reached this spec at
+rank 25. Plan read it end to end against `bus/guard.go` at `51d43ec` and did not activate it.
+
+| Spec says | Tree today |
+|-----------|------------|
+| The ping-pong pass counts a request and its correlated reply as pongs | **Fixed since, differently.** A ping-pong chain must now be homogeneous in message type — a request mixed with a response is a question and its answer — after the same false alert recurred on 2026-09-14. Pinned by `TestDetectMessageLoop_DelegationIsNotPingPong`, with all-request and all-response chains as its negative controls |
+| The three 2026-08-24 alerts (`4x` each) | Each was two requests plus their two replies. Under the homogeneous rule none of them reaches the threshold: the tuple pass counts requests only, and none had four |
+| The tuple pass cannot tell distinct delegations from a repeated one | **Still true.** It counts `(from, to, action)` with no regard to content. No observed alert on record comes from it |
+| Phase 2's design: exempt a response by its `ReplyTo` | Superseded by the type rule |
+
+**Why parked.** The defect as observed is already fixed. What is left — a content-aware tuple pass —
+would now be built against a false positive nobody has recorded, and Phases 1 and 2 as written pin
+and then fix behaviour that no longer exists. Whether to keep the remainder, and on what evidence,
+is a scoping decision for the user.
+
 ## Status
 
-Backlog
+**Backlog** — 0/22, parked 2026-11-17 at selection; see the findings above.

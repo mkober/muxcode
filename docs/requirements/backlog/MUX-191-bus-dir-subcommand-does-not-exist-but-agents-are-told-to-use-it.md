@@ -93,9 +93,19 @@ better contract.
 
 - Changing `BusDir()`'s location.
 
+## Findings at selection (2026-11-17) — parked, not activated
+
+`55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` reached this spec at
+rank 30. **The defect as titled no longer exists:** `muxcode bus-dir` is a real subcommand since
+[MUX-208](../completed/MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md) — plan ran
+it today and it prints the session's bus directory — and `agents/log-watcher.md:95` and
+`agents/dev-server.md:37`, `:67` call it as `${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}`. Plan did not
+read the rest of this spec's criteria against the tree. Parked rather than worked: closing a spec as
+overtaken is the user's call.
+
 ## Status
 
-Backlog
+Backlog — parked 2026-11-17 at selection; see the findings above.
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from the session notes; absence of the
 subcommand and the two references verified the same day. Not started.

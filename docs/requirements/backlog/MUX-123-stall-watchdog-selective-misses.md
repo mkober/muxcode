@@ -167,6 +167,24 @@ location.
 | Debugging with `lifecycle show` | It produced the false premise that started this | MUX-124, and parse the raw log meanwhile |
 | An always-firing watchdog | Redriving working agents is its own failure | Negative control |
 
+## Findings at selection (2026-11-17) — parked, not activated
+
+`55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` reached this spec as its
+best-ranked unparked row (rank 21). Plan read it end to end against the tree at `51d43ec` and did not
+activate it.
+
+| Spec needs | Today |
+|------------|-------|
+| Phase 1 reconstructs three stalls of 2026-08-28 from the raw lifecycle log | The session's log now begins 2026-10-21 (5066 rows); those episodes are gone |
+| The gate chain in `checkStalledTasks` as tabled above | Reworked since: the pane gate is `PaneShowsRecoverableIdle` (MUX-171), a busy pane is skipped and logged once (`stall-skipped-busy`), the executor re-drives its own dispatches, and since MUX-232 the watchdog re-drives one stalled task first with its full request |
+| The spawn-role pane question | Still unanswered; MUX-120, which it leans on, is parked |
+| `scripts/test-stall-redrive.sh` | Does not exist. `scripts/test-stall-redrive-busy.sh` does, and fails ([MUX-212](./MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md)) |
+
+**Why parked.** The first criterion — each of the three observed misses explained by a named gate,
+with evidence — cannot be met: the evidence no longer exists, and the fix is defined as whatever
+that evidence points at. It needs fresh misses to investigate, or the user's word to re-scope it
+around today's watchdog.
+
 ## Status
 
-Backlog
+**Backlog** — 0/22, parked 2026-11-17 at selection; see the findings above.
