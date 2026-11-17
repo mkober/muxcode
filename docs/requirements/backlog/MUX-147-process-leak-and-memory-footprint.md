@@ -103,7 +103,7 @@ choice, fewer resident agents) is not yet established.
 
 **What this spec no longer carries (2026-11-15).** The user decided, relayed by edit
 (`1794787239-edit-1aacf9a4`), that this spec's reaper phases point to
-[MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) — the reaper for every process
+[MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) — the reaper for every process
 family — and that this spec keeps only its harness-specific half: the integration scripts' own
 cleanup, the harness self-exit question (Decision 1 below, still open) and the footprint. Twenty
 items are ticked below as deferred, not done. Two things differ where they landed: MUX-184 proves
@@ -114,14 +114,14 @@ the source: the daemon stops its harness on TERM/INT.
 
 **Reaping**
 
-- [x] Orphaned harness processes are reaped automatically without human intervention — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] The reaper identifies orphans by **parentage and session liveness**, never by process name alone — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md), whose proof rule replaces this predicate
-- [x] A live prompt agent with a healthy parent is **never** killed (negative control) — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] A harness process whose `BUS_SESSION` tmux session no longer exists is reaped — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Orphaned harness processes are reaped automatically without human intervention — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] The reaper identifies orphans by **parentage and session liveness**, never by process name alone — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md), whose proof rule replaces this predicate
+- [x] A live prompt agent with a healthy parent is **never** killed (negative control) — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] A harness process whose `BUS_SESSION` tmux session no longer exists is reaped — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [ ] Integration test scripts clean up their own harness processes on exit, including on failure and interrupt
-- [x] Each reap emits a lifecycle event naming the pid, session and age — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) (`orphan-reaped`)
-- [x] The reaper is opt-out via an env var, consistent with the other daemon watchdogs — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) (`MUXCODE_ORPHAN_REAP=0`)
-- [x] Reaping never touches a process belonging to a *different, live* muxcode session — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Each reap emits a lifecycle event naming the pid, session and age — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (`orphan-reaped`)
+- [x] The reaper is opt-out via an env var, consistent with the other daemon watchdogs — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (`MUXCODE_ORPHAN_REAP=0`)
+- [x] Reaping never touches a process belonging to a *different, live* muxcode session — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 
 **Footprint**
 
@@ -185,18 +185,18 @@ kills processes started under the script's scratch `BUS_SESSION`, firing on `EXI
 
 Deferred whole to MUX-184 on 2026-11-15 (see "What this spec no longer carries").
 
-- [x] Decide between daemon sweep, startup sweep, or both (see [Technical approach](#technical-approach)) — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) (its Decision 2: at every session launch)
-- [x] Define the orphan predicate precisely — parentage, session liveness, age threshold — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) (its Decision 1)
-- [x] Confirm the predicate cannot match a live prompt agent or a peer session's process — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] Record the decision and its rationale in this spec — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md), where it is recorded
+- [x] Decide between daemon sweep, startup sweep, or both (see [Technical approach](#technical-approach)) — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (its Decision 2: at every session launch)
+- [x] Define the orphan predicate precisely — parentage, session liveness, age threshold — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (its Decision 1)
+- [x] Confirm the predicate cannot match a live prompt agent or a peer session's process — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Record the decision and its rationale in this spec — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md), where it is recorded
 
 ### Phase 3: Implement reaping
 
 The first three steps are deferred to MUX-184; the script cleanup stays here.
 
-- [x] Implement the orphan predicate with unit tests, including the live-agent negative control — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] Add the daemon reaper check with an opt-out env var — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] Emit a lifecycle event per reap (pid, session, age, reason) — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Implement the orphan predicate with unit tests, including the live-agent negative control — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Add the daemon reaper check with an opt-out env var — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Emit a lifecycle event per reap (pid, session, age, reason) — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [ ] Add `trap`-based cleanup to the leaking integration scripts
 - [ ] Add a shared cleanup helper under `scripts/lib/` so new scripts inherit it
 - [ ] Verify a full test-suite run leaves zero orphaned processes
@@ -226,12 +226,12 @@ Each option gets measured savings and a stated trade-off — no option is adopte
 ### Phase 6: Integration test
 
 - [ ] Create `scripts/test-process-reaper.sh` (hermetic; private tmux server via `TMUX_TMPDIR`, scratch `BUS_SESSION`)
-- [x] Test: a deliberately orphaned harness process (parent killed) is reaped within one sweep — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) (`scripts/test-orphan-reaper.sh`)
-- [x] Test: a lifecycle event is emitted naming pid, session and age — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] **Negative control:** a *live* harness process with a healthy parent survives the sweep — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] **Negative control:** a harness process belonging to a different, still-live scratch session is not reaped — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] Test: a process whose `BUS_SESSION` tmux session was killed is reaped by the startup sweep — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
-- [x] Test: the opt-out env var fully disables reaping — deferred to [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Test: a deliberately orphaned harness process (parent killed) is reaped within one sweep — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (`scripts/test-orphan-reaper.sh`)
+- [x] Test: a lifecycle event is emitted naming pid, session and age — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] **Negative control:** a *live* harness process with a healthy parent survives the sweep — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] **Negative control:** a harness process belonging to a different, still-live scratch session is not reaped — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Test: a process whose `BUS_SESSION` tmux session was killed is reaped by the startup sweep — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
+- [x] Test: the opt-out env var fully disables reaping — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [ ] Test: a scratch integration script that is interrupted mid-run leaves zero orphans
 - [ ] Coverage floor keeps a skipped section from reporting green
 - [ ] Run the script and verify all checks pass

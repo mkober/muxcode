@@ -10,27 +10,39 @@ import (
 )
 
 // Cleanup handles the "muxcode cleanup" subcommand.
-// Usage: muxcode cleanup [--dry-run] [--all] [--age N] [--claude] [session]
+// Usage: muxcode cleanup [--dry-run] [--all] [--age N] [--claude] [--session S | session]
 //
 // Without flags, removes stale muxcode session artifacts (bus dirs, preview
 // files, trigger files, spawn dirs, log files) for sessions whose tmux
-// session no longer exists. Skips the current session.
+// session no longer exists. Skips the current session. A stale session's
+// processes are reaped first; a bus dir whose processes could not all be
+// proved and reaped is left in place and reported.
 //
 // Flags:
 //
-//	--dry-run  Preview what would be removed without deleting
-//	--all      Include the current session's artifacts
-//	--claude   Also clean stale Claude Code /tmp/claude-* session dirs
-//	--age N    Max age in days for Claude Code sessions (default 7)
+//	--dry-run    Preview what would be reaped and removed without doing it
+//	--all        Include the current session's artifacts
+//	--session S  Clean session S alone, its own name included, once tmux no
+//	             longer lists it — the session-closed hook's form (MUX-184)
+//	--claude     Also clean stale Claude Code /tmp/claude-* session dirs
+//	--age N      Max age in days for Claude Code sessions (default 7)
 func Cleanup(args []string) {
 	dryRun := false
 	includeActive := false
 	cleanClaude := false
 	ageDays := 7
+	only := ""
 	var positional []string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--session":
+			if i+1 >= len(args) || args[i+1] == "" {
+				fmt.Fprintf(os.Stderr, "--session needs a session name\n")
+				os.Exit(1)
+			}
+			i++
+			only = args[i]
 		case "--dry-run":
 			dryRun = true
 		case "--all":
@@ -60,8 +72,13 @@ func Cleanup(args []string) {
 		session = bus.BusSession()
 	}
 
-	// Muxcode session cleanup
-	result, err := bus.CleanupStale(session, dryRun, includeActive)
+	var result *bus.CleanupResult
+	var err error
+	if only != "" {
+		result, err = bus.CleanupSession(only, dryRun)
+	} else {
+		result, err = bus.CleanupStale(session, dryRun, includeActive)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

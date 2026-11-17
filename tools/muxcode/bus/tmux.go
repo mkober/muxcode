@@ -282,9 +282,22 @@ func TmuxSetWindowOption(target, key, value string) error {
 	return TmuxRun("set-option", "-w", "-t", target, key, value)
 }
 
-// TmuxSetHook sets a tmux session hook.
-func TmuxSetHook(session, hook, cmd string) error {
-	return TmuxRun("set-hook", "-t", session, hook, cmd)
+// SessionClosedHook is the global session-closed hook slot muxcode owns —
+// indexed, so each launch rewrites the one slot rather than appending a copy.
+const SessionClosedHook = "session-closed[184]"
+
+// SessionClosedCleanup is the command that hook runs: `muxcode cleanup
+// --session` for the session that closed, its name shell-quoted by tmux.
+const SessionClosedCleanup = "run-shell 'muxcode cleanup --session #{q:hook_session_name}'"
+
+// InstallSessionClosedHook installs SessionClosedCleanup as a global hook on
+// the server. A session-scoped session-closed hook never fires — tmux runs
+// none for the session it is destroying (tmux 3.8, measured for MUX-184) — so
+// before this the close hook never ran at all; the global hook fires for
+// every session that closes and names it in #{hook_session_name}. A session
+// with no bus dir cleans nothing.
+func InstallSessionClosedHook() error {
+	return TmuxRun("set-hook", "-g", SessionClosedHook, SessionClosedCleanup)
 }
 
 // TmuxUnsetGlobalHook unsets a global tmux hook.

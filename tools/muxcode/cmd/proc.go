@@ -10,6 +10,19 @@ import (
 )
 
 // Proc handles the "muxcode proc" subcommand.
+// procExecHeld is StartProc's internal launcher, `proc exec-held <owners-dir>
+// <id> -- <argv…>`: it takes the proc's owner lock and execs argv in its place
+// (bus.ExecHoldingOwnerLock). Not a user command.
+func procExecHeld(args []string) {
+	if len(args) < 4 || args[2] != "--" {
+		fmt.Fprintf(os.Stderr, "Usage: muxcode proc exec-held <owners-dir> <id> -- <command...>\n")
+		os.Exit(2)
+	}
+	err := bus.ExecHoldingOwnerLock(args[0], args[1], args[3:])
+	fmt.Fprintf(os.Stderr, "proc exec-held: %v\n", err)
+	os.Exit(127)
+}
+
 func Proc(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: muxcode proc <start|list|status|log|stop|clean> [args...]\n")
@@ -32,6 +45,8 @@ func Proc(args []string) {
 		procStop(subArgs)
 	case "clean":
 		procClean(subArgs)
+	case "exec-held":
+		procExecHeld(subArgs)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown proc subcommand: %s\n", subcmd)
 		fmt.Fprintf(os.Stderr, "Usage: muxcode proc <start|list|status|log|stop|clean> [args...]\n")

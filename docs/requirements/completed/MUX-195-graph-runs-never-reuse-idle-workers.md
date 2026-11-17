@@ -103,7 +103,7 @@ Four roads, one symptom:
   several runs pays it per run.
 - Stranded windows accumulate for the life of the session, each a live Claude process — the
   footprint concern of [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md) and
-  [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md), from a different road.
+  [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md), from a different road.
 - F-key reach: spawn windows sit at index 11+, so only the first two are F-key reachable
   ([MUX-128](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md)); a pool that grows makes that worse.
 - Cancel cost: a run with N workers needs N stops (`1791086572`, two `spawn-stop`s); a stop that fails
@@ -335,7 +335,7 @@ runs on the lanes it got, and `muxcode spawn start` fails with the reason and th
 | [MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — a seeded worker never woken; not merged, a delivery defect rather than a count defect |
 | [MUX-188](../backlog/MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Same family — a side effect of each launch; fewer launches means fewer stray requests, but it is its own fix |
 | [MUX-128](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md) | Fewer worker windows is what makes its F11/F12 question tractable |
-| [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md), [MUX-184](../backlog/MUX-184-orphaned-session-processes-never-reaped.md) | Same footprint, different roads |
+| [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md), [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) | Same footprint, different roads |
 | [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | Why a worker ends unanswered; graph workers run in the session checkout, so adoption does not cross trees |
 
 ## Out of scope

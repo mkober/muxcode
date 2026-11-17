@@ -234,8 +234,9 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 		}
 	}
 
-	// Kill stale daemon/monitor processes
-	killStaleProcesses(session)
+	if err := PrepareSessionLaunch(session); err != nil {
+		return err
+	}
 
 	// Start daemon and monitor as detached background processes
 	daemonPID, err := startDetachedProcess("muxcode", "watch", session)
@@ -316,9 +317,9 @@ func LaunchSession(cfg *LauncherConfig, projectDir, session string) error {
 	// Configure status bar
 	ConfigureStatusBar(session)
 
-	// Register cleanup hook
-	TmuxSetHook(session, "session-closed",
-		fmt.Sprintf("run-shell 'muxcode cleanup %s'", session))
+	if err := InstallSessionClosedHook(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: install session-closed cleanup hook: %v\n", err)
+	}
 
 	// Start background window resize as detached process (survives syscall.Exec)
 	startDetachedProcess("muxcode", "launch", "--resize", session)
@@ -512,27 +513,6 @@ func sendCommand(target, command string) {
 	TmuxSendKeys(target, command)
 	time.Sleep(100 * time.Millisecond)
 	TmuxSendEnter(target)
-}
-
-// killStaleProcesses kills stale daemon/monitor processes from previous sessions.
-func killStaleProcesses(session string) {
-	// Anchor patterns with $ to avoid "watch SESSION" matching "watch --monitor SESSION"
-	patterns := []struct {
-		pattern string
-		label   string
-	}{
-		{"muxcode watch --monitor " + session + "$", "monitor"},
-		{"muxcode watch " + session + "$", "daemon"},
-	}
-	for _, p := range patterns {
-		cmd := exec.Command("pkill", "-f", p.pattern)
-		if cmd.Run() == nil {
-			LogLifecycle(session, "info", "launcher", "stale-kill",
-				fmt.Sprintf("Killed stale %s for %s", p.label, session))
-		}
-	}
-	// Let old processes exit before starting new ones
-	time.Sleep(100 * time.Millisecond)
 }
 
 // startDetachedProcess starts a process in a new session (detached from terminal).

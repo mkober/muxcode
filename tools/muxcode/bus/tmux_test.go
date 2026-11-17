@@ -160,12 +160,15 @@ func TestTmuxSetEnv(t *testing.T) {
 	}
 }
 
-func TestTmuxSetHook(t *testing.T) {
+// TestInstallSessionClosedHook pins the close hook to a global, indexed slot
+// running cleanup for the session tmux names — a session-scoped hook never
+// fires for the session being destroyed (MUX-184).
+func TestInstallSessionClosedHook(t *testing.T) {
 	cap := setupTmuxCapture(t)
-	TmuxSetHook("s", "session-closed", "run-shell 'cleanup s'")
-	args := cap.calls[0]
-	if args[0] != "set-hook" || args[4] != "run-shell 'cleanup s'" {
-		t.Errorf("unexpected args: %v", args)
+	_ = InstallSessionClosedHook()
+	want := []string{"set-hook", "-g", "session-closed[184]", "run-shell 'muxcode cleanup --session #{q:hook_session_name}'"}
+	if strings.Join(cap.calls[0], "|") != strings.Join(want, "|") {
+		t.Errorf("args %q, want %q", cap.calls[0], want)
 	}
 }
 

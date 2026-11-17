@@ -142,6 +142,7 @@ func inboxPoll(session, role, from string, raw bool, timeout int, loop bool) {
 		return
 	}
 	defer bus.ClearPolling(session, role)
+	defer bus.HoldOwnerLock(session, bus.OwnerFamilyListener, role)()
 	parent := os.Getppid()
 
 	triggerPath := bus.TriggerNotifyPath(session, role)

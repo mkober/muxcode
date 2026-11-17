@@ -391,6 +391,8 @@ muxcode upgrade-daemons [--dry-run] [--force] [--session <name>]
 - Long-lived daemons keep executing the code loaded at their launch — a `make install` that fixes daemon behavior does not reach already-running sessions until they cycle. This command discovers every running `muxcode watch` daemon and monitor process (across all sessions on the machine via `ps`, or via held owner locks when `ps` cannot run — below) and re-launches each from the binary currently on `PATH`.
 - Per session, the **monitor is killed first** (so it cannot resurrect the old daemon mid-cycle), then the daemon, then both are relaunched. Kills use `SIGTERM` with a 2s grace period, escalating to `SIGKILL`.
 - **Orphan cleanup**: daemons whose tmux session no longer exists are killed without relaunch (logged as `daemon-orphan-killed`). Successful upgrades log `daemon-upgraded`.
+- **A killed daemon stops its harness first** (MUX-184). The daemon traps `SIGTERM` and `SIGINT`: it stops the headless prompt harness it started — by its own process handle, and any harness its owner locks prove — with TERM, 1.5 s, then KILL, logs `daemon-stopped`, releases its locks and exits. The relaunched daemon starts a fresh harness. Before this, the `SIGTERM` this command sends orphaned the harness to pid 1 on every upgrade. Background `muxcode proc` children are not the daemon's — the CLI starts them — and are left running. A `SIGKILL` gives the daemon no chance; its harness is then found by the orphan reaper through its owner lock.
+- **A daemon whose session is gone ends itself** (MUX-184). Every 10 s, once it has recorded its tmux server's socket, the daemon asks that server whether its session still exists (`checkSessionGone`, `bus.SessionPositivelyGone`). On a positive "no" it stops its harness, reaps the session's other processes through the orphan reaper, logs `daemon-session-gone` and exits — so an orphaned daemon no longer waits for the next `./build.sh` to be killed here as `daemon-orphan-killed`. An unanswered probe, a missing socket record or another server's record all read as "not gone". `MUXCODE_ORPHAN_REAP=0` turns the check off. It leaves the bus directory in place; removing it is the close hook's or `muxcode cleanup`'s.
 - `--dry-run` (`-n`) — list the daemons that would be restarted (and orphans that would be killed) without touching any process.
 - **Version-aware**: each daemon records its build identity in `daemon.version` at startup, and one already on this binary's build (version, commit **and** build date, so a dirty-tree rebuild still cycles) is **skipped**. `--dry-run` names both sides per session (`daemon vA → installed vB`), so a stale session is visible at a glance.
 - `--force` — cycle every discovered daemon even when its recorded build already matches the installed one.
@@ -484,13 +486,29 @@ Runs in the `status` window (F9). Hotkeys: `r` opens the Remote session browser 
 
 ### `muxcode cleanup`
 
-Remove the ephemeral bus directory and trigger files.
+Reap the processes of dead sessions, then remove their bus directories and trigger files.
 
 ```bash
-muxcode cleanup [session]
+muxcode cleanup [session] [--dry-run] [--all] [--claude [--age <days>]]
+muxcode cleanup --session <name> [--dry-run]
 ```
 
-Removes `$MUXCODE_BUS_DIR/` and `/tmp/muxcode-analyze-{SESSION}.trigger`. Called automatically by the tmux session-closed hook.
+| Form | What it cleans |
+|------|----------------|
+| `muxcode cleanup [session]` | Every session tmux no longer lists — **except** the one named (default: the caller's own), which is treated as the current session and skipped. `--all` includes it |
+| `muxcode cleanup --session <name>` | That session alone, its own name included, once tmux no longer lists it. This is what the tmux close hook runs (`bus.CleanupSession`). The hook is a **global** one, `session-closed[184]`, installed on the tmux server at every launch (`bus.InstallSessionClosedHook`): `muxcode cleanup --session #{q:hook_session_name}`. It fires for every session that closes on that server, muxcode's or not; one with no bus directory cleans nothing. Before [MUX-184](requirements/completed/MUX-184-orphaned-session-processes-never-reaped.md) the hook was set on the session itself, and **never fired**: tmux runs no session-scoped `session-closed` hook for the session it is destroying (measured on tmux 3.8). Had it fired, it ran the first form with the closing session's name, which skips that session. So until MUX-184 nothing was ever cleaned at close |
+| `--claude [--age <days>]` | Also removes Claude Code's own `/tmp` directories older than `<days>` (default 7) — files only, unrelated to the reaper |
+
+**Processes before files.** Removing a bus directory while its daemon lives is undone — the daemon recreates it. So before any removal the sessions being cleaned are passed to the orphan reaper (`ReapOrphans`, scoped to those sessions — no `escabs` servers and no session-less orphans from this road), which kills only what it can prove a dead session owns: a held owner lock, or an argv naming the session, for a session whose recorded tmux server reports it absent. Monitor first, then daemon, then the rest.
+
+| Outcome for a dead session | Reported as | Lifecycle row (source `cleanup`) |
+|----------------------------|-------------|----------------------------------|
+| Every process proved and gone | The bus directory, the session's trigger and preview files and its spawn worktrees are removed | `session-cleanup` (info) |
+| Anything the reaper left unresolved for it — a process still alive behind a lock or an argv, a process it could not prove (a `proc.jsonl` entry with no lock), or a kill that failed (a process group that outlived KILL) | `Left N bus directory(s) in place — processes still running that could not be proved and reaped:` with each one named. **The whole session is held**, not only its bus directory: its spawn worktrees and its trigger and preview files stay too | `session-cleanup-held` (warn) |
+
+**Closing a session now deletes its bus directory.** Because the close hook works, `tmux kill-session` on a muxcode session reaps its daemon and harness and then removes everything under its bus directory — inboxes, history, the task store, runtime provider overrides (`config/*.env`), the active-spec pointer and the graph run store (`graphs/`), parked runs included. Before MUX-184 all of that survived a `kill-session` and a relaunch of the same name picked it up ([Session re-init](architecture.md#session-re-init)). It still survives a tmux **server** crash or `kill-server`, where no hook runs, and it is kept when a process of the session could not be proved and reaped. Memory files are elsewhere and are not touched.
+
+`--dry-run` prints the plan — `Would reap …`, then what would be removed — and sends no signal and writes no row. The daemon's disk-pressure cleanup takes the same road. The reaper's own rows (`orphan-reaped`, `orphan-unproven`, `orphan-kill-failed`) are in the [event catalog](#muxcode-lifecycle); the proof rule is in [Architecture](architecture.md#what-a-closed-session-leaves-behind-and-the-orphan-reaper).
 
 ### `muxcode notify`
 
@@ -1560,7 +1578,13 @@ muxcode lifecycle purge [--days N]
 |--------|-------|-------|------|
 | launcher | session-start | info | `LaunchSession()` begins |
 | launcher | bus-init | info | `muxcode init` completes |
-| launcher | stale-kill | info | Killed stale daemon or monitor |
+| launcher | launch-blocked | error | The launch was stopped: a daemon or monitor of this session name survived the orphan sweep and could not be proved this server's — the detail names each pid and why. Replaces `stale-kill`, the name-matched kill removed by MUX-184 |
+| reaper | orphan-reaped | info | A dead session's process was killed and confirmed gone: `session= family= pid= proof=` |
+| reaper | escabs-reaped | info | A leftover `tmux -L escabs-<pid>` test server whose launching pid is dead was killed |
+| reaper | orphan-unproven | warn | A process that looks orphaned was left running because nothing proves a dead session owns it: `session= family= pid= reason=` |
+| reaper | orphan-kill-failed | warn | A proven process survived, a signal failed, its proof stopped holding between TERM and KILL, or it was held back behind a surviving monitor or daemon: `… reason=` |
+| reaper | orphan-census-unavailable | warn | `ps` could not run, so the argv census was skipped; owner-lock proofs still ran |
+| reaper | orphan-sweep-skipped | info | The sweep did nothing: `MUXCODE_ORPHAN_REAP=0`, or tmux could not be asked whether sessions are alive |
 | launcher | watcher-start | info | Daemon process launched (with PID) |
 | launcher | monitor-start | info | Monitor process launched (with PID) |
 | launcher | session-create | info | tmux session created (with window list) |
@@ -1598,7 +1622,11 @@ muxcode lifecycle purge [--days N]
 | monitor | session-gone | info | tmux session gone, monitor exiting |
 | monitor | stale-detected | warn | Daemon keepalive stale |
 | monitor | watcher-restart | info | Daemon restarted by monitor |
-| cleanup | session-cleanup | info | Bus directory removed |
+| cleanup | session-cleanup | info | Bus directory removed, after the session's processes were reaped |
+| cleanup | session-cleanup-held | warn | A dead session's bus directory was left in place because a process of it is still running and could not be proved and reaped |
+| daemon | daemon-stopped | info | The daemon received TERM or INT and stopped its harness before exiting (detail: the signal and the pids stopped) |
+| daemon | daemon-session-gone | info | The daemon found its own tmux session positively gone from the server it recorded, reaped that session's processes and exited: `reaped N process(es), N failed, N unproven` |
+| daemon | harness-stop-failed | warn | A harness the daemon tried to stop on shutdown did not go: `<role> pid <pid>: <why>` |
 
 **Rotation:** 1000 entries per file (configurable via `MUXCODE_LIFECYCLE_LOG_MAX` env var).
 
