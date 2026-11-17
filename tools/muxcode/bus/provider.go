@@ -450,15 +450,19 @@ func withReplyInstructions(prompt string, requests []Message) string {
 	}
 	if len(cmds) == 1 {
 		return fmt.Sprintf("IMPORTANT: After completing this task, you MUST run this bash command: %s — ", cmds[0]) +
-			prompt + fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s", cmds[0])
+			prompt + fmt.Sprintf(" — REMINDER: Your FINAL step MUST be to EXECUTE (not print): %s%s", cmds[0], unknownReplyIDNote)
 	}
 	var list strings.Builder
 	for i, c := range cmds {
 		fmt.Fprintf(&list, " [%d] %s", i+1, c)
 	}
 	return fmt.Sprintf("IMPORTANT: This message holds %d requests. After completing them, you MUST run one bash command per request, each naming its own request id:%s — ", len(cmds), list.String()) +
-		prompt + fmt.Sprintf(" — REMINDER: Your FINAL steps MUST be to EXECUTE (not print) every one of these %d replies:%s", len(cmds), list.String())
+		prompt + fmt.Sprintf(" — REMINDER: Your FINAL steps MUST be to EXECUTE (not print) every one of these %d replies:%s%s", len(cmds), list.String(), unknownReplyIDNote)
 }
+
+// unknownReplyIDNote tells an agent what happens to a reply id that names no
+// message (MUX-225). It never spells the flag, which a scripted agent greps for.
+const unknownReplyIDNote = " (copy each request id exactly as written: an id naming no message is attached to your one open request from that requester, or the reply is refused and the right commands printed)"
 
 // buildChainInstruction generates a natural-language chain instruction for
 // a role by reading EventChains config. Returns "" if the role has no chain
