@@ -40,9 +40,8 @@ func ResumeAgent(session, role string, force bool, actor string) error {
 	if !IsKnownRole(role) {
 		return fmt.Errorf("%w: unknown role %q", ErrResumeRefused, role)
 	}
-	if IsHostedRole(role) {
-		host := WindowForRole(role)
-		return fmt.Errorf("%w: %s runs inside %s's pane — use `muxcode resume %s`", ErrResumeRefused, role, host, host)
+	if err := hostedRoleRefusal(role, "resume"); err != nil {
+		return fmt.Errorf("%w: %v", ErrResumeRefused, err)
 	}
 	names, err := TmuxListWindowNames(session)
 	if err != nil {

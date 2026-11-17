@@ -428,6 +428,9 @@ func ReloadAgent(session, role, cli, model string, compact bool) error {
 	if !IsKnownRole(role) {
 		return fmt.Errorf("unknown role: %s", role)
 	}
+	if err := hostedRoleRefusal(role, "reload"); err != nil {
+		return err
+	}
 	if err := RoleWindowMissing(session, role); err != nil {
 		return err
 	}
@@ -456,6 +459,10 @@ func ReloadAgentReserved(session, role string, release func()) error {
 	if !IsKnownRole(role) {
 		release()
 		return fmt.Errorf("unknown role: %s", role)
+	}
+	if err := hostedRoleRefusal(role, "reload"); err != nil {
+		release()
+		return err
 	}
 	if err := RoleWindowMissing(session, role); err != nil {
 		release()

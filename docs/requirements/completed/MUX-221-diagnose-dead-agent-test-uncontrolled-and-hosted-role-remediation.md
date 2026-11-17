@@ -65,7 +65,7 @@ Verified by plan against the tree. Last source edit 1794686506 (`diagnose.go` at
 | The change | `relaunchCommand` (`bus/diagnose.go`): for an `IsHostedRole` role it takes `WindowForRole(role)` as the role to name and `ResolveProvider(host)` as the provider to branch on. A non-hosted role takes the old path unchanged |
 | Why the provider too | `AgentState.Provider` follows the hosted role's own `MUXCODE_<ROLE>_CLI`, not the host's, so the old code could pick the wrong branch as well as the wrong name. Corrected inside `relaunchCommand` only; `CollectAgentState` is left alone |
 | Test cases | `docs` with an OpenCode decoy on a Claude plan → `muxcode resume plan`; `pr-read` with a Claude decoy on a Codex commit → `muxcode reload commit`; a live `docs` → `muxcode resume plan --force`; controls: Claude and Codex `build` unchanged |
-| **The reload branch** | Checked. The remediation text had the same defect — `muxcode reload docs` for a non-Claude hosted role — and is fixed by the same host resolution. But the command it used to name does not refuse: `muxcode reload docs` resolves to plan's window (`RoleWindowMissing`), stops that pane and relaunches it as the docs agent, replacing the planner. That is a defect in reload itself, outside this spec — [MUX-227](../backlog/MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) |
+| **The reload branch** | Checked. The remediation text had the same defect — `muxcode reload docs` for a non-Claude hosted role — and is fixed by the same host resolution. But the command it used to name does not refuse: `muxcode reload docs` resolves to plan's window (`RoleWindowMissing`), stops that pane and relaunches it as the docs agent, replacing the planner. That is a defect in reload itself, outside this spec — [MUX-227](./MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) |
 
 "Running it as written does not refuse" is ticked on a reading of the code, not a run: `ResumeAgent` refuses only an `IsHostedRole` role, and the command now names the host, which is not one. No hosted-role remediation was executed.
 
@@ -92,7 +92,7 @@ The script does not exercise the hosted-role remediation; that stays unit-verifi
 
 - Filed 2026-11-14 by plan from edit's reading of PR #199's post-merge review threads, on the user's standing instruction to file defects found along the way.
 - MUX-006's criterion 4 was amended after close-out to name `muxcode resume <role>`; the hosted-role case was not considered then.
-- 2026-11-14, found by this spec's Phase 1 worker while checking the `muxcode reload <role>` branch: `ReloadAgent` has no hosted-role guard, so `muxcode reload docs` would stop plan's pane and relaunch it as the docs agent. That is a defect in reload, not in `diagnose`'s remediation text; filed as [MUX-227](../backlog/MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) on the user's standing instruction, relayed by edit.
+- 2026-11-14, found by this spec's Phase 1 worker while checking the `muxcode reload <role>` branch: `ReloadAgent` has no hosted-role guard, so `muxcode reload docs` would stop plan's pane and relaunch it as the docs agent. That is a defect in reload, not in `diagnose`'s remediation text; filed as [MUX-227](./MUX-227-reload-of-a-hosted-role-replaces-the-host-agent.md) on the user's standing instruction, relayed by edit.
 
 ## Status
 
