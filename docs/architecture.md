@@ -148,6 +148,16 @@ When the build→test→review chain finishes successfully and an active spec is
 
 A withheld fire writes a `plan-verify-withheld` lifecycle row — `<outcome> <review-id> (<evidence>)` at info, or `unknown <review-id> (<reason>)` at warn — and leaves the movement marker unwritten, so a later passing review still fires. A verdict the gate admits then passes the three MUX-007 controls (pointer resolution, the movement gate, repo-scoped changed files) as before. `ChainShouldNotifyPlan` did not change; it now receives the real outcome, which is what makes `NotifyPlanOn` mean something: `["success"]` withholds a failing review and fires a passing one, `["*"]` fires both, `[]` fires neither.
 
+**A review a graph run dispatched is the run's to verify, not the daemon's** ([MUX-219](requirements/completed/MUX-219-graph-run-review-fires-verify-spec-twice.md)). Before any of the above, the review branch asks whether the reply answers a request stamped with a graph run (`graphOwnedReview`, `daemon/daemon.go`): the reply's `--reply-to` is resolved through the bus log, else the request's task record, to a dispatch carrying `GraphRun`. If it does, the daemon sends plan nothing — whatever the verdict — and writes one `plan-verify-graph-owned` row naming the review id, the run and the node; the movement marker stays unwritten, so a later review outside the run still fires. The run verifies it itself: its `update-spec` node on a passing review, its `fix` node otherwise. The reviewed marker and the `reviewed` transition are unchanged.
+
+| The review reply | Daemon `verify-spec` |
+|------------------|----------------------|
+| Answers a request stamped `GraphRun` | None — `plan-verify-graph-owned` |
+| Answers an unstamped request — a review delegated by hand, **including while a run waits on a gate** | Fires as before; it is the only verification that work gets |
+| Carries no `--reply-to` | Fires as before — it names no request, so it cannot be shown to be graph-owned |
+
+Ownership is the request's stamp, never whether some run happens to be live. Before MUX-219 plan was asked to verify the same review twice in one second — once by this chain, once by the run's `update-spec` — on half the graph verifications of 2026-11-17, and once more on reviews carrying a should-fix whose fix worker was already editing.
+
 Review history rows are deliberately **not** read. A row carries no request or reply id, and review logs after it replies, so the newest row can belong to the previous review: its late success would be handed to a sentinel-less successor, and its late failure would contradict a successor's valid `EXIT=0`. Only the reply's own text is evidence. The gate reads only review replies addressed to edit, which is why a test-chain review request names edit as its reply target (`reply_role`, MUX-213): a chain review then arrives as a `to=edit` reply and the reviewed transition keeps firing. Before MUX-172 the gate was asked about a literal — `ChainShouldNotifyPlan("review", "success")` — so `["success"]` and `["*"]` were indistinguishable and plan was sent to verify specs against reviews that had returned must-fix findings: four times on 2026-09-09, and again on 2026-11-13. Pinned by `daemon/review_verdict_test.go`.
 
 The plan agent then does two things in one pass:

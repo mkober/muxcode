@@ -524,8 +524,13 @@ func (d *Daemon) checkInboxes() {
 						bus.TransitionWorkflow(d.session, bus.StateReviewed, "daemon:review-complete",
 							bus.WithOutcome("review", "complete"))
 
-						outcome, evidence := bus.ReviewReplyOutcome(reply)
-						d.notifyPlanOnReview(reply.ID, outcome, evidence)
+						if run, node, owned := graphOwnedReview(d.session, reply); owned {
+							bus.LogLifecycle(d.session, "info", "daemon", "plan-verify-graph-owned", fmt.Sprintf(
+								"review %s answers graph run %s node %s — the run verifies it; no daemon verify-spec", reply.ID, run, node))
+						} else {
+							outcome, evidence := bus.ReviewReplyOutcome(reply)
+							d.notifyPlanOnReview(reply.ID, outcome, evidence)
+						}
 					}
 				}
 			}
@@ -594,6 +599,28 @@ func (d *Daemon) checkInboxes() {
 // and when the session directory cannot be resolved — falling back to the
 // daemon's cwd there would name a foreign repo's branch and have plan record
 // time against the wrong one.
+// graphOwnedReview reports the graph run and node that dispatched the review
+// reply answers: the request its ReplyTo names, read from the bus log, else
+// from that request's task record. A run owns the review's verification — its
+// update-spec node on success, its fix node otherwise — so the daemon's
+// verify-spec would be a second request for the same work (MUX-219; plan
+// verified each phase of run 1794626267 twice). Ownership is the request's
+// stamp, never whether some run is live: a review edit requests by hand while
+// a run waits on a gate is the only verification that work gets. A reply with
+// no ReplyTo names no request and is not graph-owned.
+func graphOwnedReview(session string, reply bus.Message) (run, node string, owned bool) {
+	if reply.ReplyTo == "" {
+		return "", "", false
+	}
+	if req, ok := bus.FindRequestByID(session, reply.ReplyTo); ok && req.GraphRun != "" {
+		return req.GraphRun, req.GraphNode, true
+	}
+	if t, err := bus.ReadTask(session, reply.ReplyTo); err == nil && t.GraphRun != "" {
+		return t.GraphRun, t.GraphNode, true
+	}
+	return "", "", false
+}
+
 func (d *Daemon) notifyPlanOnReview(reviewID, outcome, evidence string) {
 	if outcome == "" {
 		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-withheld",
