@@ -170,7 +170,7 @@ The plan agent then does two things in one pass:
 | Outcome | What the daemon does |
 |---------|----------------------|
 | The spec moved from `drafts/` to `completed/` | Follows it and logs `spec-repoint` |
-| The file is gone with no `completed/` counterpart | Leaves the pointer, logs `spec-dangling` and tells edit — never silently cleared |
+| The file is gone with no `completed/` counterpart | Leaves the pointer — never silently cleared — and, once it has stayed that way for the debounce, logs `spec-dangling` and tells edit. The debounce (`MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS`, default 30 s; `specDanglingSettled`, MUX-228) counts from the first of consecutive checks that saw this path dangling; a check that finds the file present, or a pointer naming a different path, restarts it. Before it, the first sighting alerted, so a ship raised a false alert in the few seconds between checking out main and the pull that brings a closed-out spec back, and so did a spec moved back to `backlog/` a moment before its pointer changed |
 | No pointer is set, and a running graph run's **frozen** template has `requires_spec` | Logs a `spec-unset-live-run` warn row (detail: the run id) and sends edit one `event` naming the run, at most once per run per 300 s (`alertSpecUnsetLiveRun`, `shouldSendEvent`). The run cannot notice this itself: `spec_phases_remaining` reads "no spec" as "nothing remaining" |
 | No pointer is set and no such run exists | Nothing — an unset pointer is normal |
 

@@ -102,6 +102,9 @@ type Daemon struct {
 
 	lastEventSent map[string]int64 // "action:key" → last send (5-min dedup window)
 
+	specDanglingPath  string    // pointer path last seen dangling; "" when it was not
+	specDanglingSince time.Time // first consecutive sighting of specDanglingPath dangling
+
 	editNotifyCount int   // messages sent to edit in the current budget window
 	editWindowStart int64 // when the current budget window started
 
@@ -706,8 +709,17 @@ func (d *Daemon) notifyPlanOnReview(reviewID, outcome, evidence string) {
 // An unset pointer under a live spec-requiring run is reported too
 // (alertSpecUnsetLiveRun, MUX-168). shouldSendEvent's per-key cooldown keeps
 // a persistent condition from alerting every poll.
+//
+// A dangling pointer is reported only once it has stayed dangling across
+// consecutive checks for specDanglingDebounce (MUX-228): a ship checks out
+// main a few seconds before the pull brings a closed-out spec back, and a
+// spec parked to backlog/ dangles for the moment before its pointer moves.
+// Any other outcome, or a different path, restarts the debounce.
 func (d *Daemon) checkActiveSpec() {
 	res := bus.ReconcileActiveSpec(d.session, bus.SessionRepoDir(d.session))
+	if res.Outcome != bus.SpecPointerDangling {
+		d.specDanglingPath = ""
+	}
 	switch res.Outcome {
 	case bus.SpecPointerRepointed:
 		ts := time.Now().Format("15:04:05")
@@ -715,7 +727,7 @@ func (d *Daemon) checkActiveSpec() {
 		bus.LogLifecycle(d.session, "info", "daemon", "spec-repoint",
 			fmt.Sprintf("%s -> %s", res.Path, res.NewPath))
 	case bus.SpecPointerDangling:
-		if d.shouldSendEvent("spec-dangling", res.Path) {
+		if d.specDanglingSettled(res.Path) && d.shouldSendEvent("spec-dangling", res.Path) {
 			bus.LogLifecycle(d.session, "warn", "daemon", "spec-dangling", res.Path)
 			if d.shouldNotifyEdit("event") {
 				msg := bus.NewMessage("daemon", "edit", "event", "spec-dangling",
@@ -728,6 +740,34 @@ func (d *Daemon) checkActiveSpec() {
 	case bus.SpecPointerUnset:
 		d.alertSpecUnsetLiveRun()
 	}
+}
+
+// specDanglingDebounceDefault is ten times the ~3 s ship gap observed on
+// 2026-11-14, and short against a spec file that is really gone.
+const specDanglingDebounceDefault = 30 * time.Second
+
+// specDanglingDebounce is how long the active-spec pointer must stay dangling
+// before checkActiveSpec reports it: MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS when
+// it is a non-negative integer (0 reports on first sighting, as before
+// MUX-228), else specDanglingDebounceDefault.
+func specDanglingDebounce() time.Duration {
+	if v := os.Getenv("MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return specDanglingDebounceDefault
+}
+
+// specDanglingSettled records path as dangling — starting the debounce when
+// it differs from the path last seen dangling — and reports whether it has
+// now dangled for specDanglingDebounce.
+func (d *Daemon) specDanglingSettled(path string) bool {
+	now := time.Now()
+	if d.specDanglingPath != path {
+		d.specDanglingPath, d.specDanglingSince = path, now
+	}
+	return now.Sub(d.specDanglingSince) >= specDanglingDebounce()
 }
 
 // alertSpecUnsetLiveRun reports an unset pointer while a running graph run

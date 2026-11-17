@@ -58,6 +58,18 @@ MUX-226's fix, and the private-server scripts before it (`test-diagnose-dead-age
 unset `TMUX`, export `TMUX_TMPDIR="$WORK/tmux"` before the first tmux call, `tmux kill-server` in
 the cleanup, and `INT`/`TERM` traps that exit so the cleanup runs on interrupt.
 
+**Two rules for that pattern, both learned on 2026-11-17 — a script that gets them wrong can kill
+the user's own tmux server, which is worse than the leak this spec fixes:**
+
+- **Isolate before any trap is armed.** MUX-228's new script armed its exit trap first; an early
+  exit would have run its cleanup's `kill-server` against the caller's server. Caught in review
+  before it happened.
+- **Kill by socket path, not by environment:** `tmux -S "$TMUX_TMPDIR/tmux-$(id -u)/default"
+  kill-server`, and only if that socket exists. A bare `tmux kill-server` depends on `TMUX_TMPDIR`
+  still naming a directory that exists; when it does not, tmux falls back to the real socket
+  (MUX-226's harness met exactly this). Most of the existing private-server scripts use the bare
+  form; a shared helper written here should use the by-path form, and they can adopt it.
+
 ## Requirements
 
 ### Acceptance criteria

@@ -129,16 +129,14 @@ criteria and phases rewritten to them:
 | 31 | 6 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every spawn worker launch sends edit a stray self-addressed `startup` request | Low | — |
 | 32 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
 | 33 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
-| 34 | 6 | [`MUX-228`](./MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` alerts on the transient gap during a ship merge | Low | — |
-| 35 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
-| 36 | 6 | [`MUX-233`](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) | Seventeen hermetic test scripts create their sessions on the user's real tmux server | Medium | ⇄ [MUX-226](../completed/MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) |
+| 34 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
+| 35 | 6 | [`MUX-233`](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) | Seventeen hermetic test scripts create their sessions on the user's real tmux server | Medium | ⇄ [MUX-226](../completed/MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) |
 
 ### Reliability & observability
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` Fails, Passes on Rerun, and Nothing Recorded Which Test Failed | High | ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
-| [`MUX-228`](./MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` Alerts on the Transient Gap During a Ship Merge | Low | — |
 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` Strands a Live Session — Its Monitor and Listeners Exit | Medium | — |
 | [`MUX-233`](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) | Seventeen Hermetic Test Scripts Create Their Sessions on the User's Real tmux Server | Medium | ⇄ [MUX-226](../completed/MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
@@ -393,6 +391,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-212`](../completed/MUX-212-stall-redrive-busy-script-stale-spinner-in-scrollback-pins-pane-busy.md) | `test-stall-redrive-busy.sh` Fails — a Stale Spinner in Scrollback Pins the Pane Busy |
 | [`MUX-222`](../completed/MUX-222-command-runner-executes-one-request-and-replies-to-all.md) | The Run Agent's Definition Executes One Request of a Batch and Replies to All of Them |
 | [`MUX-226`](../completed/MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` Runs on the User's Real tmux Server and May Mix In the Installed Binary |
+| [`MUX-228`](../completed/MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` Alerts on the Transient Gap During a Ship Merge |
 
 ## Ideas without specs
 

@@ -82,6 +82,7 @@ export MUXCODE_BRANCH_TIME_DISABLE=1
 export MUXCODE_DEDUP_WINDOW=0
 export MUXCODE_SESSION_REPO_DIR="$REPO"
 export MUXCODE_FORCE_RESPOND_DISABLE=1
+export MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS=2 # MUX-228's 30 s default outlasts the dangling check's 15 s wait
 
 DPID=""
 cleanup() {
