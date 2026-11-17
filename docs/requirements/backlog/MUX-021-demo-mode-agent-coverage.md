@@ -1,5 +1,7 @@
 # Demo Mode — Agent Coverage Refresh
 
+**Tracking:** [mkober/muxcode#21](https://github.com/mkober/muxcode/issues/21)
+
 Update the `muxcode demo` feature so its scenarios reflect the current agent
 roster and the features added since the original demo-mode spec. The demo today
 showcases only the `edit → build → test → review → commit` cycle and never

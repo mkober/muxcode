@@ -1,5 +1,7 @@
 # GitHub user stats
 
+**Tracking:** [mkober/muxcode#19](https://github.com/mkober/muxcode/issues/19)
+
 Add a GitHub contribution analytics modal triggered from the MuxCode main menu (`prefix + b → <key>`) that displays commit history, code volume, PR activity, and active days — scoped to the current repo or expanded across all repos in the user's account. Also available as a CLI command (`muxcode stats`) for programmatic use by agents.
 
 ## Problem

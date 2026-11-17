@@ -1,5 +1,7 @@
 # Modal: Log Viewer
 
+**Tracking:** [mkober/muxcode#25](https://github.com/mkober/muxcode/issues/25)
+
 On-demand modal for tailing and browsing logs. Opens as a modal window via the modal manager, replacing the need to switch to the watch agent window for quick log inspection.
 
 **Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)

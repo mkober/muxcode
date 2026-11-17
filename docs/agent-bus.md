@@ -1626,6 +1626,10 @@ muxcode lifecycle purge [--days N]
 | cleanup | session-cleanup-held | warn | A dead session's bus directory was left in place because a process of it is still running and could not be proved and reaped |
 | daemon | daemon-stopped | info | The daemon received TERM or INT and stopped its harness before exiting (detail: the signal and the pids stopped) |
 | daemon | daemon-session-gone | info | The daemon found its own tmux session positively gone from the server it recorded, reaped that session's processes and exited: `reaped N process(es), N failed, N unproven` |
+| launch | inflight-task-kept | info | An agent launch left an in-flight task alone: its request has no receipt and still waits in the inbox, so the relaunched agent will read and answer it (`consumed=no`). One row per task (MUX-196). Written at `warn` when the inbox could not be locked or read, which keeps the task too |
+| launch | inflight-task-cleared | info | An agent launch timed out an in-flight task, naming the task and why: `consumed=yes` (the prior instance read it), or `consumed=no, its request is gone from the inbox`. One row per task, beside the `cleared-inflight-tasks` count |
+| daemon | graph-dispatch-resent | info | A send node's dispatch was cleared by a relaunch inside the node's `timeout_secs`; the executor sent it again on a task holding what is left of the allowance: `agent relaunched: <cause>; dispatch <id> cleared Ns into its Ns allowance, re-sent as <id>` |
+| daemon | graph-dispatch-held | warn | The same, for a node whose work must not run twice — every commit action but `pr-read`, a `jira-write`/`confluence-write`/`issue-write`, and any deploy node: not re-sent, because the prior instance may have half-run it — the node waits out its allowance for a late answer |
 | daemon | harness-stop-failed | warn | A harness the daemon tried to stop on shutdown did not go: `<role> pid <pid>: <why>` |
 
 **Rotation:** 1000 entries per file (configurable via `MUXCODE_LIFECYCLE_LOG_MAX` env var).

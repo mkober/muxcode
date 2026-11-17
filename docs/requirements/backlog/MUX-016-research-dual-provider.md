@@ -1,5 +1,7 @@
 # Research Agent — Dual-Provider Split View
 
+**Tracking:** [mkober/muxcode#16](https://github.com/mkober/muxcode/issues/16)
+
 Turn the **research agent** (F1 window, research mode) into a dual-provider
 side-by-side agent: two different AI provider CLIs run in adjacent panes (e.g.
 **Codex on the left, Claude on the right**, or **Claude on the left, OpenCode on

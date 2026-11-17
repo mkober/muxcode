@@ -1,5 +1,7 @@
 # Graph Template Delete and Rename
 
+**Tracking:** [mkober/muxcode#47](https://github.com/mkober/muxcode/issues/47)
+
 The graph command surface can create a template and export one, but never remove or move one. Every
 supersede operation therefore leaves the old definition resolvable — and because resolution is
 `project > user > builtin`, the superseded name can keep **winning** over its replacement.

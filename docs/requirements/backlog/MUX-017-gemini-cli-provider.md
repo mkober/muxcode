@@ -1,5 +1,7 @@
 # Gemini CLI provider
 
+**Tracking:** [mkober/muxcode#17](https://github.com/mkober/muxcode/issues/17)
+
 Add Google Gemini CLI (`gemini`) as a fifth provider in muxcode's multi-provider architecture. Gemini CLI is structurally the closest to Claude Code of any alternative — it has a full hook system (`BeforeTool`/`AfterTool`), JSON stdin/stdout protocol, exit-code-2 blocking, inline TUI without alternate screen, and MCP support. This makes it the first alternative provider that can run with `SupportsHooks() = true`, enabling deterministic chains, diff preview, edit guard, and workflow state transitions without degradation.
 
 ## Context

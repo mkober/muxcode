@@ -1,5 +1,7 @@
 # Channels-based message transport
 
+**Tracking:** [mkober/muxcode#13](https://github.com/mkober/muxcode/issues/13)
+
 Explore adopting Claude Code's **Channels** feature (`--channels`, v2.1.80+, research preview) as an *optional, opt-in* transport for injecting messages into a running Claude Code agent session — an alternative to the current `tmux send-keys` mechanism, **not** a replacement.
 
 This is exploratory/research-flavored. Channels is a native, supported API for pushing an inbound event into a live session, but it is gated behind Anthropic auth and the Claude Code provider, so it can never be the sole transport. `send-keys` remains the universal, auth-agnostic, all-providers fallback.

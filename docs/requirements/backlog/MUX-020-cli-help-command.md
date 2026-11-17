@@ -1,5 +1,7 @@
 # CLI help command
 
+**Tracking:** [mkober/muxcode#20](https://github.com/mkober/muxcode/issues/20)
+
 Add a `muxcode help [command]` system that provides structured, discoverable help for all 49+ subcommands. Today the only help is a flat usage dump when running `muxcode` with no args — no per-command help, no flag descriptions, no examples, and no way to browse related commands by category.
 
 ## Problem

@@ -1,5 +1,7 @@
 # Refactor Agent (F6 review ↔ refactor mode toggle)
 
+**Tracking:** [mkober/muxcode#15](https://github.com/mkober/muxcode/issues/15)
+
 ## Context
 
 MuxCode hosts alternate agent **modes** on shared windows: F2 toggles `edit ↔ auto`,

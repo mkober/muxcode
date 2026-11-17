@@ -20,8 +20,10 @@
 #
 # The pre-fix build is this tree with both MUX-217 guards patched out of a
 # scratch copy (the GraphNeedsRole clause in AutoReloadSafe and the
-# roleReloading hold in dispatchNode); every other line is the tree's own, so
-# the controls differ from the fix by those two guards alone.
+# roleReloading hold in dispatchNode), and with them MUX-196's keep of an
+# unconsumed dispatch at launch (ClearInFlightTasksForRole) and its re-send of
+# a cleared one (continueAfterRelaunch) — either alone would also have saved
+# section E's node; every other line is the tree's own.
 #
 # Sections:
 #   A  a build → test graph; while build's node runs, test's installed
@@ -178,10 +180,14 @@ mkdir -p "$WORK/pre"
 cp -R "$REPO/tools/muxcode" "$WORK/pre/"
 sed -i.orig 's/GraphNeedsRole(session, role); ok {/GraphNeedsRole(session, role); false \&\& ok {/' "$PRE/bus/agentdefs.go"
 sed -i.orig 's/if roleReloading(session, n.Role) {/if false \&\& roleReloading(session, n.Role) {/' "$PRE/bus/graph_exec.go"
+sed -i.mux196 's/task.ClearedBy != "" \&\& continueAfterRelaunch(/task.ClearedBy != "" \&\& false \&\& continueAfterRelaunch(/' "$PRE/bus/graph_exec.go"
+sed -i.orig 's/if !consumed \&\& queued\[t.ID\] {/if false \&\& !consumed \&\& queued[t.ID] {/' "$PRE/bus/task.go"
 if grep -q 'GraphNeedsRole(session, role); false && ok {' "$PRE/bus/agentdefs.go" \
   && grep -q 'if false && roleReloading(session, n.Role) {' "$PRE/bus/graph_exec.go" \
+  && grep -q 'task.ClearedBy != "" && false && continueAfterRelaunch(' "$PRE/bus/graph_exec.go" \
+  && grep -q 'if false && !consumed && queued\[t.ID\] {' "$PRE/bus/task.go" \
   && (cd "$PRE" && go build -buildvcs=false -o "$WORK/bin-pre/muxcode" .); then
-  ok "pre-fix muxcode built: the tree with both MUX-217 guards patched out"
+  ok "pre-fix muxcode built: the tree with both MUX-217 guards and the MUX-196 keep and re-send patched out"
 else
   fail "pre-fix build: a guard patch did not apply or the copy failed to build"
 fi

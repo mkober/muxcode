@@ -1,5 +1,7 @@
 # Graph Agent Management TUIs
 
+**Tracking:** [mkober/muxcode#31](https://github.com/mkober/muxcode/issues/31)
+
 Reclaim the `prefix + b` quick menu for graph-orchestrator management ([`MUX-014`](./MUX-014-graph-agent-orchestrator.md)) — retire six low-value popup entries and replace them with three interactive surfaces: a **run browser** (run list → layered live DAG → node detail), a **template launcher**, and a **pending-gate queue** where `wait_human` approvals are collected from a human at the keyboard.
 
 ## Context

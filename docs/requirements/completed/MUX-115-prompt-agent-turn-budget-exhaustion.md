@@ -1,5 +1,7 @@
 # Prompt-Agent Turn Budget Exhaustion — Instrument Before Fixing
 
+**Tracking:** [mkober/muxcode#48](https://github.com/mkober/muxcode/issues/48)
+
 The prompt-agent's `launch` and named-`approve` intents fail because the model exhausts its
 10-turn budget before issuing the required command. **Four fix attempts have produced four
 identical results.** This spec's first deliverable is therefore not a fix — it is the

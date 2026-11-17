@@ -1,5 +1,7 @@
 # Modal: Cron Manager
 
+**Tracking:** [mkober/muxcode#23](https://github.com/mkober/muxcode/issues/23)
+
 Interactive modal for managing scheduled cron jobs. Replaces the static `muxcode cron list` popup with a navigable interface that supports creating, editing, enabling/disabling, and viewing execution history.
 
 **Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)

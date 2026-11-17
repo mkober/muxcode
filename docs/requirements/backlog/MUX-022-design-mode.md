@@ -1,5 +1,7 @@
 # Design mode
 
+**Tracking:** [mkober/muxcode#22](https://github.com/mkober/muxcode/issues/22)
+
 A dedicated **designer agent** that shares the F1 window with the edit agent. F1 toggles between Edit (nvim + edit agent) and Design (image preview + designer agent). Both agents persist across toggles — nvim preserves its session, the designer agent keeps its Claude conversation. The designer agent generates React components from prompts, serves them on localhost, captures screenshots, renders them in the left pane, and **automatically validates** the output against the original prompt — iterating until the design is accurate without user intervention.
 
 ## Context

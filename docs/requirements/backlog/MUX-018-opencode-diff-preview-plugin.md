@@ -1,5 +1,7 @@
 # OpenCode diff preview plugin
 
+**Tracking:** [mkober/muxcode#18](https://github.com/mkober/muxcode/issues/18)
+
 Restore nvim diff preview functionality when OpenCode is used as the F2 Edit agent's CLI provider. Currently, the diff preview (showing proposed file changes in a split nvim view) only works with Claude Code because it relies on `PreToolUse` and `PostToolUse` hooks in `settings.json`. OpenCode has no equivalent config-based hook system — but it does have a first-class plugin system with `tool.execute.before` and `tool.execute.after` hooks that can achieve the same result.
 
 ## Context

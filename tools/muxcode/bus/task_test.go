@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -247,6 +248,193 @@ func TestClearInFlightTasksForRole_ClearsHostedRole(t *testing.T) {
 	}
 	if dt, _ := ReadTask(session, toDocs.ID); dt.Status != TaskTimedOut {
 		t.Errorf("hosted docs task Status = %q, want %q", dt.Status, TaskTimedOut)
+	}
+}
+
+// sendTracked delivers a tracked request from edit to role, as a graph
+// dispatch or a --track send lands: in role's inbox with a task and no receipt.
+func sendTracked(t *testing.T, session, role string, timeout int) Message {
+	t.Helper()
+	return sendTrackedFrom(t, session, "edit", role, timeout)
+}
+
+// sendTrackedFrom is sendTracked from another sender — a second tracked
+// request from the same sender while the first is in flight is suppressed as
+// a duplicate.
+func sendTrackedFrom(t *testing.T, session, from, role string, timeout int) Message {
+	t.Helper()
+	req := NewMessage(from, role, "request", role, "wait for CI", "")
+	if err := Send(session, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateTask(session, req, timeout); err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+// MUX-196, the Phase 1 pin inverted: a launch keeps a task whose request still
+// sits unconsumed in the role's inbox — the relaunched agent will read and
+// answer it — where on 2026-09-28 it stopped a ci-watch's clock 250 s into an
+// hour. The kept task writes its own row naming it unconsumed.
+func TestClearInFlightTasksForRole_KeepsUnconsumedRequest(t *testing.T) {
+	useTempBusDir(t)
+	isolateLifecycle(t)
+	session := testSession(t)
+	req := sendTracked(t, session, "watch", 3600)
+	if _, received := ReadReceipt(session, req.ID); received {
+		t.Fatal("fixture: the request must carry no receipt")
+	}
+	if msgs, _ := Peek(session, "watch"); len(msgs) != 1 || msgs[0].ID != req.ID {
+		t.Fatalf("fixture: watch inbox %+v, want the unconsumed request", msgs)
+	}
+
+	if n := ClearInFlightTasksForRole(session, "watch", "watch relaunched (reason=reload)"); n != 0 {
+		t.Fatalf("cleared %d tasks, want the unconsumed one kept", n)
+	}
+	if task, _ := ReadTask(session, req.ID); task.Status != TaskInFlight || task.ClearedBy != "" {
+		t.Errorf("unconsumed task = %q cleared by %q, want %q on its own clock", task.Status, task.ClearedBy, TaskInFlight)
+	}
+	if log := lifecycleText(t); !strings.Contains(log, "inflight-task-kept") || !strings.Contains(log, req.ID+" edit→watch:watch kept — consumed=no") {
+		t.Errorf("no inflight-task-kept row naming %s unconsumed:\n%s", req.ID, log)
+	}
+}
+
+// MUX-196 review must-fix: a partial consume holds the inbox lock while the
+// whole inbox is renamed away and its unmatched rows restored. A launch in that
+// window must wait for the lock, not read the empty inbox as proof the request
+// is gone. Positive control: a request truly gone from the inbox is cleared.
+func TestClearInFlightTasksForRole_WaitsOutPartialConsume(t *testing.T) {
+	useTempBusDir(t)
+	isolateLifecycle(t)
+	session := testSession(t)
+	req := sendTracked(t, session, "watch", 3600)
+	inbox := InboxPath(session, "watch")
+
+	unlock, err := lockInboxCap(session, "watch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(inbox, inbox+".partial"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan int, 1)
+	go func() { done <- ClearInFlightTasksForRole(session, "watch", "watch relaunched (reason=reload)") }()
+	select {
+	case n := <-done:
+		t.Fatalf("the launch read the inbox under another consumer's lock (cleared %d)", n)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := os.Rename(inbox+".partial", inbox); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if n := <-done; n != 0 {
+		t.Errorf("cleared %d tasks, want the restored unread request kept", n)
+	}
+	if task, _ := ReadTask(session, req.ID); task.Status != TaskInFlight {
+		t.Errorf("task %q, want in flight", task.Status)
+	}
+
+	gone := sendTrackedFrom(t, session, "plan", "watch", 3600)
+	if _, err := ConsumeByID(session, "watch", req.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inbox, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if n := ClearInFlightTasksForRole(session, "watch", "watch relaunched (reason=reload)"); n != 2 {
+		t.Errorf("cleared %d tasks, want the consumed and the missing request", n)
+	}
+	if log := lifecycleText(t); !strings.Contains(log, gone.ID+" plan→watch:watch cleared — consumed=no, its request is gone from the inbox") {
+		t.Errorf("no row clearing %s as gone from the inbox:\n%s", gone.ID, log)
+	}
+}
+
+// MUX-196 review must-fix: the full drain (Receive) renames the inbox to
+// .consuming without the lock; a request mid-drain is still queued. An inbox
+// that cannot be read proves nothing either, so a receipt-less task is kept
+// while a receipted one is still cleared.
+func TestClearInFlightTasksForRole_KeepsWhatItCannotProveGone(t *testing.T) {
+	useTempBusDir(t)
+	isolateLifecycle(t)
+	session := testSession(t)
+	inbox := InboxPath(session, "watch")
+
+	draining := sendTracked(t, session, "watch", 3600)
+	if err := os.Rename(inbox, inbox+".consuming"); err != nil {
+		t.Fatal(err)
+	}
+	if n := ClearInFlightTasksForRole(session, "watch", "watch relaunched (reason=reload)"); n != 0 {
+		t.Errorf("cleared %d tasks, want the request mid-drain kept", n)
+	}
+	if err := os.Remove(inbox + ".consuming"); err != nil {
+		t.Fatal(err)
+	}
+
+	read := sendTrackedFrom(t, session, "plan", "watch", 3600)
+	WriteReceipt(session, read.ID, "watch", ReceiptKindAck)
+	if err := os.Remove(inbox); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(inbox, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n := ClearInFlightTasksForRole(session, "watch", "watch relaunched (reason=reload)"); n != 1 {
+		t.Errorf("cleared %d tasks with the inbox unreadable, want only the receipted one", n)
+	}
+	if task, _ := ReadTask(session, draining.ID); task.Status != TaskInFlight {
+		t.Errorf("receipt-less task %q with the inbox unreadable, want in flight", task.Status)
+	}
+	if log := lifecycleText(t); !strings.Contains(log, draining.ID+" edit→watch:watch kept — consumed=no, and the inbox could not be read") {
+		t.Errorf("no kept row naming the unreadable inbox:\n%s", log)
+	}
+}
+
+// MUX-196: a request an auto-CC copy of which edit read is still unconsumed —
+// the receipt is the addressee's (MUX-216) — so the launch keeps its task.
+func TestClearInFlightTasksForRole_CCReadIsNotConsumption(t *testing.T) {
+	useTempBusDir(t)
+	session := testSession(t)
+	req := NewMessage("test", "review", "request", "review", "review the changes", "")
+	if err := Send(session, req); err != nil {
+		t.Fatal(err)
+	}
+	_ = CreateTask(session, req, 600)
+	if _, err := ConsumeByID(session, "edit", req.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, received := ReadReceipt(session, req.ID); received {
+		t.Fatal("fixture: edit's CC read must leave review's request unreceipted")
+	}
+
+	if n := ClearInFlightTasksForRole(session, "review", "review relaunched (reason=reload)"); n != 0 {
+		t.Errorf("cleared %d tasks, want review's unread request kept", n)
+	}
+}
+
+// MUX-196 negative control, green through every phase: a request the prior
+// instance consumed cannot be answered by the relaunched one, so its task is
+// still cleared and stops blocking sends of the same (to, action).
+func TestClearInFlightTasksForRole_ClearsConsumedRequest(t *testing.T) {
+	useTempBusDir(t)
+	isolateLifecycle(t)
+	session := testSession(t)
+	req := sendTracked(t, session, "watch", 3600)
+	WriteReceipt(session, req.ID, "watch", ReceiptKindAck)
+
+	if n := ClearInFlightTasksForRole(session, "watch", "watch relaunched (reason=reload)"); n != 1 {
+		t.Fatalf("cleared %d tasks, want the consumed one", n)
+	}
+	task, _ := ReadTask(session, req.ID)
+	if task.Status != TaskTimedOut || task.ClearedBy != "watch relaunched (reason=reload)" {
+		t.Errorf("consumed task = %q cleared by %q, want %q naming the relaunch", task.Status, task.ClearedBy, TaskTimedOut)
+	}
+	if HasInFlightTaskForRole(session, "watch", "edit", "watch") {
+		t.Error("a cleared consumed task still blocks sends to watch")
+	}
+	if log := lifecycleText(t); !strings.Contains(log, req.ID+" edit→watch:watch cleared — consumed=yes") {
+		t.Errorf("no inflight-task-cleared row naming %s consumed:\n%s", req.ID, log)
 	}
 }
 

@@ -1,5 +1,7 @@
 # Modal: Memory Browser
 
+**Tracking:** [mkober/muxcode#26](https://github.com/mkober/muxcode/issues/26)
+
 Interactive modal for browsing, searching, and editing agent memory. Provides a unified view of shared and per-role memory with BM25 search, section navigation, and inline editing.
 
 **Depends on:** [Modal Window Manager](../completed/MUX-069-modal-window-manager.md)
