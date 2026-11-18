@@ -130,8 +130,7 @@ criteria and phases rewritten to them:
 | 32 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
 | 33 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
 | 34 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
-| 35 | 6 | [`MUX-234`](./MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) | Three integration scripts fail: their fixtures send to roles the consumer guard refuses | Medium | ⇄ [MUX-230](./MUX-230-integration-scripts-opt-out-of-the-consumer-guard.md) |
-| 36 | 6 | [`MUX-235`](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) | `tmux kill-server` is aliased to a confirm prompt, so test scripts leave their private tmux servers running | Low | ⇄ [MUX-233](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) |
+| 35 | 6 | [`MUX-235`](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) | `tmux kill-server` is aliased to a confirm prompt, so test scripts leave their private tmux servers running | Low | ⇄ [MUX-233](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) |
 
 ### Reliability & observability
 
@@ -139,7 +138,6 @@ criteria and phases rewritten to them:
 |----|-------|----------|------------|
 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` Fails, Passes on Rerun, and Nothing Recorded Which Test Failed | High | ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` Strands a Live Session — Its Monitor and Listeners Exit | Medium | — |
-| [`MUX-234`](./MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) | Three Integration Scripts Fail — Their Fixtures Send to Roles the Consumer Guard Refuses | Medium | ⇄ [MUX-230](./MUX-230-integration-scripts-opt-out-of-the-consumer-guard.md) |
 | [`MUX-235`](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) | `tmux kill-server` Is Aliased to a Confirm Prompt, so Test Scripts Leave Their Private tmux Servers Running | Low | ⇄ [MUX-233](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
@@ -395,6 +393,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-226`](../completed/MUX-226-graph-node-caps-script-not-isolated-from-real-tmux-and-binary.md) | `test-graph-node-caps.sh` Runs on the User's Real tmux Server and May Mix In the Installed Binary |
 | [`MUX-228`](../completed/MUX-228-spec-dangling-alerts-on-a-ship-merges-transient-gap.md) | `spec-dangling` Alerts on the Transient Gap During a Ship Merge |
 | [`MUX-233`](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) | Hermetic Test Scripts Create Their Sessions on the User's Real tmux Server |
+| [`MUX-234`](../completed/MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) | Three Integration Scripts Fail — Their Fixtures Send to Roles the Consumer Guard Refuses |
 
 ## Ideas without specs
 

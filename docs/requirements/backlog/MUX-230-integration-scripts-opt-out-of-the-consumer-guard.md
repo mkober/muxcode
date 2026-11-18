@@ -43,6 +43,20 @@ variable on a single line, deliberately, to plant stranded messages for its diag
 The list is from `grep -l MUXCODE_CONSUMER_GUARD scripts/*.sh` on 2026-11-16, MUX-145 uncommitted.
 Phase 1 re-takes it, since a script added in between may have copied the line.
 
+**Ten more since, as of 2026-11-18 — thirty-eight in all.** A search by plan for a line beginning
+`export MUXCODE_CONSUMER_GUARD=0` in `scripts/test-*.sh` names thirty-eight scripts. "Twenty-eight"
+elsewhere in this spec is the count at filing.
+
+| Added by | Scripts |
+|----------|---------|
+| [MUX-234](../completed/MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md), 2026-11-18 — four scripts that predate the guard, never got the line and failed on the refusal | `test-status-line-task-close`, `test-plan-verify-verdict`, `test-codex-idle-delivery`, `test-restart-definition` |
+| New scripts written 2026-11-16 to 17, each copying the line — the third risk listed under "Why the opt-out is not harmless", already happening | `test-graph-verify-once`, `test-redrive-reply-route`, `test-reload-hosted-role`, `test-reload-keeps-dispatch`, `test-reply-to-unknown`, `test-spec-dangling-debounce` |
+
+MUX-234 chose the opt-out over a window for its four, and recorded why: a window added for the
+role is a bare shell, every daemon wake into it is refused by the injection guard, and the
+`injection-refused` rows that follow change counts those scripts assert on. That is a finding for
+this spec's survey — "a window per fake role" is not free where a script counts lifecycle rows.
+
 ### Why the opt-out is not harmless
 
 - The guard sits on every send road. A change that made it refuse a role with a real consumer — a
@@ -141,6 +155,7 @@ honest for scripts that already drive a pane. The two can mix.
 
 ## Status
 
-**Backlog** — 0/18. Filed 2026-11-16 by plan on the user's request relayed by edit. Not a defect
+**Backlog** — 0/18. Filed 2026-11-16 by plan on the user's request relayed by edit. Thirty-eight
+scripts set the variable as of 2026-11-18, where twenty-eight did at filing. Not a defect
 and not in the Defects table, so `55-defect-backlog-loop` will not pick it up; it is worked when the
 user asks for it.

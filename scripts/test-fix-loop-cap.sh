@@ -117,15 +117,27 @@ wait_request() {
 # answer <role> <exit> [text] — consume the role's inbox and reply to the
 # captured request. The EXIT sentinel is the verdict: these fake agents run
 # no hooks, so no history row testifies for them, and EXIT=1 is how review
-# reports findings that route to fix.
+# reports findings that route to fix. Edit plays no part, so its inbox —
+# every reply and graph event — is drained after each answer: the daemon
+# correlates replies through the bus log, and an undrained edit reached
+# InboxCap (50) during the headline run and refused the next reply (MUX-234).
+# A refused reply returns 1 with REFUSED saying why.
 answer() {
+  local out
   AGENT_ROLE="$1" "$MUX" inbox >/dev/null 2>&1
-  AGENT_ROLE="$1" "$MUX" send edit response "${3:-done} EXIT=$2" --type response --reply-to "$REQ_ID" >/dev/null 2>&1
+  if ! out="$(AGENT_ROLE="$1" "$MUX" send edit response "${3:-done} EXIT=$2" --type response --reply-to "$REQ_ID" 2>&1)"; then
+    REFUSED="$1's reply to $REQ_ID was refused: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+    return 1
+  fi
+  AGENT_ROLE=edit "$MUX" inbox --role edit >/dev/null 2>&1
 }
 
+# wait_and_answer <role> <action> — sets WHY for the caller's failure message:
+# the request never arrived, or it arrived and its reply was refused.
 wait_and_answer() {
+  WHY="never dispatched"
   wait_request "$1" "$2" || return 1
-  answer "$1" 0
+  answer "$1" 0 || { WHY="dispatched, but $REFUSED"; return 1; }
 }
 
 run_state() { "$MUX" graph status "$1" 2>/dev/null | sed $'s/\x1b\\[[0-9;]*[A-Za-z]//g' | head -1 | sed 's/.*\[\([a-z]*\)\].*/\1/'; }
@@ -167,18 +179,18 @@ drive_phase() {
     *"Phase $n:"*) ok "phase $n: implement targeted Phase $n" ;;
     *) bad "phase $n: implement message wrong: $CAPTURED" ;;
   esac
-  answer analyze 0 implemented
+  answer analyze 0 implemented || { bad "phase $n: implement $REFUSED"; return 1; }
   for ((i = 0; ; i++)); do
-    wait_and_answer build g-build || { bad "phase $n: build $((i + 1)) never dispatched"; return 1; }
-    wait_and_answer test g-test || { bad "phase $n: test $((i + 1)) never dispatched"; return 1; }
+    wait_and_answer build g-build || { bad "phase $n: build $((i + 1)) $WHY"; return 1; }
+    wait_and_answer test g-test || { bad "phase $n: test $((i + 1)) $WHY"; return 1; }
     wait_request review g-review || { bad "phase $n: review $((i + 1)) never dispatched"; return 1; }
-    [ "$i" -eq "$k" ] && { answer review 0 "0 findings"; break; }
-    answer review 1 "1 must-fix"
-    wait_and_answer analyze g-fix || { bad "phase $n: fix $((i + 1)) never dispatched"; return 1; }
+    [ "$i" -eq "$k" ] && { answer review 0 "0 findings" || { bad "phase $n: review $REFUSED"; return 1; }; break; }
+    answer review 1 "1 must-fix" || { bad "phase $n: review $REFUSED"; return 1; }
+    wait_and_answer analyze g-fix || { bad "phase $n: fix $((i + 1)) $WHY"; return 1; }
   done
   ok "phase $n: $k review failures fixed within its own budget"
   tick_phase
-  wait_and_answer plan g-verify || { bad "phase $n: update-spec never dispatched"; return 1; }
+  wait_and_answer plan g-verify || { bad "phase $n: update-spec $WHY"; return 1; }
 }
 
 cat > "$WORK/fixloop.json" <<'EOF'
@@ -258,7 +270,7 @@ done
 
 wait_and_answer plan g-close \
   && ok "close-out dispatched after all five phases" \
-  || bad "close-spec never dispatched: $(run_state "$RID")"
+  || bad "close-spec $WHY; state: $(run_state "$RID")"
 wait_run_state "$RID" complete \
   && ok "run completed with four fixes spent across two phases" \
   || bad "headline run state: $(run_state "$RID")"
@@ -295,14 +307,14 @@ RID_N="$("$MUX" graph run --file "$WORK/fixloop.json" "exhaust one phase" 2>&1 |
 [ -n "$RID_N" ] && ok "negative-control run started: $RID_N" || bad "negative-control run failed to start"
 
 neg_ok=1
-wait_and_answer analyze g-implement || { neg_ok=0; bad "negative control: implement never dispatched"; }
+wait_and_answer analyze g-implement || { neg_ok=0; bad "negative control: implement $WHY"; }
 for i in 1 2 3 4; do
   [ "$neg_ok" -eq 1 ] || break
-  wait_and_answer build g-build || { neg_ok=0; bad "negative control: build $i never dispatched"; break; }
-  wait_and_answer test g-test || { neg_ok=0; bad "negative control: test $i never dispatched"; break; }
+  wait_and_answer build g-build || { neg_ok=0; bad "negative control: build $i $WHY"; break; }
+  wait_and_answer test g-test || { neg_ok=0; bad "negative control: test $i $WHY"; break; }
   wait_request review g-review || { neg_ok=0; bad "negative control: review $i never dispatched"; break; }
-  answer review 1 "1 must-fix"
-  wait_and_answer analyze g-fix || { neg_ok=0; bad "negative control: fix $i never dispatched"; break; }
+  answer review 1 "1 must-fix" || { neg_ok=0; bad "negative control: review $i $REFUSED"; break; }
+  wait_and_answer analyze g-fix || { neg_ok=0; bad "negative control: fix $i $WHY"; break; }
 done
 
 wait_run_state "$RID_N" failed \

@@ -202,7 +202,7 @@ shells. `graph-orchestrator` deliberately avoids spawn.
 | Script | Result | Standing |
 |--------|--------|----------|
 | `test-prompt-mode` | 17 / 7, 3 skipped | Failing before this loop — the same seven on 2026-11-13. Its plateau is the subject of parked [MUX-122](../backlog/MUX-122-prompt-agent-turn-attribution-and-fix.md), which records a different count (26 / 2 / 1) |
-| `test-status-line-task-close` | 14 / 5, floor 19 | 19 / 0 on 2026-11-13. Filed as [MUX-234](../backlog/MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) |
+| `test-status-line-task-close` | 14 / 5, floor 19 | 19 / 0 on 2026-11-13. Filed as [MUX-234](./MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) |
 | `test-plan-verify-verdict` | 32 / 4 | 36 / 0 on 2026-11-13. MUX-234 |
 | `test-codex-idle-delivery` | 29 / 7, floor 36 | No earlier log. MUX-234 |
 
@@ -296,7 +296,7 @@ four.
 
 That one 28 / 8 matters for criterion 4, which asks for the same counts check for check: one of
 `codex-idle-delivery`'s checks is not stable from run to run, with or without this change. It is
-noted in [MUX-234](../backlog/MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md).
+noted in [MUX-234](./MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md).
 
 The worker updated `CLAUDE.md`'s entry for `test-stall-redrive-busy`. Phase 3 owns the formal
 re-run, the negative control and the full runner.
@@ -414,7 +414,7 @@ or holds its baseline. The seven:
 
 | Failed | Counts | Standing |
 |--------|--------|----------|
-| `codex-idle-delivery`, `plan-verify-verdict`, `status-line-task-close` | 29 / 7, 32 / 4, 14 / 5 | The baselines — [MUX-234](../backlog/MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) |
+| `codex-idle-delivery`, `plan-verify-verdict`, `status-line-task-close` | 29 / 7, 32 / 4, 14 / 5 | The baselines — [MUX-234](./MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) |
 | `prompt-mode` | 17 / 7 | The baseline — parked MUX-122 |
 | `graph-tui` | 44 / 2 | Parked [MUX-210](../backlog/MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) |
 | `fix-loop-cap` | 26 / 5 | **New to this record, not among the twenty-two.** Passed on 2026-11-13. Identical on a clean export of `HEAD` (`eaf0e69`) — on `main` already, not from this change. Added to MUX-234 |

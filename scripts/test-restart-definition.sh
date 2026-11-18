@@ -21,6 +21,7 @@
 # A coverage floor keeps a skipped section from reporting green.
 # Requires go, tmux, jq.
 set -euo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 PASS=0
 FAIL=0
