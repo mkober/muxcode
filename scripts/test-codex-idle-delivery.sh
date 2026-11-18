@@ -27,6 +27,7 @@
 #
 # Requires installed muxcode with MUX-192 Phase 3 (run ./build.sh first).
 set -uo pipefail
+export MUXCODE_CONSUMER_GUARD=0 # agents here are played by reading their inboxes, which no window or listener shows (MUX-145)
 
 PASS=0
 FAIL=0
@@ -98,6 +99,17 @@ send_as() { local who=$1; shift; AGENT_ROLE=$who BUS_ROLE=$who "$MUX" send "$@";
 track_as() { send_as "$@" --track 2>/dev/null | awk '/Tracking task/ {print $3}'; }
 # consume_as <role> — the agent reads its whole inbox.
 consume_as() { AGENT_ROLE=$1 BUS_ROLE=$1 "$MUX" inbox --role "$1" >/dev/null 2>&1; }
+# fixture_send <role> <send args...> — a fixture send whose refusal is printed,
+# never discarded: a refused fixture reply once surfaced only as seven wake
+# failures naming no cause (MUX-234). Adds no check, so counts are unchanged.
+fixture_send() {
+  local out
+  out=$(send_as "$@" 2>&1) || printf '  [fixture] send refused: %s\n' "$(printf '%s' "$out" | tr '\n' ' ')"
+  return 0
+}
+# show_on_fail <fail-count-before> <label> <output> — print a section's
+# captured send or deliver output only when one of its checks failed.
+show_on_fail() { [ "$FAIL" -gt "$1" ] && printf '%s\n' "$3" | sed "s/^/  [$2] /"; return 0; }
 
 # backdate_task <id> <secs> / backdate_msg <role> <marker> <secs> — age a
 # fixture without sleeping: sent_at and ts are what every age check reads.
@@ -136,6 +148,7 @@ fi
 
 # ── 1: the unforced wake passes a stale, answered task ───────────
 echo "-- 1: stale answered task, unforced wake"
+F1=$FAIL
 render review "${IDLE_1058[@]}"
 CHAIN_ID=$(track_as test review review "MUX192-chain-request" --no-notify)
 T1=$(track_as edit review review "MUX192-edit-review" --force --no-notify)
@@ -145,7 +158,7 @@ if [ -z "$CHAIN_ID" ] || [ -z "$T1" ]; then
 fi
 consume_as review
 backdate_task "$T1" 300
-send_as review edit review-complete "MUX192 review done: 0 must-fix" --type response --reply-to "$CHAIN_ID" --no-notify >/dev/null 2>&1
+fixture_send review edit review-complete "MUX192 review done: 0 must-fix" --type response --reply-to "$CHAIN_ID" --no-notify
 check "fixture: edit's task is answered in fact and in flight on disk" '[ "$(task_status "$T1")" = in-flight ]'
 
 wake1=$(send_as edit review review "MUX192-pending-one" --force 2>&1)
@@ -155,9 +168,11 @@ check "the request left the inbox" '! in_inbox review MUX192-pending-one'
 check "no [wakeup] skipping line" '! printf "%s" "$wake1" | grep -q "wakeup\] skipping"'
 check "no wake-skipped row for review" '[ "$(lifecycle_row wake-skipped "review:")" = 0 ]'
 check "the wake went through with the task still in flight (no daemon closed it)" '[ "$(task_status "$T1")" = in-flight ]'
+show_on_fail "$F1" wake "$wake1"
 
 # ── 2: a fresh unanswered task still holds the wake ──────────────
 echo "-- 2: fresh unanswered task (negative control)"
+F2=$FAIL
 render build "${IDLE_BARE[@]}"
 T2=$(track_as edit build build "MUX192-fresh-task" --force --no-notify)
 consume_as build
@@ -167,26 +182,29 @@ check "the wake is skipped naming the in-flight task" 'printf "%s" "$wake2" | gr
 check "nothing typed into the build pane" '! typed build MUX192-pending-two'
 check "the request stays in the inbox" 'in_inbox build MUX192-pending-two'
 check "one wake-skipped row naming the task" '[ "$(lifecycle_row wake-skipped "$T2")" = 1 ]'
+show_on_fail "$F2" wake "$wake2"
 
 # ── 3: a mid-turn pane is never typed into, on either road ───────
 echo "-- 3: mid-turn pane (negative control)"
+F3=$FAIL
 render build "${WORKING[@]}"
 # Past the grace, so the task gate cannot be what holds the wake.
 sleep 6
 before3=$(typed_bytes build)
-send_as edit build build "MUX192-pending-three" --force >/dev/null 2>&1
+fixture_send edit build build "MUX192-pending-three" --force
 sleep 1
 check "unforced road: one wake-skipped row naming mid-turn" '[ "$(lifecycle_row wake-skipped "build: agent is mid-turn")" = 1 ]'
 deliver3=$("$MUX" deliver build --force 2>&1)
 check "forced road: deliver --force refuses the mid-turn pane" 'printf "%s" "$deliver3" | grep -q "mid-turn"'
 check "nothing typed into the mid-turn pane on either road" '[ "$(typed_bytes build)" = "$before3" ]'
 check "both requests stay in the inbox" 'in_inbox build MUX192-pending-two && in_inbox build MUX192-pending-three'
+show_on_fail "$F3" deliver "$deliver3"
 consume_as build
 
 # ── 4: diagnose names the task, not a constant ───────────────────
 echo "-- 4: diagnose --json"
 render review "${IDLE_1058[@]}"
-send_as edit review review "MUX192-starved-request" --force --no-notify >/dev/null 2>&1
+fixture_send edit review review "MUX192-starved-request" --force --no-notify
 backdate_msg review MUX192-starved-request 181
 diag=$(diagnose_json review)
 check "in_flight_tasks names edit's task" 'printf "%s" "$diag" | jq -e --arg id "$T1" ".in_flight_tasks[] | select(.id == \$id)" >/dev/null'
@@ -200,7 +218,7 @@ check "the stuck request is still explained (receipt-gap)" 'printf "%s" "$diag" 
 # whole block runs inside the 5s grace.
 T4=$(track_as edit review review "MUX192-blocking-task" --force --no-notify)
 consume_as review
-send_as edit review review "MUX192-blocked-request" --force --no-notify >/dev/null 2>&1
+fixture_send edit review review "MUX192-blocked-request" --force --no-notify
 backdate_msg review MUX192-blocked-request 181
 diag4=$(diagnose_json review)
 check "wake-blocked-by-task names the fresh task" 'printf "%s" "$diag4" | jq -e --arg id "$T4" ".findings[] | select(.failure_mode == \"wake-blocked-by-task\") | .summary | contains(\$id)" >/dev/null'
@@ -211,7 +229,7 @@ check "blocking report carries no IsAgentIdle evidence" '! printf "%s" "$diag4" 
 echo "-- 5: daemon"
 render review "${WORKING[@]}"
 T5=$(track_as edit review security-review "MUX192-unrelated-task" --force --no-notify)
-send_as review edit plan "MUX192 unrelated reply" --type response --reply-to "$CHAIN_ID" --no-notify >/dev/null 2>&1
+fixture_send review edit plan "MUX192 unrelated reply" --type response --reply-to "$CHAIN_ID" --no-notify
 check "fixture: edit's review task still in flight before the daemon" '[ "$(task_status "$T1")" = in-flight ]'
 before5=$(typed_bytes review)
 
