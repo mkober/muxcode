@@ -81,12 +81,14 @@ WORK=$(mktemp -d /tmp/unrequested-cycles-XXXXXX)
 SESSIONS=()
 DPID=""
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
+  private_tmux_kill
   local s
   for s in "${SESSIONS[@]:-}"; do
     [ -n "$s" ] || continue
-    tmux kill-session -t "$s" 2>/dev/null
     rm -rf "$(muxcode_bus_dir "$MUX" "$s" 2>/dev/null)"
   done
   rm -rf "$WORK"

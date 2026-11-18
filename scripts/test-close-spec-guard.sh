@@ -71,9 +71,11 @@ export MUXCODE_SESSION_REPO_DIR="$REPO"
 BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 
 DPID=""
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
-  tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  private_tmux_kill
   rm -rf ${BD:+"$BD"} "$WORK"
 }
 trap cleanup EXIT

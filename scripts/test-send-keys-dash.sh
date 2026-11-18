@@ -38,9 +38,11 @@ export MUXCODE_RUN_CLI=claude
 export AGENT_ROLE=edit
 export BUS_ROLE=edit
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
-  tmux -L "$SOCK" kill-server 2>/dev/null || true
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  private_tmux_kill "$TMUX_TMPDIR/tmux-$(id -u)/$SOCK"
+  private_tmux_kill
   rm -rf "$BUSDIR" "$WORK"
 }
 trap cleanup EXIT
@@ -99,8 +101,9 @@ fi
 # ── Part B: the muxcode injection path end-to-end ────────────
 
 echo "-- muxcode injection path"
-# Scratch session on the default server — muxcode's pane targeting
-# (PaneTarget = {session}:{window}.1) runs against the default socket.
+# Scratch session on the default socket — muxcode's pane targeting
+# (PaneTarget = {session}:{window}.1) runs against it — which TMUX_TMPDIR
+# makes this script's private server, not the caller's (MUX-233).
 tmux new-session -d -s "$SESSION" -n run -x 120 -y 30
 tmux split-window -h -t "$SESSION:run"
 # The agent pane must look like an agent: since MUX-164 a typed injection is

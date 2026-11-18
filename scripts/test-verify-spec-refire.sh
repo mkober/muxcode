@@ -85,9 +85,11 @@ export MUXCODE_FORCE_RESPOND_DISABLE=1
 export MUXCODE_SPEC_DANGLING_DEBOUNCE_SECS=2 # MUX-228's 30 s default outlasts the dangling check's 15 s wait
 
 DPID=""
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
-  tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  private_tmux_kill
   rm -rf "$BD" "$WORK"
 }
 trap cleanup EXIT

@@ -34,10 +34,12 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 
 DPID=""
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null || true
   pkill -f "watch $SESSION" 2>/dev/null || true
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  private_tmux_kill
   rm -rf "$BUSDIR" "$WORK"
 }
 trap cleanup EXIT

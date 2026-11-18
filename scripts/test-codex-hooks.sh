@@ -49,11 +49,13 @@ LSESSION=""
 LBUS=""
 mkdir -p "$PROJ" "$WORK/bin" "$WORK/codex-home" "$WORK/lifecycle"
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   if [ -n "$LSESSION" ]; then
     tmux send-keys -t "$LSESSION" C-c 2>/dev/null || true
     sleep 1
-    tmux kill-session -t "$LSESSION" 2>/dev/null || true
+    private_tmux_kill
     rm -rf ${LBUS:+"$LBUS"}
     rm -f "$REPO/.codex/hooks.json"
   fi

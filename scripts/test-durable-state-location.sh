@@ -66,10 +66,12 @@ LEG="/tmp/muxcode-bus-$MIG"
 TMPROOT="${TMPDIR:-/tmp}"; TMPROOT="${TMPROOT%/}"
 DPID=""; NPID=""; MPID=""
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   local p
   for p in $DPID $NPID $MPID; do kill "$p" 2>/dev/null; done
-  tmux kill-session -t "$SESSION" 2>/dev/null
+  private_tmux_kill
   cd / 2>/dev/null
   rm -rf "$NBD" "$LEG" "/tmp/muxcode-probe-$SESSION"
   if [ "${MUXCODE_TEST_KEEP:-0}" = "1" ]; then

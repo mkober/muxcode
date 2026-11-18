@@ -63,8 +63,10 @@ unset MUXCODE_CROSS_TREE_GUARD 2>/dev/null || true
 LIFELOG="$MUXCODE_LIFECYCLE_LOG_DIR/${BUS_SESSION}.log"
 WORKER="spawn-c0ffee42"
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
-  tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  private_tmux_kill
   rm -rf "$BD" "$WORK"
 }
 trap cleanup EXIT
