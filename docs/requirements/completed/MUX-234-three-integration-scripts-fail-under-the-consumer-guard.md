@@ -393,7 +393,7 @@ Activated against the tree at `a58a187`, the merge of MUX-233 (PR #244). Nothing
   were not among MUX-233's twenty-two; the first contains no `tmux` call at all (plan searched it) — so no role in it can have a window,
   and "give the fixture a window" is not open to it — and the second
   already ran a private server and cleans up with the aliased `tmux kill-server`
-  ([MUX-235](../backlog/MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md), not this
+  ([MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md), not this
   spec).
 - **None of the five sets `MUXCODE_CONSUMER_GUARD`** — plan checked with `grep` today.
 - **The logs this spec was written from are gone.** `/tmp/mux233-rerun-test-*.log` did not survive

@@ -49,13 +49,17 @@ fi
 
 SOCK="escabs-$$"
 T="tmux -L $SOCK"
+. "$SCRIPT_DIR/lib/private-tmux.sh"
+ESC_SOCK="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$SOCK"
 WORK=$(mktemp -d /tmp/escabs-XXXXXX)
 PANE=""
 cleanup() {
-  $T kill-server 2>/dev/null || true
+  private_tmux_kill "$ESC_SOCK"
   rm -rf "$WORK"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # start_receiver respawns a fresh raw-mode receiver writing to $1, so each shape
 # gets its own clean log. First call creates the session; later calls replace

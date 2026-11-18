@@ -446,7 +446,7 @@ The wrapper's pattern looks for `tmux new-session -d` and so misses a server sta
   the results' "no surviving server" is not true of it. Its probe cleanup needs the same pid-based
   kill, or it is handed to MUX-235 by name.
 - **The wider class is filed as
-  [MUX-235](../backlog/MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md):** every
+  [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md):** every
   script that cleans up with `tmux kill-server` under the real home.
 
 None of these servers was touched by plan. Ending them is the user's to do or to ask for.
@@ -460,7 +460,7 @@ machine restarted.
 
 | Claim above | What was true | Now |
 |-------------|---------------|-----|
-| "The wider class is filed as MUX-235" | No file was written on the 17th | Filed 2026-11-18: [MUX-235](../backlog/MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md), [#243](https://github.com/mkober/muxcode/issues/243), Defects rank 37 |
+| "The wider class is filed as MUX-235" | No file was written on the 17th | Filed 2026-11-18: [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md), [#243](https://github.com/mkober/muxcode/issues/243), Defects rank 37 |
 | `fix-loop-cap` and `restart-definition` "Added to MUX-234" | Not added on the 17th | Added 2026-11-18, with a criterion and a Phase 1 step of their own |
 | "`test-send-keys-dash` still leaves a tmux server behind after every run" — its probe cleanup at `:44` is the aliased `kill-server` | True of the file plan read at 21:35. **Stale since:** the script was changed after that reading | `:44` is now `private_tmux_kill "$TMUX_TMPDIR/tmux-$(id -u)/$SOCK"` — the pid-based kill, given the probe server's socket — followed by the default one at `:45`. The helper takes a socket argument for this. Read by plan in the tree, 2026-11-18 |
 
