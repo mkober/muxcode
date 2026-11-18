@@ -51,8 +51,10 @@ export MUXCODE_CODEX_HOOKS=0
 export AGENT_ROLE=edit
 export BUS_ROLE=edit
 
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  private_tmux_kill
   rm -rf ${BUSDIR:+"$BUSDIR"} "$WORK"
 }
 trap cleanup EXIT

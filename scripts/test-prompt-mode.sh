@@ -61,13 +61,15 @@ mkdir -p "$PROJECT"
 cd "$PROJECT"
 
 DPID=""
+. "$SCRIPT_DIR/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null || true
   # The daemon may have started a headless harness — stop it via its marker.
   if [ -f "$BUSDIR/harness-prompt.pid" ]; then
     kill "$(cat "$BUSDIR/harness-prompt.pid")" 2>/dev/null || true
   fi
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  private_tmux_kill
   rm -rf "$BUSDIR" "$WORK"
 }
 trap cleanup EXIT

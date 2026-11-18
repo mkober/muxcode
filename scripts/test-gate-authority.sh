@@ -56,6 +56,7 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-version.sh"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
 require_muxcode_version "$MUX" v0.1.0 MUX-144 || { echo "  FAIL  binary precondition not met"; exit 1; }
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; NC=$'\033[0m'
@@ -101,9 +102,10 @@ export MUXCODE_SESSION_REPO_DIR="$REPO"
 BD="$(muxcode_bus_dir "$MUX" "$BUS_SESSION")" || exit 1
 
 DPID=""
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
-  tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  private_tmux_kill
   cd / 2>/dev/null # we run from $WORK; do not rm the directory we are standing in
   if [ "${MUXCODE_TEST_KEEP:-0}" = "1" ]; then
     echo "  (kept for diagnosis: $WORK)"

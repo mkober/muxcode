@@ -122,9 +122,13 @@ DPID=""
 # cleanup tears down the scratch session and bus dir. Set
 # MUXCODE_TEST_KEEP=1 to preserve $WORK instead: a failing spawn section is
 # undiagnosable once its lifecycle log and spawn store are deleted.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/scratch-bin.sh"
+scratch_bin_first "$WORK/bin"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null
-  tmux kill-session -t "$BUS_SESSION" 2>/dev/null
+  private_tmux_kill
   [ "${MUXCODE_TEST_KEEP:-}" = "1" ] && { echo "  (kept for diagnosis: $WORK)"; return; }
   rm -rf "$BD" "$WORK"
 }

@@ -58,10 +58,12 @@ export MUXCODE_TMP_CLEANUP_THRESHOLD=0
 BUSDIR="$(muxcode_bus_dir "$MUX" "$SESSION")" || exit 1
 
 DPID=""
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null || true
   pkill -f "watch $SESSION" 2>/dev/null || true
-  tmux kill-session -t "$SESSION" 2>/dev/null || true
+  private_tmux_kill
   rm -rf "$BUSDIR" "$WORK"
 }
 trap cleanup EXIT
@@ -72,7 +74,8 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 lifecycle_has() { cat "$WORK/lifecycle"/* 2>/dev/null | grep -q -- "$1"; }
 # A row for one role only — the event name and the role must be on the same line.
 lifecycle_row() { cat "$WORK/lifecycle"/* 2>/dev/null | grep -- "$1" | grep -c -- "$2"; }
-pane_text() { tmux capture-pane -t "$SESSION:$1.1" -p 2>/dev/null; }
+# -J joins wrapped lines: a delivered row longer than the pane is still one line.
+pane_text() { tmux capture-pane -t "$SESSION:$1.1" -p -J 2>/dev/null; }
 
 # A working agent: spinner with the interrupt hint above a live ❯ composer.
 render_busy() {

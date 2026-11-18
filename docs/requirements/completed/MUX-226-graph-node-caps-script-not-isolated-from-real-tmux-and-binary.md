@@ -111,7 +111,7 @@ hooks, state, logs and `/tmp` all unchanged.
 None of the sixteen was measured the way this one was. Plan's look at the real log directory adds
 some evidence for two of them: it holds three `multiphase-test-*` logs and two `unrequested-b-*`
 logs. Filed separately as
-[MUX-233](../backlog/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md); not fixed
+[MUX-233](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md); not fixed
 here.
 
 #### Review fixes (2026-11-17, 17:57–17:59)
@@ -300,5 +300,5 @@ real tmux server and left a lifecycle log in the real home on every run; after i
 passes 37 of 37, floor raised from 29, on the installed binary and on a tree build. Not done here,
 by design: resolving the two review threads on PR #206, a follow-up for the user (see the
 criteria); and the seventeen other scripts of the same shape, filed as
-[MUX-233](../backlog/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md). Activated
+[MUX-233](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md). Activated
 2026-11-17 by `55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` (Defects rank 34; every better-ranked row is parked). 13/13 — Phases 1–2 and all five criteria ticked 2026-11-17, after three review fixes; awaiting close-out. Filed 2026-11-14.

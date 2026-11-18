@@ -181,7 +181,7 @@ A line-number comparison, not a reading of each script. One thing it leaves: mos
 clean up with a bare `kill-server` that depends on `TMUX_TMPDIR` — safe while that directory
 exists, and MUX-226's harness showed a `TMUX_TMPDIR` naming a removed directory falls back to the
 real socket. The by-path form used here does not have that dependence;
-[MUX-233](../backlog/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md)'s pattern
+[MUX-233](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md)'s pattern
 now asks for it.
 
 #### Verification (2026-11-17, 18:41)
