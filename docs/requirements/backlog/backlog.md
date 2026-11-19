@@ -130,6 +130,7 @@ criteria and phases rewritten to them:
 | 32 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) |
 | 33 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
 | 34 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
+| 35 | 6 | [`MUX-236`](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md) | `scripts/test-all.sh` leaves stray and modified files in the checkout | Medium | — · ⇄ [MUX-235](../completed/MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) |
 
 ### Reliability & observability
 
@@ -137,6 +138,7 @@ criteria and phases rewritten to them:
 |----|-------|----------|------------|
 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` Fails, Passes on Rerun, and Nothing Recorded Which Test Failed | High | ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` Strands a Live Session — Its Monitor and Listeners Exit | Medium | — |
+| [`MUX-236`](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md) | `scripts/test-all.sh` Leaves Stray and Modified Files in the Checkout | Medium | ⇄ [MUX-235](../completed/MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
 | [`MUX-185`](./MUX-185-history-row-provenance-declared-not-proven.md) | A History Row's Provenance Is Declared, Not Proven | High | [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) |
 | [`MUX-188`](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Every Spawn Worker Launch Sends Edit a Stray Startup Request | Low | — |
