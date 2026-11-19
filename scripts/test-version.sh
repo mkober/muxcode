@@ -33,9 +33,9 @@ MOD="$ROOT/tools/muxcode"
 
 # --- Isolation -------------------------------------------------------------
 WORK=$(mktemp -d /tmp/version-test-XXXXXX)
-export TMUX_TMPDIR="$WORK/tmux"
-mkdir -p "$TMUX_TMPDIR" "$WORK/repo"
-unset TMUX
+. "$ROOT/scripts/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
+mkdir -p "$WORK/repo"
 export BUS_SESSION="version-test-$$"
 . "$ROOT/scripts/lib/muxcode-bus-dir.sh"
 BD="" # resolved once the scratch binaries are built
@@ -53,7 +53,7 @@ REAL_LOGS_BEFORE="$(ls -1 "$REAL_LOG_DIR" 2>/dev/null | sort)"
 
 cleanup() {
   pkill -f "muxcode watch $BUS_SESSION" 2>/dev/null
-  tmux kill-server 2>/dev/null
+  private_tmux_kill
   rm -rf ${BD:+"$BD"} "$WORK"
 }
 trap cleanup EXIT

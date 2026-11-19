@@ -40,9 +40,8 @@ export BUS_SESSION="$SESSION"
 export AGENT_ROLE=edit BUS_ROLE=edit
 # Private tmux server: every tmux call below (script, muxcode CLI, and the
 # scratch daemon alike — all inherit this env) hits an isolated socket.
-export TMUX_TMPDIR="$WORK/tmux"
-mkdir -p "$TMUX_TMPDIR"
-unset TMUX
+. "$(dirname "${BASH_SOURCE[0]}")/lib/private-tmux.sh"
+private_tmux_init "$WORK/tmux"
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"
@@ -63,7 +62,7 @@ DPID=""
 cleanup() {
   [ -n "$DPID" ] && kill "$DPID" 2>/dev/null || true
   pkill -f "watch $SESSION" 2>/dev/null || true
-  tmux kill-server 2>/dev/null || true
+  private_tmux_kill
   rm -rf "$BUSDIR" "$BUSDIR2" "$WORK"
 }
 trap cleanup EXIT
