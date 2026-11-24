@@ -63,25 +63,65 @@ overflow.
 - If the first candidate holds, a graph wider than its pane overflows instead of degrading — the
   MUX-031 clamp-to-pane defect, back.
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **The restatement proposed under [Results for Phase 1](#results-for-phase-1) is
+adopted.** The wrap is the design; the script and the criteria were stale, not the renderer.
+
+| Point | Decision |
+|-------|----------|
+| Width overflow | Renders the **wrapped layers in step order**. No flat list, no `flat view` notice |
+| Clamp to pane | **No line of the frame is wider than the pane, header included.** The header clamp — the 89-cell run line found in Phase 1 — is in this spec's scope, not a spec of its own |
+| Flat fallback | Still exists, failed before done, and is pinned through **height** overflow: a wrap too tall to fit |
+| Negative control | The wide pane still renders the grid |
+| Script and docs | The script's `wide` fixture and assertions are rewritten to the above; `docs/tui-style.md`'s MUX-031 passage, which still says width overflow gives the flat list, is updated |
+
+Checked in the tree on 2026-11-24: `RenderGraphFrame` (`tui/graph.go:414-424`) takes the wrap when
+the grid is wider than the pane and the wrap fits the height, and the flat list when the wrap does not
+fit or the grid is too tall; the flat list's notice reads `(graph wider than pane — flat view)` for
+both causes (`:1952`). `muxcode graph ui --render-once` accepts `--width` and has **no `--height`**
+(`cmd/graph.go:330`), so the script cannot ask for a short pane today.
+
 ## Requirements
 
 ### Acceptance criteria
 
+Criteria 2 and 3 were rewritten on 2026-11-24 to the decision above; as filed they asked for the flat
+fallback on width overflow.
+
 - [x] The cause is recorded here: renderer change or a fixture that no longer overflows — with the
   introducing commit and the captured `--width 60` frame
-- [ ] A graph wider than the pane renders the flat fallback with its notice; no line of the frame
-  exceeds the requested width
-- [ ] In the flat fallback a failed node lists before a done one
-- [ ] The script's fixture provably overflows the width it is rendered at — the script asserts the
-  grid's width exceeds the pane before asserting the fallback
-- [ ] Negative control kept: the same graph at a wide pane renders the grid, not the fallback
+- [ ] A graph wider than the pane renders its layers **wrapped, in step order** — a done node before
+  the failed node that follows it in the pipeline — with no `flat view` notice
+- [ ] **No line of that frame is wider than the requested width**, the run header included, measured
+  in display cells on the colour-stripped frame; a long run id or graph path is truncated, not
+  overflowed
+- [ ] A graph whose wrap is too **tall** for the pane renders the flat fallback with its notice, and in
+  it a failed node lists before a done one
+- [ ] The flat fallback's notice names the cause it was taken for — it does not say "wider than pane"
+  when the pane was too short
+- [ ] The script's fixture provably overflows what it is rendered at — it asserts the grid's width
+  exceeds the pane before asserting the wrap, and the wrap's height exceeds the pane before asserting
+  the fallback
+- [ ] Negative control kept: the same graph at a wide pane renders the grid, neither the wrap nor the
+  fallback
 - [ ] `bash scripts/test-graph-tui.sh` exits 0 with every check passing
 
 ### Technical approach
 
-Phase 1 captures the failing frame and measures it: if no line exceeds 60 cells and the grid is
-drawn, the fixture is the defect; if a line overflows, the renderer is. Run the script against a
-binary built from `main`, then against `28eaad8^`, to place the change.
+Phase 1 captured the failing frame and placed the change (`72e5fa2`); see its results below. What is
+left is three things: clamp the header, give the script a way to ask for a short pane, and rewrite
+the script's `wide` section to what the renderer is meant to do.
+
+The header (`renderGraphHeader`, `tui/graph.go:807`) takes `width` already; its run line — run id,
+state, graph path, progress, age — is written unclamped. Truncate the path first (it is the long and
+least identifying part), then the run id, keeping state and progress whole. Widths are measured in
+cells; [MUX-151](./MUX-151-display-width-runes-not-cells.md) owns the rune-versus-cell question and
+this spec uses whatever measure the frame already uses.
+
+`--render-once` gains `--height` beside `--width` so the script can render a pane too short for the
+wrap. The Go tests that pin `flat view` (`tui/graph_test.go`) already pass a height; the script is
+the surface that could not.
 
 ### Key files
 
@@ -174,6 +214,10 @@ at `--width 60`, its length following the run id and the fixture path. That is t
 rule broken, whatever is decided below. Whether it was already so at `6853b74` is not established:
 the script never measured line widths.
 
+> Answered 2026-11-24: the user adopted the restatement below, header clamp included — see
+> [Decisions](#decisions-user-2026-11-24). The rest of this section is the 2026-11-17 record, kept as
+> written.
+
 **For the user — criteria 2 and 3 cannot be met as written, and plan has not restated them.**
 
 | Criterion as written | Why it conflicts |
@@ -200,20 +244,39 @@ spec's Status and activation text still said the cause was undetermined and the 
 corrected. The review approved the diagnosis only, and said so. The first criterion is ticked on
 this section: the cause, the introducing commit and the frame are here.
 
-### Phase 2: Fix
+### Phase 2: Clamp the header, rewrite the script
 
-- [ ] Renderer: restore the degradation, with a Go test whose fixture overflows and a sibling that
-  does not
-- [ ] Fixture: widen `wide.json` (or narrow the pane) until the grid provably overflows, and assert
-  that precondition in the script
-- [ ] Failed-before-done ordering holds in the flat list, pinned by a test
+Rewritten 2026-11-24 to the user's decision. As filed this phase restored the flat fallback on width
+overflow; that is not wanted. The renderer change, the flag and the script's rewritten section land in
+one change, so `./test.sh` stays green and the script goes from two failures to none without an
+intermediate state that fails differently.
+
+- [ ] `renderGraphHeader` clamps every header line to `width`, truncating the graph path and then the
+  run id; Go test with a fixture whose run line overflows 60 cells, and a sibling whose run line fits
+  and is rendered whole (negative control)
+- [ ] Go test: every line of the wrapped frame at a narrow width is within the width, header included;
+  and a wrap too tall for the height gives the flat list with failed before done — or name the
+  existing tests that already pin each
+- [ ] The flat fallback's notice names its cause: wider than the pane, or taller
+- [ ] `muxcode graph ui --render-once` accepts `--height`; documented in `docs/agent-bus.md`
+- [ ] Rewrite the script's `wide` section: at `--width 60` assert the grid would overflow, then the
+  wrap — step order (done before failed), no `flat view`, and no line wider than 60 cells
+- [ ] Add a height section: the same graph at a width that forces the wrap and a `--height` too short
+  for it asserts the wrap would overflow, then `flat view` and failed before done
+- [ ] Keep the wide-pane negative control: the grid, no `flat view`
+- [ ] Raise the script's coverage floor by the checks added
+- [ ] Update [`docs/tui-style.md`](../../tui-style.md)'s MUX-031 passage (the "Why (MUX-031)" paragraph
+  and "The fix: `gridW > width || …` → flat list" line): width overflow wraps in step order, the flat
+  list is for height overflow, and the header is clamped like every other line
 
 ### Phase 3: Integration test
 
 - [ ] `bash scripts/test-graph-tui.sh` through the run agent: every check passes, exit 0; record the
   counts here
-- [ ] Negative control: with the fixture reduced to fit the pane, the fallback assertion fails —
-  proving it exercises the width it claims to
+- [ ] Negative control: with the fixture reduced to fit the pane, the script's overflow preconditions
+  fail — proving each assertion exercises the dimension it claims to
+- [ ] Negative control: against a binary built from a copy of the tree with the header clamp removed,
+  the line-width check fails on the run line
 - [ ] `bash scripts/test-all.sh` no longer lists `test-graph-tui` as failed
 
 ## Related
@@ -243,15 +306,15 @@ a recorded design decision; see [Results for Phase 1](#results-for-phase-1).
 
 ## Status
 
-**Backlog** — parked 2026-11-17 after Phase 1, on edit's instruction (`1794951592-edit-4357a68e`) following plan's recommendation; the user has not yet answered. 4/15 — Phase 1 complete and criterion 1 met. Activated the same day by `55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` (Defects rank 33).
+**Backlog** — unparked 2026-11-24 on the user's decision, relayed by edit and recorded under
+[Decisions](#decisions-user-2026-11-24): the proposed restatement is adopted, with the header clamp in
+scope. Phase 1 is complete and criterion 1 met; criteria 2–3 and Phases 2–3 are rewritten to the
+decision. Nothing of Phase 2 has been built.
 
-**Why parked: Phase 2 waits on the user.** Criteria 2 and 3 ask for the flat fallback on width
-overflow, which the renderer has deliberately not given since `72e5fa2`. The proposed restatement
-is under [Results for Phase 1](#results-for-phase-1) and is not adopted: restating the criteria is
-the user's call. Nothing of Phase 2 was built under this spec.
-
-**What would unpark it:** the user's answer on criteria 2 and 3 — and, with it, whether the header
-overflow found in Phase 1 is fixed here or in a spec of its own.
+History: activated 2026-11-17 by `55-defect-backlog-loop` run
+`1794626267-55-defect-backlog-loop-15547e2e` (Defects rank 33) and parked the same day after Phase 1,
+on edit's instruction (`1794951592-edit-4357a68e`), because criteria 2 and 3 asked for the flat
+fallback on width overflow, which the renderer has deliberately not given since `72e5fa2`.
 
 Filed 2026-11-13 on the user's instruction relayed by edit. As filed, the cause was not determined,
 the failing frame was not captured, and that the failure predates MUX-208 was inferred. All three

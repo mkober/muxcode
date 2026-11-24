@@ -20,9 +20,9 @@ The cycle repeated indefinitely at roughly five-minute intervals.
 
 | Element | Location | Detail |
 |---------|----------|--------|
-| The message | `bus/launch.go:747` | `"Session started — review last saved context from memory to restore session state."` |
-| The turn budget | `harness/config.go:29` | `MaxTurns: 10` per batch |
-| The failure text | `harness/loop.go:481` | `finalResponse = "(no response generated — tool loop exhausted)"` |
+| The message | `bus/launch_reason.go:37` (`startupRestorePayload`; was `bus/launch.go:747` at filing) | `"Session started — review last saved context from memory to restore session state."` |
+| The turn budget | `harness/config.go:41` | `MaxTurns: 10` per batch |
+| The failure text | `harness/loop.go:557` | `finalResponse = "(no response generated — tool loop exhausted)"` |
 | The escape hatch that does not fire | `harness/loop.go` `isSingleShotRole()` | Auto-completes after **one successful tool execution** — build, test, and prompt qualify |
 
 The message asks the agent to "review context and restore state". That has **no completion
@@ -46,12 +46,25 @@ turn budget. Either fix alone reduces the damage; both are needed to remove it. 
 separately because they are independent — the correlation bug would strand any un-receipted request,
 and the prompt-shape bug would waste a budget even on a single delivery.
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit; this spec was parked on Phase 1's choice and is unparked by them.
+
+| Question | Decision |
+|----------|----------|
+| Startup treatment for harness roles | **(A) a closed-form startup message** — one action, one report, done. "No startup message at all" is dropped |
+| What ships first | **Criteria 3–4 now**: exhaustion is a terminal state for its batch, and it writes a lifecycle event. Neither needs a model |
+| The message's wording | Validated against a real model **when Ollama is available**; the integration script skips that section without it and keeps a coverage floor on the rest |
+
+So the order below is: terminal exhaustion and its event first (Phase 1), the closed-form message
+second (Phase 2), the wording's live validation whenever a machine with Ollama runs the script.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] Harness roles receive a startup message with an explicit terminal condition — one action, one report, done
-- [ ] A harness agent answers its startup message within its turn budget on `qwen3:4b`, and the reply reaches the sender
+- [ ] Harness roles receive a closed-form startup message with an explicit terminal condition — one action, one report, done
+- [ ] A harness agent answers its startup message within its turn budget on `qwen3:4b`, and the reply reaches the sender — checked where Ollama is available; the script reports the section skipped elsewhere
 - [ ] Tool-loop exhaustion is **terminal for that batch**, not silently retried forever — an exhausted batch is reported once and not re-driven indefinitely
 - [ ] The exhaustion path emits a lifecycle event so the condition is visible without reading a pane
 - [ ] Hook-provider agents (Claude Code) keep their current startup message unchanged — this is a harness-shaped fix, not a global prompt rewrite
@@ -61,14 +74,10 @@ and the prompt-shape bug would waste a budget even on a single delivery.
 
 ### Technical approach
 
-- **State the stopping point.** Replace the open-ended text for harness roles with a closed-form
+- **State the stopping point** (decided 2026-11-24). Replace the open-ended text for harness roles with a closed-form
   instruction naming one command and one deliverable — e.g. read the memory summary and report it in
   a sentence. The existing `InlineFallbackPrompt()` / role-specific prompt machinery in
   `bus/launch.go` is the natural seam.
-- **Consider skipping it entirely.** Harness panes already poll their inbox directly rather than
-  being woken by send-keys. If the startup message exists only to make an agent check its inbox, a
-  harness agent may not need one at all. Confirm before assuming — the message may also be the only
-  thing restoring session context for these roles.
 - **Make exhaustion terminal.** An exhausted batch should be recorded as attempted and not left in a
   state the backstop re-drives. This overlaps MUX-111's receipt fix; land whichever comes first and
   re-check the other.
@@ -79,8 +88,8 @@ and the prompt-shape bug would waste a budget even on a single delivery.
 
 | File | Change |
 |------|--------|
-| `bus/launch.go` | Startup message construction — closed-form variant for harness roles (`:747`) |
-| `harness/loop.go` | Exhaustion handling: terminal outcome, lifecycle event (`:481`) |
+| `bus/launch_reason.go`, `bus/launch.go` | Startup message construction — closed-form variant for harness roles (`startupRestorePayload`) |
+| `harness/loop.go` | Exhaustion handling: terminal outcome, lifecycle event (`:514`, `:557`) |
 | `harness/prompt.go` | Role prompt/examples if the stopping condition is expressed there |
 | `harness/loop_test.go` | Bounded-tool-call test plus the negative control |
 | `scripts/test-harness-startup.sh` | New — integration test |
@@ -88,34 +97,38 @@ and the prompt-shape bug would waste a budget even on a single delivery.
 
 ## Implementation
 
-### Phase 1: Reproduce and bound
+### Phase 1: Make exhaustion terminal and visible
 
-- [ ] Reproduce the exhaustion with a harness role on `qwen3:4b` and capture the turn trace
-- [ ] Confirm whether `isSingleShotRole()` fails to arm because no tool execution succeeds, or for another reason — record the actual cause rather than the assumed one
-- [ ] Decide between closed-form startup message and no startup message for harness roles, with the reason recorded
+Needs no model and no decision beyond the above — ships first.
 
-### Phase 2: Fix the message shape
+- [ ] Unit test pinning today's behaviour: an exhausted batch sends `(no response generated — tool loop exhausted)` and writes no lifecycle row
+- [ ] An exhausted batch is reported once and is not re-driven indefinitely — the request it could not answer ends in a state the delivery backstop does not chase
+- [ ] Emit a lifecycle event on exhaustion naming the role, the request id and the turn budget
+- [ ] Negative control: a batch that answers within its budget writes no exhaustion event and is receipted as today
+- [ ] Re-check the interaction with [MUX-111](./MUX-111-harness-reply-miscorrelation.md) once either lands, and record it here
 
-- [ ] Implement the chosen startup treatment for harness roles only
-- [ ] Leave hook-provider startup messages untouched
-- [ ] Unit test: the harness startup path yields a bounded tool-call count
+### Phase 2: The closed-form startup message
+
+- [ ] Harness roles get a closed-form startup message naming one command and one deliverable; hook-provider startup messages are untouched
+- [ ] Unit test: a harness role's launch seeds the closed-form text, a Claude role's the unchanged `startupRestorePayload`
+- [ ] Unit test: the harness startup path yields a bounded tool-call count against a scripted model
 - [ ] Negative control: a genuinely open-ended message still exhausts, so the guard cannot mask real failure
+- [ ] Record why `isSingleShotRole()` did not arm in the 2026-08-26 runs if a model run shows it (no successful tool execution, or another cause); without Ollama, say it was not observed
 
-### Phase 3: Make exhaustion terminal and visible
+### Phase 3: Docs
 
-- [ ] An exhausted batch is reported once and not re-driven indefinitely
-- [ ] Emit a lifecycle event on exhaustion
-- [ ] Re-check the interaction with [MUX-111](./MUX-111-harness-reply-miscorrelation.md) once either lands
+- [ ] `docs/agents.md`: the harness startup contract and the exhaustion event
 
 ### Phase 4: Integration test
 
-- [ ] Create `scripts/test-harness-startup.sh`
-- [ ] A harness role receiving a startup message answers within its turn budget, and the reply reaches the sender
-- [ ] The exhaustion path fires its lifecycle event when a deliberately open-ended message is used
-- [ ] No infinite re-drive: the same startup message is not reprocessed unboundedly
-- [ ] Skip-with-reason when Ollama or the model is unavailable, with a **coverage floor** so a skipped run cannot report green
-- [ ] Run the script and confirm all checks pass
+- [ ] Create `scripts/test-harness-startup.sh` — scratch bus; hermetic section driven by a stub model through the harness's `*http.Client` seam, never a bound socket
+- [ ] Hermetic: the exhaustion path fires its lifecycle event once for a deliberately open-ended message, and the same message is not reprocessed unboundedly
+- [ ] Hermetic: a harness role's startup request carries the closed-form text
+- [ ] **Negative control:** a batch answered within budget writes no exhaustion event
+- [ ] Model-driven section: on `qwen3:4b` a harness role answers its startup message within its turn budget and the reply reaches the sender — the wording's validation; skipped with a reason when Ollama or the model is unavailable
+- [ ] **Coverage floor** on the hermetic section, so a run that skipped the model cannot report green on nothing
+- [ ] Run the script and record the counts here, naming whether the model section ran
 
 ## Status
 
-Backlog
+**Backlog** — unparked 2026-11-24 on the user's decisions above. Not started.

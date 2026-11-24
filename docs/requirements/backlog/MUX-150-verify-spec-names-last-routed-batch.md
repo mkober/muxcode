@@ -45,7 +45,7 @@ was just given**.
 
 | Step | Code | Behaviour |
 |------|------|-----------|
-| Any write, any window | `ProcessAnalyzeHook`, `bus/hook.go:1359` | Appends the path to the trigger file and calls `TransitionWorkflow(StateEditing, "hook:analyze:edit", WithFiles([]string{filePath}))`. The only window check in the function is the nvim-diff cleanup for `edit` (`:1389`) — the transition and the trigger fire for the **plan** window too |
+| Any write, any window | `ProcessAnalyzeHook`, `bus/hook.go:2086` (re-read 2026-11-24; `:1359` at filing — still no window or path gate) | Appends the path to the trigger file and calls `TransitionWorkflow(StateEditing, "hook:analyze:edit", WithFiles([]string{filePath}))`. The only window check in the function is the nvim-diff cleanup for `edit` (`:1389`) — the transition and the trigger fire for the **plan** window too |
 | Route | `routeTrigger`, `daemon/daemon.go` (`trigger-route`) | Debounced batch → `TransitionWorkflow(StateAnalyzing, "daemon:analyze-route", WithFiles(files))` and an `analyze` event |
 | Replace, never accumulate | `WithFiles`, `bus/workflow.go:136-144` | `e.LastFiles = files` (or `files[:5]`) — each transition **overwrites** the list |
 | `reviewed` keeps the stale list | `daemon/daemon.go:419` | `TransitionWorkflow(StateReviewed, "daemon:review-complete", WithOutcome(...))` — no `WithFiles`, so the entry still carries whatever the last write or route left |
@@ -75,16 +75,35 @@ last**. `LastFiles` was built for the workflow display — `bus/workflow.go:255-
 | [`MUX-145`](../completed/MUX-145-messages-routed-to-windowless-role.md) | Consequence 2 lands in the inbox that spec describes |
 | [`MUX-006`](../completed/MUX-006-diagnose-false-clean-verdict.md), [`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) | Same family — an instrument misreports its own subject |
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit; this spec was parked on its two open decisions and is unparked by them.
+
+| Question | Decision |
+|----------|----------|
+| Decision 1 — gate the hook by window or by path | **By path: `docs/`.** A write under `docs/` neither transitions the workflow nor writes the analyze trigger, whichever window made it. Root `CLAUDE.md` and `README.md` are not under `docs/` and stay in the change set |
+| Decision 2 — "changed since when" | **Since the last verification's fingerprint**, using the `git status` walk in `bus/provenance.go`. The branch-base alternative is dropped |
+
+**Read in the tree 2026-11-24.** `VerifyMovementFingerprint` (`bus/provenance.go:119`) hashes the
+walk into one fingerprint; a single hash cannot say *which* paths moved. Naming only what changed
+since the last verification therefore needs the per-path state kept beside the fingerprint (path and
+content hash at the last verification). That is the implementation the decision implies, and Phase 2
+says so; the stored form is the implementer's to choose. One more thing follows from MUX-219: a
+review a graph run dispatched sends no daemon `verify-spec` and leaves the movement marker
+unwritten, so "the last verification" is the last one the daemon itself fired — Phase 2 records
+what the list then covers.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] The `verify-spec` "Changed files" list is the set of **code** files changed in the repo since
-  the previous verification (or the branch base — see Open decisions), not the last workflow batch
+- [ ] The `verify-spec` "Changed files" list is the set of **code** files whose state differs from
+  the previous verification's, not the last workflow batch; with no previous verification on record
+  it is every dirty non-docs path
 - [ ] A `verify-spec` never names the active spec, or any `docs/` path, as what changed
-- [ ] A write from the plan window neither regresses the workflow state nor routes to analyze
+- [ ] A write under `docs/` neither regresses the workflow state nor routes to analyze, from any window
 - [ ] **Negative control:** an edit-window write to a code file still regresses to `editing`, still
-  routes to analyze, and the nvim diff cleanup still runs
+  routes to analyze, and the nvim diff cleanup still runs; a root `CLAUDE.md` write is still routed
 - [ ] **Negative control:** MUX-007's once-per-completion gate is unchanged — exactly one
   `verify-spec` per review completion
 - [ ] The workflow display's `last: …` keeps its current meaning; nothing else reads `LastFiles` as
@@ -93,11 +112,14 @@ last**. `LastFiles` was built for the workflow display — `bus/workflow.go:255-
 
 ### Technical approach — options
 
+Decided 2026-11-24: **A + C**, C gated by path. B is not built.
+
+
 | Option | What | Trade |
 |--------|------|-------|
 | **A. Derive from git** | At `notifyPlanOnReview`, list dirty non-docs paths with the same `git status` walk `VerifyMovementFingerprint` already does (`bus/provenance.go:124-141`, which already skips `docs/`); optionally diff against the last verification's fingerprint to name only what moved | Reuses a walk that exists; names every file, not ≤ 5 |
 | B. Accumulate `LastFiles` | Append across the `editing → reviewed` cycle, reset on `reviewed` | Changes the display field's semantics and keeps the 5-cap; plan's writes still enter the list |
-| **C. Gate the hook** | `ProcessAnalyzeHook` skips the transition and the trigger for plan-window writes (or for `docs/` paths — Open decision 1) | Independent of A/B; the only option that fixes consequence 2 |
+| **C. Gate the hook** | `ProcessAnalyzeHook` skips the transition and the trigger for `docs/` paths (`isDocsMarkdown`, `bus/hook.go:1795`, is the existing docs-path test — Markdown only; whether a non-Markdown file under `docs/`, such as `docs/media/*.svg`, is gated too is settled in Phase 1 against the `docs/` prefix `VerifyMovementFingerprint` uses) | Independent of A/B; the only option that fixes consequence 2 |
 
 **Recommended: A + C.** B alone still lists at most five files and still lets a docs write into
 the set.
@@ -107,7 +129,7 @@ the set.
 | File | Relevance |
 |------|-----------|
 | `tools/muxcode/daemon/daemon.go` | `notifyPlanOnReview` — the list source; `routeTrigger` — the batch transition; `:419` — the `reviewed` transition that carries no files |
-| `tools/muxcode/bus/hook.go` | `ProcessAnalyzeHook` (`:1359`) — no window or path gate on the transition and trigger |
+| `tools/muxcode/bus/hook.go` | `ProcessAnalyzeHook` (`:2086`) — no window or path gate on the transition and trigger |
 | `tools/muxcode/bus/workflow.go` | `WithFiles` (`:136`) replace semantics and 5-cap; display (`:255`) |
 | `tools/muxcode/bus/provenance.go` | `VerifyMovementFingerprint` (`:119`) — already walks status and skips `docs/`; `RepoScopedFiles` (`:34`) |
 | `scripts/test-verify-spec-refire.sh` | The harness shape the integration test reuses |
@@ -118,24 +140,31 @@ the set.
 
 - [ ] Unit test: a workflow entry whose `LastFiles` is the spec path, with eight dirty code files in
   the repo dir → today's message names only the spec (fails after Phase 2)
-- [ ] Unit test: a plan-window write under `docs/` transitions the workflow to `editing` and writes
+- [ ] Unit test: a write under `docs/` transitions the workflow to `editing` and writes
   the trigger (fails after Phase 3)
+- [ ] Settle whether the path gate is all of `docs/` or `docs/**/*.md`, to match the prefix
+  `VerifyMovementFingerprint` already skips; record it
 - [ ] Confirm nothing else consumes `LastFiles` as a change set (`grep LastFiles`), and record it
 
 ### Phase 2: Derive the change set from git
 
 - [ ] Extract the status walk from `VerifyMovementFingerprint` into a shared helper that returns
-  dirty non-docs repo-relative paths
-- [ ] `notifyPlanOnReview` builds "Changed files" from it; keep the
+  dirty non-docs repo-relative paths with each one's content hash; the fingerprint is unchanged for
+  the same tree, so MUX-007's gate does not move
+- [ ] Store the per-path state with the movement marker at each daemon-fired verification
+- [ ] `notifyPlanOnReview` builds "Changed files" from the paths whose state differs from the stored
+  one (every dirty non-docs path when none is stored); keep the
   `(none verified in the repo working tree)` fallback for an empty set
+- [ ] Record what the list covers after a graph-owned review, which writes no marker (MUX-219)
 - [ ] List every file — no 5-cap; if a cap is kept, name the elided count (`+N more`)
 - [ ] Unit test pins the source
 
 ### Phase 3: Keep docs writes out of the workflow
 
-- [ ] `ProcessAnalyzeHook`: no transition and no trigger for the gated case (window or path — Open
-  decision 1)
-- [ ] Negative control: an edit-window code write is unchanged (transition, trigger, diff cleanup)
+- [ ] `ProcessAnalyzeHook`: no transition and no trigger for a path under `docs/`, whichever window
+  wrote it
+- [ ] Negative control: an edit-window code write is unchanged (transition, trigger, diff cleanup),
+  and a root `CLAUDE.md` write still transitions and triggers
 
 ### Phase 4: Integration test
 
@@ -145,25 +174,12 @@ the set.
   `verify-spec` names all three
 - [ ] Test: plan writes the spec between the batches → the `verify-spec` still names the three code
   files and never the spec, and the workflow state was not regressed by the docs write
+- [ ] Test: a second review after one more code file changes → the second `verify-spec` names that
+  file and not the three the first already covered
 - [ ] Negative control: an edit-window code write still routes to analyze and regresses to `editing`
 - [ ] Negative control: exactly one `verify-spec` per review completion (MUX-007 gate)
 - [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run the script and verify all checks pass
-
-## Open decisions
-
-### Decision 1 — gate the hook by window or by path?
-
-By **window** (`plan`) uses what the hook already receives and matches the role rule (plan writes
-only docs). By **path** (`docs/`) is robust to which window writes docs, but `CLAUDE.md` and
-`README.md` at the repo root are docs the edit agent may write and a `docs/` rule leaves them in the
-change set — which is arguably correct, since they are not specs. Not chosen here.
-
-### Decision 2 — "changed since when"?
-
-Since the **last verification** (diff against the stored movement fingerprint) names only what the
-review just covered; since the **branch base** names everything on the branch and is simpler. The
-verifier's job is the former. Not chosen here.
 
 ## Out of scope
 
@@ -172,6 +188,8 @@ verifier's job is the former. Not chosen here.
 
 ## Status
 
-Draft — filed 2026-09-08 from three `verify-spec` requests received in one session. Every code
-claim above was verified against this repo; every timing against the lifecycle log. No
-implementation has started.
+**Backlog** — unparked 2026-11-24 on the user's decisions above. Not started.
+
+Filed 2026-09-08 from three `verify-spec` requests received in one session. Every code claim was
+verified against this repo at filing, every timing against the lifecycle log; the line numbers
+marked above were re-read 2026-11-24.

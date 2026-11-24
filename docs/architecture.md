@@ -1151,7 +1151,7 @@ Each road keeps its own marker in the bus directory (`<event>-<role>.marker`, th
 
 Never use `send-keys` on **active** agents — it disrupts Claude Code's input buffer, interrupts in-progress tool execution, and causes agents to stall at "Interrupted" prompts.
 
-**The `❯` prompt alone does not mean idle.** Claude Code renders the composer *while a tool call runs*, so `IsAgentIdle()`/`PaneHasIdlePrompt()` — which scan the capture for the `❯` character, all lines, because a decorative footer sits below the prompt — are true of a busy agent. They answer "is there a prompt on screen", not "is this agent free". Any road that is about to *type into* a pane must additionally consult `AgentIsWorking()` (live-turn evidence, provider-aware) or `PaneShowsRecoverableIdle()` (`❯` **and** not thinking); see [Daemon watchdogs](#daemon-watchdogs) for which road uses which. Treating the bare prompt as proof of idleness is what let the stall watchdog interrupt a running integration script ([MUX-171](requirements/completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)), and it is the same error behind the idle-task rescue closing live work ([MUX-112](requirements/backlog/MUX-112-idle-task-rescue-closes-live-work.md)).
+**The `❯` prompt alone does not mean idle.** Claude Code renders the composer *while a tool call runs*, so `IsAgentIdle()`/`PaneHasIdlePrompt()` — which scan the capture for the `❯` character, all lines, because a decorative footer sits below the prompt — are true of a busy agent. They answer "is there a prompt on screen", not "is this agent free". Any road that is about to *type into* a pane must additionally consult `AgentIsWorking()` (live-turn evidence, provider-aware) or `PaneShowsRecoverableIdle()` (`❯` **and** not thinking); see [Daemon watchdogs](#daemon-watchdogs) for which road uses which. Treating the bare prompt as proof of idleness is what let the stall watchdog interrupt a running integration script ([MUX-171](requirements/completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md)), and it is the same error behind the idle-task rescue closing live work ([MUX-112](requirements/completed/MUX-112-idle-task-rescue-closes-live-work.md)).
 
 ### Delivery Tracking
 
@@ -1484,7 +1484,7 @@ negative control). `network_access` is one switch, not a per-host allowlist: a r
 everything or nothing. No other role gets it. Whether the grant also lets a `test` agent bind the
 loopback listener `httptest.NewServer` needs is unverified and deliberately moot: this repo's suite is
 socket-free by rule (`newPipeServer`, never `httptest.NewServer`), the option
-[MUX-153](requirements/backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) chose so that no
+[MUX-153](requirements/completed/MUX-153-codex-test-agent-cannot-run-the-suite.md) chose so that no
 sandbox policy decides whether the suite runs. **Still refused to every role, deliberately** (sandbox
 probe 2026-10-13, codex-cli 0.162.1): `.git` writes — Codex protects `.git` even inside the workspace,
 so commit cannot run on Codex; the tmux socket — an agent that could reach it could type into any

@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#108](https://github.com/mkober/muxcode/issues/108)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 A graph `spawn`/`map` node seeds the worker's inbox and launches its agent, but the worker sits idle
 instead of starting. Observed live 2026-08-28: the `req-code-pr` `implement` worker idled **4.5
 minutes** with its task already in its inbox, until `muxcode deliver --force` was run by hand.
@@ -375,6 +377,25 @@ that would have capped the incident at ~45 s regardless of the timer.
 
 - [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) — same family: a spawn worker the executor launched delegating tree-scoped checks back to the shared agents (Defect 1, enforced by `CheckGraphNodeAuthority`) and the tree-less bus behind it (Defect 2, `CheckCrossTree`)
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+The readiness-gated wake shipped; a dirty worktree is preserved (`worktreeRemovable`,
+`bus/spawn.go`); graph spawn workers take no worktree at all since
+[MUX-195](./MUX-195-graph-runs-never-reuse-idle-workers.md).
+
+The open decisions, recorded as the user gave them:
+
+- **A — fix at the source, the daemon, or both: both.**
+- **C — the dirty-worktree policy: refuse and alert.**
+
+The other open decisions (how the daemon enumerates spawns, shared readiness code, worst-case
+latency) close with the spec, undecided.
+
 ## Status
 
-Backlog
+**Complete — closed as overtaken 2026-11-24** at 5/45, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** Backlog

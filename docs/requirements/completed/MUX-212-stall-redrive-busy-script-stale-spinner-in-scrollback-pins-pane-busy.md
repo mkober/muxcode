@@ -209,7 +209,7 @@ review at 17:15:09 with 0 must-fix, 0 should-fix, 0 nits.
   close-out that excluded this script
 - [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) — the busy guard
   this script pins
-- [MUX-123](../backlog/MUX-123-stall-watchdog-selective-misses.md) — the stall watchdog's misses
+- [MUX-123](./MUX-123-stall-watchdog-selective-misses.md) — the stall watchdog's misses
 
 ### Findings at activation (2026-11-17)
 

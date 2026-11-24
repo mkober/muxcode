@@ -99,7 +99,7 @@ and a `50-spec-to-pr` review node waits on the task timeout.
 
 [MUX-171](../completed/MUX-171-stall-watchdog-redrive-kills-busy-claude-tool.md) — the rule this skip
 over-applies (a working pane must not be re-driven; an idle one with a stale task is not working).
-[MUX-123](../backlog/MUX-123-stall-watchdog-selective-misses.md) — the watchdog that fires routinely and misses
+[MUX-123](./MUX-123-stall-watchdog-selective-misses.md) — the watchdog that fires routinely and misses
 live stalls. [MUX-170](./MUX-170-graph-dispatch-adopts-foreign-in-flight-task.md),
 [MUX-189](./MUX-189-batch-delivery-correlates-only-the-last-requests-reply.md) — correlation.
 [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) — the opposite failure on the same road

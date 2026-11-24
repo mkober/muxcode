@@ -24,8 +24,8 @@ cause is not yet known. Filed on the user's instruction relayed by edit.
 | Step | Code | Behaviour |
 |---|---|---|
 | The worker window runs the **base** role's launch | `bus/spawn.go:215,217`: `AGENT_ROLE=<spawnRole> muxcode agent launch <role>` where `role` is the parent role (`edit` for implement/fix workers) and `spawnRole` is `spawn-xxxxxxxx` | `RunAgentLaunch` receives `edit` |
-| Launch writes the bootstrap for the role it was given | `bus/launch.go:34` (`RunAgentLaunch`) → `PreLaunchSetup(role, session, binary)` → `launch.go:849` startup `Message` from `role` to `role` | A `request:startup` from `edit` to `edit` lands in **edit's** inbox, not the worker's |
-| Nothing consults `AGENT_ROLE` on this path | no `SPAWN`/`AGENT_ROLE` reference in `bus/launch.go` | The bootstrap cannot know it is a worker |
+| Launch writes the bootstrap for the role it was given | `RunAgentLaunch` → `RunAgentLaunchResume` → `PreLaunchSetup(role, session, binary, reason)` (`bus/launch.go:1091` on 2026-11-24) → startup `Message` from `role` to `role` | A `request:startup` from `edit` to `edit` lands in **edit's** inbox, not the worker's |
+| Nothing consults `AGENT_ROLE` before the bootstrap | `AGENT_ROLE` is read only after it, at `launch.go:1113`, to export it | The bootstrap cannot know it is a worker |
 | The worker is seeded separately | `bus/spawn.go:400`: `spawn-task` request from the owner to `entry.SpawnRole` | The worker gets its work; it never gets a startup bootstrap of its own |
 | The daemon delivers the stray | startup is request-type precisely so `checkIdleAgents` re-notifies (`launch.go:843-846`) | Edit is woken for a message that was meant for a window that is not its own |
 
@@ -46,33 +46,51 @@ worker, `replaceLostWorkers`), a relaunch by the daemon, or a second `PreLaunchS
 ### Family
 
 - [MUX-182](../completed/MUX-182-cancelled-run-keeps-working-provenance-unreadable.md) Phase 5 — made the self-reply silent; this is the request that provokes it.
-- [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md), [MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) — the spawn seeding cluster.
+- [MUX-135](../completed/MUX-135-spawn-seed-record-gc-strands-completion.md), [MUX-120](../completed/MUX-120-spawn-worker-never-woken-for-seeded-task.md) — the spawn seeding cluster.
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Decision 1 (a): a spawn worker gets no startup bootstrap.** The `spawn-task` seed
+is its bootstrap; nothing else should wake a worker before its task. The launch skips the startup
+message when `AGENT_ROLE` is a `spawn-*` role, on the fresh and the resume road alike. The option of
+addressing a bootstrap to the spawn role is dropped: the worker would hold two requests at start, read
+in no fixed order.
+
+Checked in the tree on 2026-11-24: `RunAgentLaunch` is a wrapper over `RunAgentLaunchResume`, which
+calls `PreLaunchSetup(role, session, binary, reason)` at `bus/launch.go:1091` with the **base** role;
+`AGENT_ROLE` is read only later (`:1113`), to export it. `IsSpawnRole` (`bus/config.go:1049`) is the
+existing test for a `spawn-*` role.
 
 ## Requirements
 
 ### Acceptance criteria
 
 - [ ] A spawn worker launch writes **no** `startup` request to the base role's inbox — test: launch a worker on a scratch session, assert edit's inbox and `log.jsonl` gain no `startup` row from/to `edit`
-- [ ] The worker's own bootstrap is either addressed to its `spawn-xxxxxxxx` role or deliberately omitted (it is seeded by `spawn-task`); the choice is recorded here and in `docs/architecture.md`
+- [ ] A spawn worker receives no `startup` request of its own either: its inbox holds its `spawn-task` seed and nothing else at start; `docs/architecture.md` says so
+- [ ] The launch's `agent launch` lifecycle row is still written for a worker, naming the spawn role
 - [ ] **Positive control:** a plain `muxcode agent launch edit` (a real edit relaunch) still writes edit's startup request
 - [ ] The paired second row is explained (Phase 1) and, if it is a second launch of the same worker, fixed or filed
 - [ ] `bash scripts/test-spawn-startup-bootstrap.sh` passes
 
 ### Technical approach
 
-`RunAgentLaunch` should derive the **bus** role from `AGENT_ROLE` when set (it already is the
-worker's window and inbox name), and pass that to `PreLaunchSetup` — or `StartSpawn` should pass
-`spawnRole` as the launch argument and let the launcher resolve the definition from the base role.
-The first is smaller. Whether a worker *should* receive a startup bootstrap at all is Decision 1;
-the seed already carries the task, and a second request would race it.
+In `RunAgentLaunchResume`, when `AGENT_ROLE` names a spawn role (`IsSpawnRole`), skip the startup
+message: `PreLaunchSetup` does three things — retires pending startups for the role, sends the
+startup, logs the launch row — and a worker launch needs only the third, attributed to the spawn role.
+Retiring must be skipped too: run with the base role it would remove **edit's** own unread startup.
+
+The same function next calls `ClearInFlightTasksForRole(session, role, …)` with the base role. Whether
+a worker launch clears the base role's in-flight tasks through it is not established; Phase 1 checks
+it and, if it does, files it rather than widening this spec.
 
 ### Key files
 
 | File | Role |
 |---|---|
-| `tools/muxcode/bus/spawn.go:213-220,400` | the launch string; the `spawn-task` seed |
-| `tools/muxcode/bus/launch.go:10-40,848-` | `RunAgentLaunch`, `PreLaunchSetup` |
-| `tools/muxcode/bus/mode.go:357` | the other road that notes `PreLaunchSetup` wrote a startup message |
+| `tools/muxcode/bus/spawn.go` | the launch string (`AGENT_ROLE=<spawnRole> muxcode agent launch <role>`); the `spawn-task` seed |
+| `tools/muxcode/bus/launch.go:867,1091` | `PreLaunchSetup`, and its call in `RunAgentLaunchResume` |
+| `tools/muxcode/bus/config.go:1049` | `IsSpawnRole` |
+| `tools/muxcode/bus/mode.go` | the other road that notes `PreLaunchSetup` wrote a startup message |
 | `tools/muxcode/bus/graph_exec.go` (`replaceLostWorkers`) | candidate cause of the paired row |
 | `scripts/test-spawn-startup-bootstrap.sh` | new |
 
@@ -80,30 +98,24 @@ the seed already carries the task, and a second request would race it.
 
 ### Phase 1: Establish the boundary
 
-- [ ] Reproduce on a scratch session: one `spawn start` → count `startup` rows to `edit` in `log.jsonl` (expect 1–2 today); a failing test kept as the negative control
+- [ ] Reproduce on a scratch session: one `spawn start` → count `startup` rows to `edit` in `log.jsonl` (1–2 expected before the fix); record the count here. The assertion that it is zero is written with Phase 2's fix, not before it
 - [ ] Explain the pair: correlate the second row's `ts` with `spawn-launched`/`graph-spawn-replaced`/relaunch lifecycle rows; record the cause here
-- [ ] Decide whether a worker gets its own bootstrap ([Decision 1](#decision-1--does-a-worker-get-a-bootstrap))
+- [ ] Check whether a worker launch clears the base role's in-flight tasks (`ClearInFlightTasksForRole` with the base role); record what was found and file it if it does
 
 ### Phase 2: Fix
 
-- [ ] `RunAgentLaunch` resolves the bus role from `AGENT_ROLE` for the bootstrap (definition still from the base role); unit test for both roles
+- [ ] `RunAgentLaunchResume` sends no startup message and retires none when `AGENT_ROLE` is a spawn role; the launch lifecycle row is still written, naming the spawn role
+- [ ] Unit tests: a spawn-role launch leaves the base role's inbox unchanged, an unread base-role startup included; **control** — a base-role launch writes its startup as before, on the fresh and the resume road
 - [ ] If the pair was a second launch, fix its cause or file it
-- [ ] `docs/architecture.md` spawn section states which role a worker's bootstrap is addressed to
+- [ ] `docs/architecture.md` spawn section: a worker gets no startup bootstrap; the `spawn-task` seed is what starts it
 
 ### Phase 3: Integration test
 
-- [ ] Create `scripts/test-spawn-startup-bootstrap.sh` — live scratch daemon, a stub worker
-- [ ] Test: one worker launch → zero `startup` rows to `edit`; worker inbox holds exactly one `spawn-task`
+- [ ] Create `scripts/test-spawn-startup-bootstrap.sh` — live scratch daemon on a private tmux server, a stub worker
+- [ ] Test: one worker launch → zero `startup` rows to `edit` and none to the spawn role; worker inbox holds exactly one `spawn-task`
 - [ ] **Positive control:** `muxcode agent launch edit` on the scratch session → one `startup` row to `edit`
+- [ ] **Negative control:** a build from a copy of the tree with the skip removed writes the stray row, so the zero-rows assertion can fail
 - [ ] Coverage floor; run and record counts here
-
-## Open decisions
-
-### Decision 1 — does a worker get a bootstrap?
-
-Omit it (the seed is the bootstrap; nothing else should wake the worker before its task) or address
-it to the spawn role (uniform launch semantics; the worker then has two requests at start and the
-order they are read is not fixed). The evidence favours omitting.
 
 ## Out of scope
 
@@ -115,5 +127,9 @@ order they are read is not fixed). The evidence favours omitting.
 Backlog
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from seven observations on 2026-09-23/24
-confirmed in `log.jsonl`. The addressing cause is verified in code (`spawn.go:215` → `launch.go:34`);
-the paired second row is observed and **unexplained**. Harmless so far. Not started.
+confirmed in `log.jsonl`. The addressing cause is verified in code (the spawn launch string →
+`PreLaunchSetup` at `launch.go:1091`); the paired second row is observed and **unexplained**. Harmless
+so far. Not started.
+
+Unparked 2026-11-24 on the user's Decision 1 (a) — no bootstrap for a worker — relayed by edit and
+recorded above.

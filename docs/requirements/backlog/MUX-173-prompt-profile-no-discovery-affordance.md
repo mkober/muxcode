@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#131](https://github.com/mkober/muxcode/issues/131)
 
-The `prompt` tool profile (`bus/profile.go:909–921`) lists twelve `muxcode` subcommand patterns, every
+The `prompt` tool profile (`bus/profile.go`, the `"prompt"` entry — at `:1074` on 2026-11-24) lists twelve `muxcode` subcommand patterns, every
 one of them requiring a subcommand argument — `Bash(muxcode graph *)`, `Bash(muxcode send *)`, and so
 on. Nothing matches bare `muxcode` or `muxcode help`. A local model that opens by orienting itself,
 which is what a model does when it has no memorised CLI surface, is denied twice before it starts:
@@ -30,7 +30,7 @@ Both runs reported 26 passed / 2 failed / 1 skipped, exit 1.
 
 ### Mechanism — verified in code
 
-- `bus/profile.go:909` `"prompt"` — `Tools` holds `Bash(muxcode graph *)`, `Bash(muxcode approve *)`,
+- `bus/profile.go` `"prompt"` (`:909` at filing, `:1074` on 2026-11-24, list unchanged) — `Tools` holds `Bash(muxcode graph *)`, `Bash(muxcode approve *)`,
   `Bash(muxcode send *)`, `Bash(muxcode inbox*)`, `Bash(muxcode status*)`, `Bash(muxcode tasks*)`,
   `Bash(muxcode spec *)`, `Bash(muxcode workflow*)`, `Bash(muxcode history *)`,
   `Bash(muxcode memory *)`, `Bash(muxcode diagnose *)`, `Bash(muxcode lifecycle *)`, two
@@ -67,60 +67,83 @@ across its existing patterns. Not in scope: why section 5's live intents fail (o
 the `Loop detected: edit (message)` rows in both runs, other roles' profiles, or the harness's denial
 mechanism itself — which behaved exactly as designed.
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. Option A, the narrow form:
+
+- Add `Bash(muxcode help*)` and a bare `Bash(muxcode)` to the **`prompt` profile only**. No convention
+  shared across roles is introduced; another role's profile is changed when that role shows the gap.
+- Pin the allowed set with a test that carries a negative control.
+- Normalise the trailing-space spacing across the profile's `muxcode` patterns.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A prompt-agent can run a read-only orientation command — at minimum `muxcode help` — without a
-      tool-profile denial
+- [ ] A prompt-agent can run bare `muxcode` and `muxcode help` without a tool-profile denial
 - [ ] The `prompt` profile's `muxcode` patterns are internally consistent about the trailing space, so
       `muxcode graph` and `muxcode inbox` are treated alike rather than one admitted and one denied
-- [ ] Widening the profile grants **no** new mutating capability: `commit`, `graph approve`,
-      Atlassian writes and every other gated verb stay exactly as reachable as they are today
+- [ ] Widening the profile grants **no** new mutating capability: `commit`, Atlassian writes and every
+      other verb outside today's list stay exactly as unreachable as they are today
+- [ ] No other role's profile changes
 - [ ] A test pins the allowed set, and fails if a future edit admits a mutating subcommand — with a
       negative control proving the assertion can fail
 
 ### Technical approach
 
-Add a discovery affordance to the `prompt` entry in `bus/profile.go`. The narrow form is
-`Bash(muxcode help*)` plus a bare `Bash(muxcode)`; the question worth deciding is whether the profile
-should instead carry a single `Bash(muxcode --help*)`-style convention shared across roles, since this
-gap is unlikely to be unique to `prompt`.
+Add `Bash(muxcode help*)` and `Bash(muxcode)` to the `prompt` entry's `Tools` in `bus/profile.go`.
+`Bash(muxcode)` must match the bare command only: the test asserts that it does not admit
+`muxcode commit` or any other subcommand, since a matcher that treated it as a prefix would open the
+whole CLI.
 
-Whatever the shape, the pin matters more than the widening: this profile is a **security boundary**,
-and every other role's profile is one too. A test that asserts the allowed set — and carries a
-negative control, so a rule that matches nothing cannot pass while the set is wrong — is the part that
-keeps a later "just add one more pattern" from quietly admitting `muxcode commit`.
+Normalising the spacing means choosing one form for the read-only subcommands. The no-space form
+(`Bash(muxcode inbox*)`) admits the bare subcommand, which is what a model orienting itself types;
+it also admits any subcommand sharing the prefix, so each normalised pattern is checked against the
+subcommand list for a collision before it is changed, and the pin names what each admits.
+
+The pin matters more than the widening: this profile is a **security boundary**. A test that asserts
+the allowed set — and carries a negative control, so a rule that matches nothing cannot pass while the
+set is wrong — is the part that keeps a later "just add one more pattern" from quietly admitting
+`muxcode commit`.
 
 ### Key files
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/profile.go` | `prompt` profile at `:909`; the `Tools` list to widen |
-| `tools/muxcode-llm-harness/harness/executor.go` | `:100` raises the denial; unchanged by this spec |
-| `scripts/test-prompt-mode.sh` | section 5 is where the denials surfaced |
+| `tools/muxcode/bus/profile.go` | the `"prompt"` profile's `Tools` list |
+| `tools/muxcode/bus/profile_test.go` | the allowed-set pin |
+| `tools/muxcode-llm-harness/harness/executor.go` | raises the denial; unchanged by this spec |
+| `scripts/test-prompt-profile.sh` | new |
 
 ## Implementation
 
 ### Phase 1: Widen and pin
 
-- [ ] Decide the discovery convention (per-role `help` pattern vs a shared one) and record it here
-- [ ] Add the affordance to the `prompt` profile
-- [ ] Normalise the trailing-space inconsistency across that profile's `muxcode` patterns
-- [ ] `profile_test.go`: assert the allowed set admits `muxcode help` and still denies a mutating
-      subcommand, with a negative control that fails if the matcher stops matching
+- [ ] Add `Bash(muxcode help*)` and `Bash(muxcode)` to the `prompt` profile
+- [ ] Normalise the trailing-space inconsistency across that profile's `muxcode` patterns, each change
+      checked for a prefix collision with another subcommand
+- [ ] `profile_test.go`: the allowed set admits `muxcode`, `muxcode help`, and both `muxcode graph`
+      and `muxcode inbox`; it denies `muxcode commit` and an Atlassian write; no other role's `Tools`
+      changed
+- [ ] **Negative control** in the same test: a profile copy with `Bash(muxcode commit*)` added fails
+      the pin, and a matcher stub that matches nothing fails the admit assertions
 
 ### Phase 2: Docs
 
-- [ ] [`docs/agents.md`](../../agents.md) tool-profile section: state that a profile needs a discovery
+- [ ] [`docs/agents.md`](../../agents.md) tool-profile section: the `prompt` profile's discovery
       affordance, and why a model without one burns iterations orienting
 
 ### Phase 3: Integration test
 
-- [ ] Extend `scripts/test-prompt-mode.sh` (or add `scripts/test-prompt-profile.sh`) with a check that
-      a prompt-agent's `muxcode help` is permitted and a mutating verb is refused
-- [ ] Include the negative control: the refusal assertion must fail if the deny path stops working
-- [ ] Run through the run agent and record the row here
+- [ ] Create `scripts/test-prompt-profile.sh` — hermetic, muxcode and the harness built from the
+      tree, no model call: each command goes through the permission check the harness executor
+      applies to a prompt-agent's bash call (the road — an existing CLI entry point or a small test
+      driver — is named here once Phase 1 has found it)
+- [ ] `muxcode` and `muxcode help` are permitted; `muxcode commit` and `muxcode atlassian jira update`
+      are refused
+- [ ] **Negative control**: against a build from a copy of the tree without the two new patterns,
+      `muxcode help` is refused — the permit assertion can fail
+- [ ] Coverage floor; run through the run agent and record the row here
 
 ## Notes
 
@@ -140,3 +163,6 @@ refuted the first conclusion drawn from them.
 ## Status
 
 Backlog
+
+Unparked 2026-11-24 on the user's decision (option A, `prompt` profile only), relayed by edit and
+recorded above. Not started.

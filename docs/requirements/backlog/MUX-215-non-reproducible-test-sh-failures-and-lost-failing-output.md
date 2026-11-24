@@ -257,9 +257,9 @@ shown; this spec's open boxes remain the user's call.
   overlapping and mid-edit runs, one candidate cause
 - [MUX-214](../completed/MUX-214-root-go-vet-false-alarm-from-the-build-agent.md) — the false alarms; this
   spec is about the real failures
-- [MUX-152](./MUX-152-test-sh-hides-modules-after-first-failure.md) — `test.sh` hiding modules after
+- [MUX-152](../completed/MUX-152-test-sh-hides-modules-after-first-failure.md) — `test.sh` hiding modules after
   the first failure; the summary this builds on came from MUX-174
-- [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) — the Codex test agent and the suite
+- [MUX-153](../completed/MUX-153-codex-test-agent-cannot-run-the-suite.md) — the Codex test agent and the suite
 - [MUX-217](../completed/MUX-217-agent-defs-reload-races-a-graph-dispatch-and-clears-it.md) — a test node of this
   spec's run failed without running the suite, when a watchdog reload cleared its dispatch
 
@@ -272,6 +272,10 @@ Phase 1 is complete and reviewed, and its capture work stays in the tree (uncomm
 `test.sh`, `tools/muxcode/bus/hook.go` (`clipOutput`), `agents/test-runner.md`,
 `scripts/test-test-sh-coverage.sh`, `CLAUDE.md` and `docs/agents.md`. Open: Phase 2 (3 steps — not
 meetable without a new occurrence), Phase 3 (4 steps) and acceptance criteria 2, 3 and 4.
+
+**2026-11-24 — stays parked**, on the user's decision relayed by edit, after the user went through
+every parked spec: the capture shipped, reopen on a named failure. Criteria 1, 5 and 6 were already
+ticked.
 
 **2026-11-14 — a candidate is identified.** An order-dependent flake in the `muxcode` module was
 caught by name on PR #196's CI and fixed there (see "Findings after parking"). It is the likely

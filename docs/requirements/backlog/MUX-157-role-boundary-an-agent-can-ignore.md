@@ -13,8 +13,6 @@ Three containment mechanisms were in place and all three failed: the definition,
 reload. There is no tool-level guard for "this role may not write source" on any provider road —
 every guard that exists points the other way, at edit.
 
-Tracking: _(no GitHub issue yet)_
-
 ## Context
 
 ### Observed (2026-09-08, session `muxcode`)
@@ -90,56 +88,69 @@ model feels like reading its prompt.
 |------|--------------|
 | [`MUX-144`](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) | The work the test agent was doing. Phase 2 P1 stays open; attempt 4 is recorded there as a caveat, not a fix |
 | [`MUX-154`](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) | Every "succeeded" in the timeline is a Codex status-line echo — false readings were cheap to produce all session |
-| [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | The Codex test agent cannot run the suite; the role that could not do its own job did someone else's |
+| [`MUX-153`](../completed/MUX-153-codex-test-agent-cannot-run-the-suite.md) | The Codex test agent cannot run the suite; the role that could not do its own job did someone else's |
 | [`MUX-148`](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) | Same family — an outcome read from something other than the verdict |
+
+## Decisions (user, 2026-11-24)
+
+The user's decisions, relayed by edit. The spec was parked on Phase 1's open question — whether
+watch and analyze join `validationRoles`.
+
+| Question | Decision |
+|----------|----------|
+| Which roles are validation roles (Decision 1, option a) | **build, test and review only.** watch and analyze are not in `validationRoles` |
+| How "never author" is enforced | **The hook guard on Claude and Codex, plus OpenCode `DenyTools`.** The Codex sandbox criterion is dropped — Codex runs unsandboxed by default since 2026-11-02 (`codexSandboxMode`), so a sandbox flag is not the road |
+| The spec's other three parts | **Split into their own specs** — this spec keeps the source-write guard alone |
+
+| Split out | Spec |
+|-----------|------|
+| A halt that halts | [MUX-243](./MUX-243-a-halt-that-halts.md) |
+| Negative-control deletion check, and the forged-hold positive control | [MUX-244](./MUX-244-negative-control-deletion-is-not-checked.md) |
+| Who may certify what | [MUX-245](./MUX-245-a-worker-certifies-its-own-change.md) |
+
+**What the decision leaves uncovered, stated so nobody reads the guard as more than it is:**
+
+- **Scrape-road Codex** (`MUXCODE_CODEX_HOOKS=0`, or an ineligible codex) runs no hook, so no guard
+  examines its writes. With the sandbox criterion dropped, nothing does. The hook road is the
+  default for an eligible codex.
+- **Command shape.** A shell write the guard's patterns do not recognise passes — the same limit
+  [MUX-197](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) records for edit and plan,
+  where the user accepted it on 2026-11-24: the guard is a nudge against the habitual wrong command,
+  not a boundary against an agent working around it. The file tools (`Write`, `Edit`, Codex
+  `apply_patch`) carry a path and are refused outright.
 
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A validation role (build, test, review; watch and analyze to be decided in Phase 1) cannot
-      write a source file on **any** provider road — Claude (PreToolUse guard), OpenCode (deny
-      rules), Codex (sandbox policy). `Write`, `Edit`, `sed -i`, `gofmt -w`, `--fix`/`--write` are
-      refused with a reason naming the role and the delegation target
+- [ ] A validation role — build, test, review — cannot write a source file with a file tool on the
+      hook road: Claude `Write`/`Edit`/`NotebookEdit` and Codex `apply_patch` are refused with a
+      reason naming the role and the delegation target (edit)
+- [ ] The same roles' shell writers the guard recognises — `sed -i`, `gofmt -w`, `--fix`/`--write`,
+      redirects into the tree — are refused the same way (`CheckBashFileWriteGuard`'s shapes)
+- [ ] On OpenCode the same roles carry write-deny rules from `DenyTools` in their profiles
 - [ ] A refusal is attributable: lifecycle event `role-write-refused` naming role, tool and path
-- [ ] Negative control: edit's writes are unaffected; plan's `docs/` writes are unaffected; build's
-      writes to its granted roots (`~/.local/bin`, `~/.config/muxcode`, the Go caches) still succeed
-      under Codex; test can still write what `go test` needs
-- [ ] A halt is a halt: a `halt` request to a role stops in-flight work, and a subsequent reload does
-      not resurrect it — defined from what actually survives a reload, then tested
-- [ ] Deleting or weakening a negative control is a must-fix review category, checked mechanically:
-      a diff that removes a named control or inverts its assertion is flagged without a reviewer
-      having to notice
-- [ ] Who may certify what is written down: a worker's own `EXIT=0` on a change it authored does
-      not outrank review's `EXIT=1` on the same change
-- [ ] The forged-hold quartet has its positive control back under its own name
-- [ ] An integration test proves each road
+- [ ] Negative control: edit's writes are unaffected; plan's `docs/` writes are unaffected; watch and
+      analyze are not guarded; build's install (`./build.sh` writing `~/.local/bin` and
+      `~/.config/muxcode`) and what `go build`/`go test` write (caches, `bin/`) still succeed
+- [ ] The docs say which roads are covered and name the two that are not (scrape-road Codex, command
+      shape)
+- [ ] An integration test proves each covered road
 
 ### Technical approach
 
 Mirror the shape that already holds twice. One predicate, `CheckSourceWriteGuard(role, path)` in
-`bus/hook.go`, over a `validationRoles` set; `hookGuard` consults it for file-path tools **and**
-`CheckBashFileWriteGuard` for shell writers, and its early return widens from "roles with guard
-rules" to "roles with any limit" — exactly the widening the Atlassian guard already forced. OpenCode
-gets the same rule as `DenyTools` write patterns in the validation profiles. Codex gets a sandbox
-flag: `-s read-only` for review (it only reads), and for test the Phase 1 question is whether
-`read-only` plus `--add-dir` for `GOCACHE`/tmp is a policy Codex accepts — `go test` must write
-its cache — or whether test needs `workspace-write` with the source tree carved out some other way.
-Build keeps `workspace-write` plus its roots.
+`bus/hook.go`, over a `validationRoles` set (build, test, review); the guard consults it for
+file-path tools **and** `CheckBashFileWriteGuard` for shell writers, and `HasGuardRules`' early
+return widens from "roles with guard rules" to "roles with any limit" — the widening the Atlassian
+guard already forced. Because the decision core is the provider-agnostic `GuardDecisionFor`
+(MUX-159), one rule set covers Claude and hook-road Codex. OpenCode gets the same rule as `DenyTools`
+write patterns in the three profiles.
 
-The halt: establish in Phase 1 what survives `muxcode reload <role>` — the in-flight task, the
-inbox rows, the provider's own session resume — and define `halt` as draining those: cancel the
-role's in-flight tasks and mark the carrying request `halted` so re-delivery cannot revive it.
-
-Negative-control deletion: a reviewer checklist item is prose too. The mechanical form is a suite
-test that names the project's controls and fails when one is missing, or a diff check the review
-chain runs for removed `func Test…` lines and flipped `want` assertions on files that declare
-controls.
-
-Certification: the rule belongs in `CLAUDE.md` and the reviewer's definition; the mechanical form —
-whether a graph join of test + review should be `all` rather than either alone, and whether a
-sentinel from the diff's author should count at all — is a design question for the spec, not
-decided here.
+"Source file" needs a definition the guard can apply to a path: everything inside the repository
+checkout except what the role's own work produces (build output such as `bin/`, and paths outside
+the checkout). Phase 1 lists what build and test legitimately write inside the tree before the
+predicate is written, so the guard is drawn from that list and not from a guess.
 
 ### Key files
 
@@ -159,60 +170,52 @@ decided here.
 
 ### Phase 1: Pin
 
-- [ ] Characterization: a test-role `Write` to `bus/x.go` passes `hookGuard` unexamined; failure
-      message names Phase 2
-- [ ] Characterization: `BuildExecArgs` for the test role carries no `-s`; for review only
-      `-a on-request`
-- [ ] Characterization: the generated OpenCode config for test carries no write deny
-- [ ] Establish what survives `muxcode reload <role>` (in-flight task, inbox rows, provider session
-      resume) and record it in this spec — the halt design depends on it
-- [ ] Decide whether watch and analyze join `validationRoles`
-- [ ] Establish whether Codex accepts `-s read-only` with `--add-dir` (test's `GOCACHE`), or what
-      the alternative is
-- [ ] Restore the positive control for the forged-hold quartet under its own name: a person's
-      `ApproveGraphGate` on an unverified hold releases it
+- [ ] Characterization: a test-role `Write` to `bus/x.go` passes the guard unexamined, and a Codex
+      `apply_patch` from build to a source file likewise; each asserts today's behaviour so the
+      suite stays green, and its message names Phase 2
+- [ ] Characterization: the generated OpenCode config for build, test and review carries no write
+      deny
+- [ ] List what build and test legitimately write inside the checkout (`bin/`, generated files,
+      coverage output, anything `./build.sh` and `./test.sh` touch) by running both and reading
+      `git status --ignored`; record the list here — the guard's exemptions come from it
 
-### Phase 2: A source-write guard on every road
+### Phase 2: A source-write guard on the hook road and OpenCode
 
-- [ ] `CheckSourceWriteGuard(role, path)` + `validationRoles`; `hookGuard` consults it for file
-      tools and `CheckBashFileWriteGuard` for shell writers; widen the early return
-- [ ] OpenCode: write-deny patterns in the validation profiles' `DenyTools`
-- [ ] Codex: `-s read-only` for review; test per the Phase 1 finding; build unchanged
-- [ ] `role-write-refused` lifecycle event
-- [ ] Invert the Phase 1 characterizations
-- [ ] Negative controls: edit unchanged; plan's `docs/` unchanged; build's roots still writable
-      under Codex; test's cache still writable
+- [ ] `CheckSourceWriteGuard(role, path)` + `validationRoles` (build, test, review); the guard
+      consults it for file tools and `CheckBashFileWriteGuard` for shell writers; widen
+      `HasGuardRules`' early return; the Phase 1 characterizations flip in the same change
+- [ ] The never-author rules resolve through `HasGuardRules`/`CheckGuard`/`GuardDecisionFor`
+      unchanged — one rule set, two providers (moved from MUX-159 Phase 5 item 3)
+- [ ] Codex `apply_patch` is checked against the never-author guard on every path the patch names,
+      beside the doc-file guard that already holds (moved from MUX-159 Phase 5 item 1 and AC 9)
+- [ ] OpenCode: write-deny patterns in the three profiles' `DenyTools`
+- [ ] `role-write-refused` lifecycle event naming role, tool and path
+- [ ] Negative controls: edit unchanged; plan's `docs/` unchanged; watch and analyze unguarded;
+      every path on Phase 1's list still writable by its role
 
-### Phase 3: A halt that halts
+### Phase 3: Docs
 
-- [ ] Define `halt` from the Phase 1 finding: cancel the role's in-flight tasks, mark the carrying
-      request `halted`, a reload does not resurrect it
-- [ ] Test: halt → reload → the work is not resumed
-- [ ] Negative control: a reload with no halt resumes exactly as today
+- [ ] `docs/agents.md` (Permission mode, Agent Permissions) and `docs/hooks.md` (hook guard): what
+      is enforced, on which road, and the two uncovered roads by name
+- [ ] `CLAUDE.md` key constraints: one bullet for the never-author guard
+- [ ] `agents/test-runner.md`, `agents/code-reviewer.md`, `agents/code-builder.md` (applied by
+      edit): the prose rule names the guard and what to do on a refusal — report to edit
 
-### Phase 4: Controls and certification are rules, not luck
+### Phase 4: Integration test
 
-- [ ] Negative-control removal is a must-fix category in `agents/code-reviewer.md`; the standing
-      rule moves out of (or is cross-linked from) `docs/tui-style.md` so it is project-wide
-- [ ] Mechanical check: a suite test or `scripts/` diff check that fails when a named control is
-      removed or its assertion inverted
-- [ ] Certification rule written in `CLAUDE.md` and the reviewer definition; the mechanical form
-      decided and, if any, implemented
-- [ ] `docs/agents.md` (Permission mode, Agent Permissions) and `CLAUDE.md` key constraints describe
-      what is enforced, on which road
-
-### Phase 5: Integration test
-
-- [ ] Create `scripts/test-role-write-guard.sh` (hermetic; scratch bus, no live session)
-- [ ] Test: a test-role `Write` event to a `.go` path through `muxcode hook guard` → refused,
-      `role-write-refused` row present
-- [ ] Test: Codex exec args — test/review carry the read-only policy, build carries
-      `workspace-write` plus its roots
-- [ ] Test: the generated OpenCode config for test carries the write denies
-- [ ] Negative control: edit's `Write` passes; plan's `docs/` `Write` passes
-- [ ] Test: halt → reload → no resumption
+- [ ] Create `scripts/test-role-write-guard.sh` (hermetic; scratch bus, muxcode built from the tree,
+      no live session)
+- [ ] Test: a `Write` event to a `.go` path through `muxcode hook guard` as test, build and review →
+      refused, `role-write-refused` row present for each
+- [ ] Test: a Codex `apply_patch` payload from build naming a source file → the codex `deny` answer
+- [ ] Test: a recognised shell writer (`sed -i`, `gofmt -w`) as test → refused
+- [ ] Test: the OpenCode config `WriteAgentConfig` generates for test carries the write denies
+- [ ] Negative control: edit's `Write` passes; plan's `docs/` `Write` passes; a watch-role `Write`
+      passes (Decision 1); a build-role write to a path on Phase 1's list passes
+- [ ] Control: a muxcode built from a scratch copy with `CheckSourceWriteGuard` returning nil admits
+      the test-role `Write`, which the first test rejects
 - [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [ ] Run the script and record pass/fail counts in this spec
 
 ## Notes
 
@@ -231,13 +234,23 @@ the user's call; it is filed at tier 1.
 `hook guard` runs for codex on `Bash` and `apply_patch`, the decision core is the provider-agnostic
 `GuardDecisionFor` (`bus/hook.go`), and `TestGuardDecisionFor_CodexPayloads` drives every existing
 guard family with codex payloads — but the never-author family it was meant to carry does not exist
-until this spec adds it to `guardRulesForRole`. These three items moved here verbatim; they close
-when Phase 2's rules land, on both providers at once:
+until this spec adds it to `guardRulesForRole`. Three items moved here from MUX-159 (its Phase 5
+items 1 and 3 and its AC 9); since the 2026-11-24 rewrite they are steps of Phase 2 and Phase 4
+above, each marked with where it came from, and close when Phase 2's rules land on both providers at
+once.
 
-- [ ] `PreToolUse` `Bash` → `hook guard` → codex `deny` answer; `apply_patch` → doc-file **and never-author** guards on every path the patch names (MUX-159 Phase 5 item 1 — the deny answer and the doc-file half already hold)
-- [ ] The never-author rules for build/test/review resolve through `HasGuardRules`/`CheckGuard`/`GuardDecisionFor` unchanged — one rule set, two providers (MUX-159 Phase 5 item 3)
-- [ ] The never-author and doc-file guards hold for codex build/test/review — a codex `apply_patch` from build to a source file is refused (MUX-159 AC 9)
+### State at the decision (2026-11-24)
+
+Read by plan from the tree. `guardRulesForRole` (`bus/hook.go:1405`) still returns rules for edit
+and plan only; `CheckDocFileGuard` (`:1812`) and `CheckBashFileWriteGuard` (`:1731`) exist;
+`CheckSourceWriteGuard` does not. The prose rules stand at `agents/test-runner.md:41`,
+`agents/code-reviewer.md:165` and `agents/code-builder.md:9`. The Mechanism and Key files tables'
+other line numbers are September's and were not re-read. The forged-hold positive control this spec
+asked for exists as `TestExecUnverifiedHoldReleasedByAuditedUserApproval`
+(`bus/graph_exec_test.go:1822`, commit `77f32b8`); that item moved to MUX-244, ticked there.
 
 ## Status
 
-**Backlog** — filed 2026-09-08. Not started.
+**Backlog** — filed 2026-09-08. Not started. Unparked 2026-11-24 on the user's decisions:
+`validationRoles` = build, test, review; enforced by the hook guard and OpenCode `DenyTools`; halt,
+negative-control check and certification split into MUX-243, MUX-244 and MUX-245.

@@ -315,7 +315,7 @@ shows an edit-requested build since the change.
 
 - [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) —
   where this was found; the other source of false FAILED notices
-- [MUX-152](../backlog/MUX-152-test-sh-hides-modules-after-first-failure.md) — `test.sh` and its per-module
+- [MUX-152](./MUX-152-test-sh-hides-modules-after-first-failure.md) — `test.sh` and its per-module
   reporting
 - [MUX-215](../backlog/MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) — the failures
   that are real but cannot be named

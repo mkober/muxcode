@@ -77,7 +77,7 @@ because a spec mentions five work items is precisely the failure this rule exist
 Jira has **no transactional multi-create**. Five issues are five POSTs, and a failure on the third
 leaves two real issues in the tracker that a naive retry would duplicate. Silent partial creation in
 a shared system is the same irreversible-partial-state class as
-[MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md), and duplicates are worse than a
+[MUX-135](../completed/MUX-135-spawn-seed-record-gc-strands-completion.md), and duplicates are worse than a
 failure because a human has to find and close them.
 
 - [ ] Each batch writes a **receipt** mapping input index → created key as it goes, before the next POST
@@ -177,7 +177,7 @@ the authority to use it. The skill update is an acceptance criterion, not docume
 
 | Spec | Relationship |
 |------|--------------|
-| [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Same irreversible-partial-state class the batch receipts guard against |
+| [MUX-135](../completed/MUX-135-spawn-seed-record-gc-strands-completion.md) | Same irreversible-partial-state class the batch receipts guard against |
 | [MUX-137](../completed/MUX-137-test-bus-dir-leak.md) | Hermetic-test discipline — the stub Jira exists so this suite never touches a real tracker |
 
 ## Status

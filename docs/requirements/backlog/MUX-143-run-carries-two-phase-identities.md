@@ -11,7 +11,34 @@ from two different sources, consumed by two different sets of nodes, and never c
 guard whose entire stated purpose is to scope a ship to what the run claimed to deliver validates the
 identity the worker was **not** given.
 
-Tracking: _(no GitHub issue yet)_
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. The spec is split by defect, and both questions it left for the user are answered.
+
+| Defect | Decision |
+|--------|----------|
+| A — a parked checkbox pins derivation | **Bless `### Deferred`.** A non-`Phase` `###` heading is the way to park an item: boxes under it belong to no phase, so they cannot hold `SpecCurrentPhase`. No item-level syntax is added. Delivered as a test and a doc line, **landing with [MUX-130](./MUX-130-spec-phase-parsing-semantics.md)'s Phase 3 scoping** — one change to the heading rule in `parseSpecPhases` |
+| B — intent phase and derived phase disagree | **Warn, do not refuse.** When the launch intent names a phase and the live derivation names another, the launch warns. No new blocking gate is added to the ship path |
+
+The two defects stay in this one spec, as separate phases. Defect A's phase is done when MUX-130's
+Phase 3 lands with its test; Defect B's is independent of MUX-130.
+
+State of the code on 2026-11-24, read by plan before recording the above:
+
+- A non-`Phase` `###` heading **already** ends the current phase in `parseSpecPhases`
+  (`bus/spec_items.go` — any heading shallower than `####` resets the cursor). So `### Deferred`
+  works today by accident of the rule; what is missing is a test that pins it, a doc line that says
+  it is the mechanism, and its survival through MUX-130's scoping rewrite.
+- An item under `### Deferred` still counts for `SpecOpenItems`, so the spec cannot be closed out
+  while it is open. That is intended: parked is visible and countable, not done.
+- **No builtin template carries the `phase-complete` guard any more.** `50-spec-to-pr` commits under
+  `phase-progress`, which [MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md)
+  anchored on HEAD's copy of the spec — it ships the phase that is complete in the tree and not at
+  HEAD, whatever the intent says. `phaseCompleteGuardAllows` and `IntentPhase` are still in the code
+  and still scope to the frozen intent, so the vacuous pass described under Defect B is reachable
+  only from a project or user template that sets `"guard": "phase-complete"`.
+- `UnscopedPhaseGuardWarning` is unchanged: it warns only when the intent names no phase, and is
+  called from both launch surfaces (`cmd/graph.go`, `tui/graph_ui.go`).
 
 ## Context
 
@@ -52,8 +79,8 @@ you*.
 > This repo already has the shape of an answer. MUX-136 carries a `### Deferred` section holding
 > items blocked on environment, placed under a **non-`Phase` heading** precisely so `SpecPhases()`
 > (`bus/spec_items.go:97-107`) resets on it and they cannot hold the spec open or re-spawn a worker.
-> That is the same problem solved by convention. Whether the fix here is to bless that convention
-> mechanically, or to add explicit item-level syntax, is the design question this spec opens.
+> That is the same problem solved by convention. The user chose on 2026-11-24 to bless that
+> convention rather than add item-level syntax — see [Decisions](#decisions-user-2026-11-24).
 
 ### Defect B — the commit guard validates a phase the worker was never given
 
@@ -94,7 +121,7 @@ single-surface property rather than adding a third place a warning can go missin
 
 | Spec | Relationship |
 |------|--------------|
-| [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | **Adjacent, not the same.** MUX-130 covers phase *parsing* semantics — how headings and completion counts are read. This is **not** a parsing bug: parsing is correct in the observed case (Phase 2 genuinely has an open box). The defect is **semantic** — two correct parses of two different things, used as if they were the same thing. Keep separate; cross-linked both ways. |
+| [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | **Adjacent, and a dependency.** MUX-130 covers phase *parsing* semantics — how headings are read. This is **not** a parsing bug: parsing is correct in the observed case (Phase 2 genuinely has an open box). The defect is **semantic** — two correct parses of two different things, used as if they were the same thing. Kept as a separate spec, but Defect A's `### Deferred` rule lives in the heading rule MUX-130's Phase 3 rewrites, so it lands with that phase. |
 | [`MUX-142`](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Same family: a graph worker given a **wrong picture of what it is working on**. MUX-142 is the wrong *tree*; this is the wrong *phase*. Independent mechanisms, shared consequence — a worker proceeds confidently on a false premise. |
 | [`MUX-121`](../completed/MUX-121-multi-phase-sequential-graph.md) | Owns the stateless-derivation decision this spec must not regress. Defect A's fix cannot reintroduce stored phase state. |
 
@@ -109,18 +136,32 @@ gate: it consumes the human's attention budget and returns a guarantee it did no
 
 ### Acceptance criteria
 
-- [ ] A phase-identity mismatch between the frozen intent and the live derivation is **detected and
-      surfaced**, not silently tolerated
-- [ ] The commit guard cannot pass **vacuously** on a phase the worker was never given
-- [ ] A checkbox that is open but **not agent-actionable** is expressible, and does not pin derivation
-      forever
+Defect A — `### Deferred`:
+
+- [ ] An open checkbox under a `### Deferred` heading inside `## Implementation` belongs to no phase:
+      `SpecCurrentPhase` does not return its former phase on its account, and a spec whose only open
+      item is deferred derives the next phase with open work, or none
+- [ ] The deferred item stays **visible and countable**: `SpecOpenItems` still counts it, and the
+      close-spec guard still refuses to close the spec while it is open
+- [ ] Negative control: the same open item left inside its `### Phase N` section pins derivation
+      exactly as today
 - [ ] Derivation remains **stateless** — no stored phase pointer is reintroduced (MUX-121 decision 1)
-- [ ] The mismatch warning is emitted from a **single shared surface** reaching both CLI and TUI, per
-      the `UnscopedPhaseGuardWarning` precedent
+- [ ] `docs/architecture.md` and the plan agent's spec conventions state that `### Deferred` is how an
+      item is parked without holding the loop
+
+Defect B — warn on a mismatch:
+
+- [ ] A launch whose intent names a phase that differs from the live `SpecCurrentPhase` **warns**,
+      naming both phases; the run is created and no gate is added
+- [ ] The warning is emitted from a **single shared surface** reaching both CLI and TUI, per the
+      `UnscopedPhaseGuardWarning` precedent, and is also a lifecycle row on the run
+- [ ] A `phase-complete` guard that passes on the intent's phase while the live derivation names
+      another phase says so in the guard's own lifecycle row — the pass is no longer silent, though
+      it is still a pass
 - [ ] Negative control: a run whose intent and derivation **agree** behaves exactly as today, with no
-      new gate in the path
+      warning
 - [ ] Negative control: a run whose intent names **no phase** keeps its current pass-through
-      behaviour and existing warning
+      behaviour and existing warning, and gains no second one
 
 ### Key files
 
@@ -136,44 +177,63 @@ gate: it consumes the human's attention budget and returns a guarantee it did no
 
 ### Phase 1: Pin the divergence
 
-- [ ] Write a failing test that constructs a run with intent "Phase 5" against a spec whose lowest
-      open phase is 2, and asserts the mismatch is currently undetected
-- [ ] Confirm the vacuous pass: with Phase 5 fully checked and Phase 2 open,
-      `phaseCompleteGuardAllows` returns `true`
-- [ ] Record whether any existing test would have caught this (expected: none — no call site reads
-      both identities)
+- [ ] Characterization test, green on today's tree: a launch with intent "Phase 5" against a spec whose
+      lowest open phase is 2 produces no warning from `UnscopedPhaseGuardWarning`
+- [ ] Characterization test: with Phase 5 fully checked and Phase 2 open, `phaseCompleteGuardAllows`
+      returns `true` for an intent naming Phase 5
+- [ ] Characterization test: an open box under `### Deferred` inside a phase's section does not make
+      that phase the current one today, and `SpecOpenItems` still counts it
+- [ ] Record whether any existing test would have caught the mismatch (expected: none — no call site
+      reads both identities), and which templates in the user's and this project's graph directories
+      still set `"guard": "phase-complete"`
 
-### Phase 2: Detect and surface the mismatch (Defect B)
+### Phase 2: Warn on a mismatch (Defect B)
 
-- [ ] Extend `UnscopedPhaseGuardWarning` (or add a sibling sharing its call sites) to compare
-      `IntentPhase(intent)` against the live `SpecCurrentPhase`, warning when both are non-zero and
-      differ
-- [ ] Decide with the user whether a mismatch **warns** or **refuses** at the commit gate — a refusal
-      is a new blocking gate and needs an explicit ruling, not a default
-- [ ] Ensure the warning reaches both CLI and TUI launch surfaces from the one function
-- [ ] Add negative controls: identities agree → silent; intent has no phase → existing behaviour
+Independent of MUX-130; may land first.
 
-### Phase 3: Express a non-actionable open item (Defect A)
+- [ ] Extend `UnscopedPhaseGuardWarning` (or add a sibling sharing its two call sites) to compare
+      `IntentPhase(intent)` against the live `SpecCurrentPhase`, warning when both name a phase and
+      they differ; the Phase 1 characterization test for the silent launch is inverted in the same
+      change
+- [ ] The warning is also written as a lifecycle row when the run is created, so a run launched by an
+      agent leaves it on record
+- [ ] `phaseCompleteGuardAllows` logs the mismatch when it passes on the intent's phase while the
+      derivation names another — it still passes (the decision is warn, not refuse)
+- [ ] Negative controls: identities agree → silent; intent has no phase → the existing warning only
+- [ ] `docs/agent-bus.md` `muxcode graph run`: the warning and what it means
 
-- [ ] Choose the mechanism with the user: bless the `### Deferred` non-`Phase` heading convention
-      mechanically, or add explicit item-level syntax (e.g. a marker `SpecPhases()` recognises)
-- [ ] Implement so a parked item is **visible and countable** but does not pin `SpecCurrentPhase`
+### Phase 3: Bless `### Deferred` (Defect A)
+
+**Lands with [MUX-130](./MUX-130-spec-phase-parsing-semantics.md)'s Phase 3**, which rewrites the
+heading rule this depends on. Do not land it against the unscoped parser and then again against the
+scoped one.
+
+- [ ] Unit test pinning the rule under MUX-130's scoped parser: boxes under `### Deferred` inside
+      `## Implementation` belong to no phase; a spec whose only open item is deferred reports the next
+      open phase, or none
+- [ ] Negative control: the same item inside its `### Phase N` section pins derivation exactly as
+      today
+- [ ] Test that the deferred item is still counted by `SpecOpenItems` and still declines the
+      spec-complete guard
 - [ ] Verify statelessness is preserved — the property comes from re-reading the spec, not from
       storing a cursor
-- [ ] Negative control: an ordinary open item still pins derivation exactly as today
+- [ ] Doc line in `docs/architecture.md` (graph section) and in the plan agent's spec conventions
+      (`agents/planner.md`, `skills/docs-management.md`): `### Deferred` parks an item without holding
+      the loop; the item still blocks close-out until ticked or annotated as deferred to another spec
 
 ### Phase 4: Integration test
 
 - [ ] Create `scripts/test-phase-identity.sh` with end-to-end verification against a scratch bus,
-      scratch daemon and fixture spec
-- [ ] Test: a run whose intent phase and derived phase **diverge** surfaces the mismatch at launch and
-      at the commit gate
-- [ ] Test: the **vacuous pass** is closed — Phase 5 complete + Phase 2 open no longer ships silently
-- [ ] Test: a spec whose only open item is **parked** derives the next actionable phase rather than
-      livelocking
-- [ ] Test (negative control): intent and derivation agreeing runs to completion with no new warning
-      and no new gate
+      scratch daemon on a private tmux server and fixture spec
+- [ ] Test: a run whose intent phase and derived phase **diverge** prints the warning at launch and
+      leaves the lifecycle row; the run is created
+- [ ] Test: a spec whose only open item sits under `### Deferred` derives the next phase with open work
+      rather than re-deriving the parked one, and the run's loop moves on
+- [ ] Test: `close-spec` on that spec is still refused, naming the deferred item
+- [ ] Test (negative control): intent and derivation agreeing runs with no warning and no new gate
 - [ ] Test (negative control): an intent naming no phase keeps the existing unscoped-guard warning
+- [ ] Test (negative control): the parked item moved back inside its phase holds the loop on that
+      phase
 - [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run the script and verify all checks pass
 
@@ -186,18 +246,15 @@ marked as such.
 
 No implementation has started. Two defects are filed together because they were observed together and
 compound each other — the parked box (A) is what produced the divergence that the guard then failed to
-catch (B) — but they are **independently reachable** and could be split:
+catch (B) — and they are **independently reachable**:
 
 - **Defect B** is reachable whenever intent and derivation diverge for *any* reason, parked box or
   not: a stale intent, a spec edited mid-run, a phase completed by a parallel path.
 - **Defect A** is reachable with no graph run at all — any consumer of `SpecCurrentPhase`, including
   the `spec_phases_remaining` condition, sees the same livelock.
 
-Open questions for the user:
-
-- **Warn or refuse?** Phase 2 asks whether a detected mismatch blocks the commit gate. A refusal is a
-  new blocking gate in a ship path and is the user's call, not a default to be picked here.
-- **Which mechanism for Defect A?** Blessing the existing `### Deferred` convention is cheap and
-  already in use in this repo (MUX-136); explicit item syntax is more precise but touches the parser
-  MUX-130 is separately reworking. Sequencing against MUX-130 matters.
-- **Split or keep?** As above — coherent separately, but the evidence trail is shared.
+Unparked 2026-11-24 on the user's decisions, relayed by edit and recorded in
+[Decisions](#decisions-user-2026-11-24): Defect A is `### Deferred`, landing with MUX-130's Phase 3;
+Defect B warns and does not refuse. The three questions this section used to ask — warn or refuse,
+which mechanism, split or keep — are answered there: warn, `### Deferred`, one spec with a phase per
+defect. Depends on [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) for Phase 3 only.

@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#116](https://github.com/mkober/muxcode/issues/116)
 
+**Closed 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing was built under this spec: every ticked box is a hand-off to another spec, named on its line, and the six boxes still open in Phase 1 are measurements nobody made.
+
 Two related pieces of process hygiene, filed together because they were found by the same
 measurement and share a subject — what a running muxcode session costs in memory.
 
@@ -118,19 +120,19 @@ the source: the daemon stops its harness on TERM/INT.
 - [x] The reaper identifies orphans by **parentage and session liveness**, never by process name alone — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md), whose proof rule replaces this predicate
 - [x] A live prompt agent with a healthy parent is **never** killed (negative control) — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] A harness process whose `BUS_SESSION` tmux session no longer exists is reaped — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
-- [ ] Integration test scripts clean up their own harness processes on exit, including on failure and interrupt
+- [x] Integration test scripts clean up their own harness processes on exit, including on failure and interrupt — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
 - [x] Each reap emits a lifecycle event naming the pid, session and age — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (`orphan-reaped`)
 - [x] The reaper is opt-out via an env var, consistent with the other daemon watchdogs — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (`MUXCODE_ORPHAN_REAP=0`)
 - [x] Reaping never touches a process belonging to a *different, live* muxcode session — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 
 **Footprint**
 
-- [ ] A documented baseline exists: RSS per agent per provider, idle vs. after work, over time
-- [ ] The growth curve is characterised — whether it plateaus, and at what
-- [ ] At least three reduction options are evaluated with measured savings and stated trade-offs
-- [ ] A reclamation path exists for **non-Claude** agents, or its absence is documented with a reason
-- [ ] `muxcode status` (or equivalent) can report the session's current memory footprint
-- [ ] Recommendations are recorded in this spec; implementing them may be split into follow-up specs
+- [x] A documented baseline exists: RSS per agent per provider, idle vs. after work, over time — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] The growth curve is characterised — whether it plateaus, and at what — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] At least three reduction options are evaluated with measured savings and stated trade-offs — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] A reclamation path exists for **non-Claude** agents, or its absence is documented with a reason — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] `muxcode status` (or equivalent) can report the session's current memory footprint — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Recommendations are recorded in this spec; implementing them may be split into follow-up specs — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
 
 ### Technical approach
 
@@ -197,44 +199,44 @@ The first three steps are deferred to MUX-184; the script cleanup stays here.
 - [x] Implement the orphan predicate with unit tests, including the live-agent negative control — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] Add the daemon reaper check with an opt-out env var — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] Emit a lifecycle event per reap (pid, session, age, reason) — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
-- [ ] Add `trap`-based cleanup to the leaking integration scripts
-- [ ] Add a shared cleanup helper under `scripts/lib/` so new scripts inherit it
-- [ ] Verify a full test-suite run leaves zero orphaned processes
+- [x] Add `trap`-based cleanup to the leaking integration scripts — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
+- [x] Add a shared cleanup helper under `scripts/lib/` so new scripts inherit it — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
+- [x] Verify a full test-suite run leaves zero orphaned processes — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
 
 ### Phase 4: Measure the footprint
 
-- [ ] Build a repeatable measurement (RSS per role, per provider, with uptime and activity state)
-- [ ] Baseline: idle session, all agents launched, no work
-- [ ] Curve: same session sampled over several hours of normal work — does growth plateau?
-- [ ] Compare providers at equal work: OpenCode vs Claude vs harness, same role
-- [ ] Compare models — the observed spread (`deepseek-v4-flash` 924 MB vs `minimax-m3` 153 MB) may be model-driven, activity-driven, or both; **separate these variables**
-- [ ] Quantify the fixed overhead: 8 console panes + 11 control panes + 4 listeners ≈ 320 MB
-- [ ] Record all measurements in this spec
+- [x] Build a repeatable measurement (RSS per role, per provider, with uptime and activity state) — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Baseline: idle session, all agents launched, no work — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Curve: same session sampled over several hours of normal work — does growth plateau? — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Compare providers at equal work: OpenCode vs Claude vs harness, same role — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Compare models — the observed spread (`deepseek-v4-flash` 924 MB vs `minimax-m3` 153 MB) may be model-driven, activity-driven, or both; **separate these variables** — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Quantify the fixed overhead: 8 console panes + 11 control panes + 4 listeners ≈ 320 MB — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Record all measurements in this spec — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
 
 ### Phase 5: Evaluate reduction options
 
 Each option gets measured savings and a stated trade-off — no option is adopted before Phase 4:
 
-- [ ] **Reclamation for non-Claude agents** — provider-native compaction/restart equivalent to `/clear`; closes the gap at `clear.go:129`
-- [ ] **Idle eviction** — stop agents idle beyond a threshold, relaunch on demand (`research`/`auto` already prove lazy launch works); trade-off is cold-start latency and lost conversation
-- [ ] **Enable auto-clear by default** for eligible roles, given it is currently off entirely
-- [ ] **Reduce fixed overhead** — whether 11 control panes and 8 console panes need separate processes
-- [ ] **Model/provider guidance** — if the spread is model-driven, document it in the model-selection table
-- [ ] **Fewer resident agents** — launch on first use rather than at session start
-- [ ] Recommend a ranked set; split adoption into follow-up specs rather than expanding this one
+- [x] **Reclamation for non-Claude agents** — provider-native compaction/restart equivalent to `/clear`; closes the gap at `clear.go:129` — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] **Idle eviction** — stop agents idle beyond a threshold, relaunch on demand (`research`/`auto` already prove lazy launch works); trade-off is cold-start latency and lost conversation — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] **Enable auto-clear by default** for eligible roles, given it is currently off entirely — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] **Reduce fixed overhead** — whether 11 control panes and 8 console panes need separate processes — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] **Model/provider guidance** — if the spread is model-driven, document it in the model-selection table — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] **Fewer resident agents** — launch on first use rather than at session start — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
+- [x] Recommend a ranked set; split adoption into follow-up specs rather than expanding this one — moved to [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md)
 
 ### Phase 6: Integration test
 
-- [ ] Create `scripts/test-process-reaper.sh` (hermetic; private tmux server via `TMUX_TMPDIR`, scratch `BUS_SESSION`)
+- [x] Create `scripts/test-process-reaper.sh` (hermetic; private tmux server via `TMUX_TMPDIR`, scratch `BUS_SESSION`) — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
 - [x] Test: a deliberately orphaned harness process (parent killed) is reaped within one sweep — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (`scripts/test-orphan-reaper.sh`)
 - [x] Test: a lifecycle event is emitted naming pid, session and age — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] **Negative control:** a *live* harness process with a healthy parent survives the sweep — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] **Negative control:** a harness process belonging to a different, still-live scratch session is not reaped — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] Test: a process whose `BUS_SESSION` tmux session was killed is reaped by the startup sweep — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
 - [x] Test: the opt-out env var fully disables reaping — deferred to [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md)
-- [ ] Test: a scratch integration script that is interrupted mid-run leaves zero orphans
-- [ ] Coverage floor keeps a skipped section from reporting green
-- [ ] Run the script and verify all checks pass
+- [x] Test: a scratch integration script that is interrupted mid-run leaves zero orphans — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
+- [x] Coverage floor keeps a skipped section from reporting green — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
+- [x] Run the script and verify all checks pass — deferred on the user's decision of 2026-11-24 to [MUX-233](./MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md), [MUX-235](./MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) and [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md)
 
 ## Open decisions
 
@@ -264,6 +266,28 @@ interaction: a keypress on an evicted window pays a cold start, and conversation
 resume is wired in. Interacts with
 [`MUX-139`](../completed/MUX-139-claude-agent-auto-resume.md). **Needs a user ruling before Phase 5 adopts it.**
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. This spec is split and closed:
+
+| Part | Where it went |
+|------|---------------|
+| The reaper (20 items, ticked 2026-11-15) | [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md), shipped |
+| The integration scripts' own cleanup (8 items) | Deferred to MUX-233, MUX-235 and MUX-236, shipped, and `scripts/test-bus-dir-leak.sh` |
+| Decision 1 — harness self-exit | **No.** The harness does not self-exit; MUX-184's reaper and the daemon stopping its harness on TERM/INT are the mechanism |
+| Decision 3 — idle eviction | **Deferred.** Carried into MUX-242 as an option to evaluate, not to build |
+| The footprint (Defect 2, Phases 4–5, 20 items) | [MUX-242](../backlog/MUX-242-session-memory-footprint-has-no-reclamation-path.md), parked |
+
+What the script hand-off does and does not cover, checked by plan at close: MUX-233 and MUX-235 put
+every hermetic script's tmux session on a private server and kill it by socket path, with
+`scripts/measure-tmux-leak.sh` reporting any server left running; MUX-236 makes `test-all.sh` fail
+on a file left in the checkout; MUX-184's launch sweep reaps what a dead scratch session leaves.
+**No check asserts that a full suite run leaves zero orphaned harness processes** — the item
+"verify a full test-suite run leaves zero orphaned processes" was handed off, not measured.
+
+Phase 1's six open items close unanswered. One is moot: whether the harness can detect its
+own orphaning, since it will not self-exit.
+
 ## Out of scope
 
 - **Reducing the LLM CLIs' own memory use.** OpenCode and Claude Code are third-party; this spec
@@ -274,6 +298,8 @@ resume is wired in. Interacts with
 
 ## Status
 
-**Backlog** — 21/55, of which 20 are reaper items ticked as deferred to MUX-184 on 2026-11-15 (the
+**Complete — closed 2026-11-24** at 49/55, on the user's decision relayed by edit: 48 boxes are hand-offs to other specs (20 to MUX-184, 8 to MUX-233/235/236, 20 to MUX-242) and one is Phase 1's root-cause finding; six Phase 1 items are open. Nothing was implemented under this spec.
+
+**Previously:** **Backlog** — 21/55, of which 20 are reaper items ticked as deferred to MUX-184 on 2026-11-15 (the
 user's decision) and one is Phase 1's root-cause finding. Still parked: Decision 1 (harness
 self-exit) and Decision 3 (idle eviction) are open, and Phase 1 holds open measurements.

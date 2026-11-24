@@ -182,7 +182,7 @@ close it; no criterion above is ticked on the strength of the script for that be
 |------|--------------|
 | [MUX-139](./MUX-139-claude-agent-auto-resume.md) | **Ordering constraint** — MUX-139 multiplies restarts, turning one external exit into N spurious runs; this must land first or MUX-139 must suppress the task itself |
 | [MUX-126](./MUX-126-edit-resume-aware-auto-restart.md) | Same family: a restart that does not faithfully reproduce the pre-restart state |
-| [MUX-112](../backlog/MUX-112-idle-task-rescue-closes-live-work.md) | Same class of harm — automation acting on state it has misread, against work already in flight |
+| [MUX-112](./MUX-112-idle-task-rescue-closes-live-work.md) | Same class of harm — automation acting on state it has misread, against work already in flight |
 
 ## Time Tracking
 

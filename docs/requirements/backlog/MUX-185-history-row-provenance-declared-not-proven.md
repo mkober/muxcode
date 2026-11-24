@@ -92,6 +92,34 @@ a verdict is read on every node and a gate on a few.
 - [MUX-176](../completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md) / [MUX-177](../completed/MUX-177-watch-chain-fires-every-bash-call-with-raw-command-payload.md) — the same evidence class; rows written for the wrong reason rather than by the wrong hand.
 - [MUX-161](../completed/MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) — `BusActorVerified` is a `ps` walk; the Codex build sandbox cannot run it, so any ancestry stamp reads `unknown` there.
 
+## Decisions (user, 2026-11-24)
+
+The user's decisions, relayed by edit. The spec was parked on the five decisions its Phase 2 held;
+all five are answered. The questions as posed are kept at the end of this spec.
+
+| # | Question | Decision |
+|---|----------|----------|
+| D1 | Threat model | **(a) The one-line shortcut.** The adversary is an agent taking the shortcut its tools allow, not one that campaigns — the doctrine the tree already holds for gate markers. A separate-uid daemon stays out of scope |
+| D2 | Witness, daemon secret, or both | **Witness corroboration plus the guard** — the spec's "3 + 1" — with the ancestry stamp shipped alongside as attribution only. **The daemon-held secret is deferred**, not built here |
+| D3 | What the guard refuses | **(a) Writes to a history file under any bus dir**, in the cheap forms the guard can see (redirection, `tee`, `sed -i`, an interpreter given the literal path). Stated as a cost |
+| D4 | What `actor` proves | **Person versus agent, and nothing more** — never hook versus shell |
+| D5 | Legacy rows | **Rely on `since`; no migration** |
+
+**What deferring the secret leaves open, so it is not read as closed:** roads with no transcript
+(OpenCode, the local harness, scrape-road Codex) get no witness and no guard — a row there is
+already self-reported at best, and stays so. A forger that fabricates both the row and a consistent
+transcript record is outside D1's model. The secret becomes live if a forged row is ever observed on
+a road the witness covers, or if a witness-less road needs a row to count as hook evidence; it is
+then its own spec.
+
+**State at the decision** (read by plan, 2026-11-24): the reader is `latestAuthoritativeRow`
+(`bus/graph_exec.go:2826`), the writer `WriteHookHistory` (`bus/hook.go:980`), the existing witness
+`CodexExitCodeFromTranscript` (`bus/hook_codex.go:120`); `ToolEvent` carries `ToolUseID` and
+`TranscriptPath` (`bus/hook.go:42-43`); no guard file names `history.jsonl`. The bus directory is no
+longer under `/tmp` — since MUX-208 it is `$XDG_STATE_HOME/muxcode/bus/muxcode-bus-<session>/` — so
+the guard matches history files under the resolved bus base, and under a legacy `/tmp` one. The
+Mechanism table's other line numbers are as filed at `7bcd657`.
+
 ## Requirements
 
 ### Acceptance criteria
@@ -102,13 +130,13 @@ a verdict is read on every node and a gate on a few.
 - [ ] Every hook row carries what a reader needs to corroborate it where a witness exists — `tool_use_id` and `transcript_path` on the roads whose payload supplies them — and `actor` (`BusActorVerified`) on every row, documented as person-vs-agent provenance and nothing more
 - [ ] The reader corroborates a hook row against the provider transcript when the row names one: the `tool_use_id` exists, is a shell call whose command matches, and its result carries the exit code the row claims; a hook row that names **no** witness on a road that always supplies one ranks as self-reported at best, never hook
 - [ ] `hook guard` denies a Bash statement that writes to `*-history.jsonl` under a bus dir — redirection, `tee`, `sed -i`, an interpreter opening the path for write — logging `guard-denied`; a read (`cat`, `jq`, `tail`) is allowed — both directions tested
-- [ ] If the daemon-secret option is chosen: the key lives only in daemon memory, is never written to a file or exported to an environment, and a row whose MAC does not verify is ignored by the reader and logged `history-row-unverified`
+- [ ] The daemon-held secret is recorded as deferred (D2), with what would make it live, in this spec and in `docs/architecture.md` — nothing is built for it here
 - [ ] Every rejection writes a lifecycle row naming file, row timestamp, role and reason (`history-row-rejected`), so a forgery attempt is visible where a forgery today is silent
 - [ ] Legacy rows — `hook`-labelled rows written before this change, without witness fields — are handled by the existing `since` filter (a node reads only rows after its start) and documented as such; no migration
 - [ ] `docs/hooks.md` and `docs/architecture.md` state what a history row's provenance proves and does not prove, per road
 - [ ] Integration test `scripts/test-history-provenance.sh` covers the forged-row, genuine-row, guard-deny, guard-allow-read and legacy-row cases with a coverage floor
 
-### Technical approach — options, deliberately not yet chosen
+### Technical approach — options 3 + 1 chosen, with 4 as attribution; 2 deferred
 
 | Option | Shape | Closes | Leaves open | Cost |
 |---|---|---|---|---|
@@ -117,11 +145,12 @@ a verdict is read on every node and a gate on a few.
 | 3 — guard the append | `hook guard` refuses Bash statements whose write target is a bus-dir history file | the cheap shortcut on the hook roads (Claude, Codex-hook) — the closer MUX-144 named | OpenCode/local (no `PreToolUse`; `DenyTools` and the pane audit are the analogues); shell-heuristic bypasses (`$(printf …)` paths) | small; a pattern in `bus/guard.go` and tests in both directions |
 | 4 — ancestry stamp alone | `actor = BusActorVerified()` on every row | person-vs-agent attribution (useful for `muxcode log` rows and audit) | **the residual itself** — hook and forger share the ancestor | trivial; ships as part of any option, never as the answer |
 
-The evidence favours **3 + 1 now, 2 as its own follow-up if 1's residual is judged live**: the guard
-removes the shortcut where a guard exists, the witness makes the remaining forgery a two-artifact job
-where a transcript exists, and both are honest about the roads they do not cover. Option 2 is the
-only one that reaches every road, and it is the one edit's report named; it is also the one that
-changes how the hook road writes, so it is decided separately, not assumed.
+**Decided 2026-11-24: 3 + 1 now, 2 deferred.** The guard removes the shortcut where a guard exists,
+the witness makes the remaining forgery a two-artifact job where a transcript exists, and both are
+honest about the roads they do not cover. Option 2 is the only one that reaches every road, and it
+is the one edit's report named; it is also the one that changes how the hook road writes, so it
+waits for evidence that 1's residual is live. Option 4 ships with them as person-versus-agent
+attribution (D4), never as the answer.
 
 ### Key files
 
@@ -143,33 +172,30 @@ changes how the hook road writes, so it is decided separately, not assumed.
 
 ### Phase 1: Establish the boundary
 
-- [ ] Reproduce: on a scratch session, append a `"source":"hook","exit_code":"0","outcome":"success"` line to a role's history file from an agent shell and show `latestAuthoritativeRow` returns it — a failing test, kept as the negative control
+- [ ] Reproduce: on a scratch session, append a `"source":"hook","exit_code":"0","outcome":"success"` line to a role's history file by hand and show `latestAuthoritativeRow` returns it — a test asserting today's behaviour, so the suite stays green; Phase 4 flips its expectation and it stays as the negative control
 - [ ] Record whether the installed Claude Code's `PostToolUse` payload carries `tool_use_id` and `transcript_path`, and whether the transcript record for that id carries the command and the exit code (shape verified on 2026-09-14: `is_error` and `toolUseResult`; the exit code's field is to be confirmed)
 - [ ] Record the same for the Codex hook road (already read by `CodexExitCodeFromTranscript`) and for OpenCode and the local harness (expected: no transcript, no witness)
 - [ ] Record whether the process tree distinguishes a hook invocation from a Bash-tool shell (Claude's Bash tool sources a `shell-snapshots` file; hooks run under `sh -c`) — a cost at most, and a provider-internal shape
 - [ ] Record what `hook guard` can see of a write target — redirection, `tee`, `sed -i`, interpreter opens — and which forms it cannot
 - [ ] Measure the cost of a transcript lookup per verdict on a long session file
-- [ ] Record the findings here before choosing an option
+- [ ] Record the findings here. If the Claude payload or transcript does not carry what the witness needs (the second step), stop and report: D2 chose the witness on the expectation that it does, and a road without it is the user's to re-decide
 
-### Phase 2: Choose the design
+### Phase 2: Write the model down
 
-- [ ] Write the threat model ([Decision 1](#decision-1--threat-model)) and classify each candidate control per road as cost, corroboration or boundary
-- [ ] Decide witness, daemon secret, or both ([Decision 2](#decision-2--witness-daemon-secret-or-both)); if the daemon secret is deferred, record why and what would make it live
-- [ ] Decide the guard's scope ([Decision 3](#decision-3--what-the-guard-refuses))
-- [ ] Decide what `actor` on a row means and where it is read ([Decision 4](#decision-4--what-actor-proves))
-- [ ] Decide the legacy-row rule ([Decision 5](#decision-5--legacy-rows)) and record it in MUX-148 as the closer of its Phase 3 pointer
+- [ ] The threat model as decided (D1), with each control classified per road — Claude, hook-road Codex, scrape-road Codex, OpenCode, the local harness — as cost, corroboration or boundary; nothing a same-uid process can defeat is called a boundary. Recorded in this spec, for Phase 4's docs step to carry into `docs/`
+- [ ] The deferred daemon secret (D2): why it waits and what would make it live
+- [ ] The legacy-row rule (D5) recorded in MUX-148 as the closer of its Phase 3 pointer
 
 ### Phase 3: Writer side
 
-- [ ] `HookHistoryEntry` gains `actor`, `tool_use_id` and `transcript_path`; `ProcessBashHook` fills them from the payload; `cmd/log.go` fills `actor` only
-- [ ] `hook guard` refuses a Bash statement that writes to a bus-dir history file, with `guard-denied`; unit tests in both directions (write refused; `cat`/`jq`/`tail` allowed; a write to an unrelated `.jsonl` allowed)
-- [ ] If Decision 2 chooses the daemon secret: the hook posts the entry to the daemon, the daemon appends with the MAC, the key is generated at daemon start and never persisted; tests for a bad MAC and for a relaunch
+- [ ] `HookHistoryEntry` gains `actor`, `tool_use_id` and `transcript_path`; `ProcessBashHook` fills them from the payload; `cmd/log.go` fills `actor` only; `actor` is documented where it is declared as person-versus-agent provenance and nothing more (D4)
+- [ ] `hook guard` refuses a Bash statement that writes to a history file under any bus dir — the resolved bus base and a legacy `/tmp/muxcode-bus-*` — in the cheap forms (D3), with `guard-denied`; unit tests in both directions (write refused; `cat`/`jq`/`tail` allowed; a write to an unrelated `.jsonl` allowed)
 - [ ] Unit test: `TestWriteHookHistoryStampsSource` extended to the new fields; a row written by `WriteHookHistory` with none of them is still valid on roads that have no witness
 
 ### Phase 4: Reader side
 
 - [ ] `latestAuthoritativeRow` corroborates a `hook` row that names a witness before accepting it; a `hook` row with no witness on a witness-bearing road ranks as self-reported at best; other roads unchanged
-- [ ] `history-row-rejected` / `history-row-unverified` lifecycle rows on every refusal, naming file, row ts, role and reason
+- [ ] `history-row-rejected` lifecycle row on every refusal, naming file, row ts, role and reason; Phase 1's reproduction flips in the same change
 - [ ] Negative controls: forged row → not evidence; genuine hook row → wins; genuine self-report on OpenCode → still last-resort evidence; legacy `hook` row before `since` → ignored as today
 - [ ] `docs/hooks.md` and `docs/architecture.md` describe what a row's provenance proves per road, and CLAUDE.md's evidence-guard bullet gains the history-file rule
 
@@ -181,11 +207,15 @@ changes how the hook road writes, so it is decided separately, not assumed.
 - [ ] Mismatch control: a hook row whose `tool_use_id` exists but whose exit code disagrees with the transcript → rejected with the reason naming the disagreement
 - [ ] Guard controls: `hook guard` on a redirect to `test-history.jsonl` → denied; on `jq . test-history.jsonl` → allowed
 - [ ] Legacy control: a pre-change `hook` row older than the node's start → ignored, no rejection row (it was never read)
-- [ ] If the daemon secret shipped: a row with a bad MAC → `history-row-unverified`, ignored; a genuine daemon-written row → accepted
+- [ ] Witness-less road control: a `self-reported` row on an OpenCode-configured role is still last-resort evidence, and a `hook`-labelled row there with no witness ranks no higher
+- [ ] Control: a muxcode built from a scratch copy with the corroboration bypassed accepts the forged row, which the forged-row control rejects
 - [ ] Coverage floor: every section asserts at least once; a skipped section fails the script
 - [ ] Run the script and record the pass/fail counts here
 
-## Open decisions
+## The decisions as posed
+
+Answered by the user on 2026-11-24 — see [Decisions](#decisions-user-2026-11-24). The questions are
+kept as written, for the reasoning.
 
 ### Decision 1 — threat model
 
@@ -229,11 +259,12 @@ mark them is a display question, not a verdict question.
 
 ## Status
 
-Backlog
+Backlog — not started.
 
-**Parked 2026-11-13** on the user's decision, relayed by edit. `55-defect-backlog-loop` run
-`1794602128` activated it the same day (Defects rank 1) and no work was done: 0/5 phases. Phase 2's
-five [open decisions](#open-decisions) await the user; returning it to `drafts/` is the user's call.
+Parked 2026-11-13 on five undecided questions; **unparked 2026-11-24** on the user's decisions,
+relayed by edit: the shortcut threat model, witness corroboration plus the guard with the daemon
+secret deferred, the guard over history files under any bus dir in the cheap forms, `actor` as
+person-versus-agent only, and `since` with no migration.
 
 Filed 2026-09-14 on the user's instruction ("file the actor provenance residual as a backlog item",
 given to edit, and "file defect for this" to plan), from the residual plan recorded under MUX-148

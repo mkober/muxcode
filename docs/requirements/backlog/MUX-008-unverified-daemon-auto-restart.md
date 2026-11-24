@@ -31,51 +31,89 @@ Compare `bus/reload.go` `ReloadAgent()`, which polls for launch verification for
 
 `IsAgentAlive` → `provider.IsAlive` is pane-based, and its startup heuristic returns alive when the capture contains `"muxcode agent launch"`, `"claude"`, or `"opencode"`. A pane holding a swallowed launch line can therefore read as alive indefinitely. Combined with the `nil` return from `RestartLocalAgent`, a failed restart is invisible.
 
+The sections above describe the code at filing (August). [Findings at selection](#findings-at-selection-2026-11-17)
+tables what still stands; the decisions below set the scope from them.
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit; this spec was parked on its scope and is unparked by them.
+
+| Question | Decision |
+|----------|----------|
+| (a) Orphan detection (the old criterion 4) | **Dropped from this spec.** It has no design, and a live session's detached agent is outside what MUX-184's reaper proves. To be filed separately if wanted — nothing is filed by this decision |
+| (b) What remains | **Verify the old process's exit and the relaunched agent's readiness inside `scrapeAndRelaunch`**; a restart that cannot be verified returns an error |
+| The old criterion 3 (a failed restart counts toward the cap, no `agent-recovered`) | **Moot** — `agentRestarts[role]++` already runs before the attempt, and `agent-recovered` is written by a later sweep, not by the restart |
+| Rules the restart path gained since filing | **Kept as they are**: edit is resume-only (`ResumeOnlyRole`), and a relaunched agent showing the definition-unavailable banner is stopped (`refuseUnrestricted`) |
+
+**Read in the tree 2026-11-24, for whoever implements it.** The decision names two existing checks
+to reuse — `ReloadAgent`'s poll and `resumedSessionReady`. They are not equivalent:
+
+| Check | Where | What it proves |
+|-------|-------|----------------|
+| `ReloadAgent`'s poll | `bus/reload.go:536-545` — `IsAgentAlive` every 500 ms, up to 15 s | Liveness by pane heuristic. This spec's own Context records that the heuristic reads a pane holding the text `muxcode agent launch` as alive, so a **swallowed launch line passes it**. Reusing it alone would not close the defect, and `ReloadAgent` does not fail when it times out |
+| `resumedSessionReady` | `bus/spawn_resume.go:215` | Positive start: the `❯` composer in the live bottom of the capture, below the last exit banner and not the typed launch line. Claude panes only |
+
+So readiness here means the second kind of evidence. What a non-Claude provider's readiness reads
+is settled in Phase 1 from what each provider's pane offers; it is not decided here.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] `RestartLocalAgent` waits for actual process exit (bounded poll) instead of a fixed 500ms
-- [ ] After relaunch, poll for a live agent in the pane; return a non-nil error on timeout
-- [ ] Daemon treats a failed restart as a failed attempt (counts toward the 3-attempt cap) rather than emitting `agent-recovered`
-- [ ] Detect the orphan case: an agent process for the role that is not a descendant of the pane shell
-- [ ] Regression test: simulate a slow-exiting agent and assert the relaunch is not swallowed
+- [ ] `scrapeAndRelaunch` waits for the old process's actual exit with a bounded poll instead of the fixed `restartInterruptDelay` (500 ms), and returns an error when the bound passes with the process still there — the launch line is never typed into a dying process
+- [ ] After the launch line is sent, `scrapeAndRelaunch` polls for a positively started agent in the pane and returns a non-nil error on timeout; a pane holding only the typed launch line is **not** ready
+- [ ] A restart that returns that error is logged as failed with its reason, and is never followed by `agent-recovered` for that attempt
+- [x] A failed restart counts toward the restart cap — moot, already so: `agentRestarts[role]++` precedes the attempt (`daemon/daemon.go:2359`); see the decisions
+- [x] Orphan detection — dropped from this spec by the user's decision of 2026-11-24, not done; may be filed separately
+- [ ] Edit stays resume-only and the definition-unavailable banner still stops a relaunched agent — both unchanged by the new waits
+- [ ] Regression test: a slow-exiting agent — the relaunch is not swallowed; and an agent that never exits — the restart returns an error and types no launch line
+- [ ] **Negative control:** a normally exiting agent restarts as today, with no added failure row and within the same sweep
 
 ### Key files
 
 | File | Change |
 |------|--------|
-| `bus/health.go` | `RestartLocalAgent()`: bounded exit poll, post-relaunch verification, non-nil error on failure |
-| `daemon/daemon.go` | Restart caller (~:1615): failed restart counts toward attempt cap, no `agent-recovered` on failure |
-| `bus/agent_health.go` | Orphan detection: role process not descended from the pane shell |
-| `bus/reload.go` | Reference implementation — reuse/extract its 15s launch-verification poll |
+| `bus/health.go` | `scrapeAndRelaunch` (`:384`): bounded exit poll in place of `restartInterruptDelay`, post-launch readiness poll, error on either timeout. `RestartLocalAgent` (`:309`) returns it |
+| `daemon/daemon.go` | `restartDeadAgent`: a returned error is a failed attempt with its reason logged |
+| `bus/spawn_resume.go` | `resumedSessionReady` (`:215`) — the readiness evidence to reuse |
+| `bus/reload.go` | `ReloadAgent`'s poll (`:536`) — the loop shape to reuse, not its `IsAgentAlive` test |
+| `scripts/test-agent-restart.sh` | New |
 
 ## Implementation
 
-### Phase 1: Verified restart
+### Phase 1: Pin and settle the evidence
 
-- [ ] Bounded poll for old-process exit before sending the relaunch line
-- [ ] Post-relaunch launch-verification poll (reuse `ReloadAgent()` mechanism); non-nil error on timeout
-- [ ] Daemon: failed restart increments the attempt counter and emits `agent-restarting`/failure, never `agent-recovered`
-- [ ] Unit tests: slow-exit simulation, relaunch-verification timeout path
+- [ ] Unit test pinning today's behaviour: `scrapeAndRelaunch` against a pane whose process outlives 500 ms still sends the launch line and returns nil
+- [ ] Settle what proves "the old process exited" for a pane (the exit banner, the shell prompt, or the pane's process) and what proves readiness per provider; record both here
+- [ ] Check whether a swallowed launch line still reads alive to the sweep that writes `agent-recovered` (not checked at selection); record the answer
 
-### Phase 2: Orphan detection
+### Phase 2: Verified restart
 
-- [ ] Detect a role process that is not a descendant of the pane shell; surface as a finding/alert
-- [ ] Unit test: orphan process scenario
+- [ ] Bounded poll for old-process exit before the launch line; error when the bound passes
+- [ ] Post-launch readiness poll on the Phase 1 evidence; non-nil error on timeout
+- [ ] `restartDeadAgent` logs the failed attempt with its reason; no `agent-recovered` follows it
+- [ ] Every caller of `scrapeAndRelaunch` (daemon restart, `muxcode resume`, operator restart) handles the new error; the waits run off the daemon's poll loop or within its keepalive budget
+- [ ] Unit tests: slow exit, never exits, launch line swallowed, normal exit (negative control); edit with no resumable session is still left down; the banner stop still fires
 
-### Phase 3: Integration test
+### Phase 3: Docs
 
-- [ ] Create `scripts/test-agent-restart.sh` (requires a running muxcode session)
-- [ ] Test: kill an agent process → assert daemon restarts it and the pane holds a live, reachable agent
-- [ ] Test: simulate slow exit → assert the launch line is not swallowed and the agent comes back
-- [ ] Run the script and verify all checks pass
+- [ ] CLAUDE.md's agent-health bullet and `docs/architecture.md`: the restart is verified, and what a failed one logs
+
+### Phase 4: Integration test
+
+- [ ] Create `scripts/test-agent-restart.sh` — hermetic: private tmux server, scratch daemon, `claude-stub`
+- [ ] Test: kill an agent → the daemon restarts it and the pane holds a started agent that receipts a request sent afterwards
+- [ ] Test: a stub slow to exit (`CLAUDE_STUB_EXIT_DELAY_FILE`) → the launch line is not swallowed and the agent comes back
+- [ ] Test: a stub that never exits → the restart is logged failed, no launch line is typed, no `agent-recovered`
+- [ ] **Negative control:** a build from a copy of the tree with the two waits reverted swallows the launch line in the slow-exit case
+- [ ] Coverage floor so a skipped section cannot report green
+- [ ] Run the script and record the counts here
 
 ## Provenance
 
 Filed by the edit agent from a field report in the `is-advising-gateway` subsession (2026-08-17). Code fragility verified in-tree; the incident's symptom link is plausible, not proven. The same investigation surfaced CLAUDE.md drift in the `bus/agent_health.go` export list (phantom `StartAgent()`/`StopAgent()`/`CheckAgentHealth()`), fixed alongside this filing.
 
-## Findings at selection (2026-11-17) — parked, not activated
+## Findings at selection (2026-11-17)
 
 `55-defect-backlog-loop` run `1794626267-55-defect-backlog-loop-15547e2e` reached this spec as its
 best-ranked unparked row (rank 19). Plan read it end to end against the tree at `cb6179e` and did
@@ -99,8 +137,10 @@ plan's to make unattended.
 
 **What would unpark it:** the user's word on scope — at least whether orphan detection stays in
 this spec, and whether the remaining gap is "verify exit and liveness inside `scrapeAndRelaunch`"
-or something wider.
+or something wider. **Given 2026-11-24** — see [Decisions](#decisions-user-2026-11-24): orphan
+detection is out, and the gap is exactly that.
 
 ## Status
 
-**Backlog** — 0/15, parked 2026-11-17 at selection; see the findings above.
+**Backlog** — unparked 2026-11-24 on the user's decisions above. Two boxes are ticked as moot and
+as dropped, not as work done; nothing is implemented.

@@ -297,7 +297,7 @@ The stub cannot show the model deciding to rerun; the live transcript shows it e
 
 **Relation to the backlog.** This is [MUX-009](./MUX-009-response-echo-chain-retrigger.md)'s
 mechanism — a response echo re-triggering the chain — seen from the Codex hook road, and
-[MUX-127](../backlog/MUX-127-review-completion-routing.md)'s "loops on success" junction.
+[MUX-127](./MUX-127-review-completion-routing.md)'s "loops on success" junction.
 [MUX-175](./MUX-175-response-ack-ping-pong-has-no-brake.md) is not involved: no
 acknowledgements were exchanged.
 
@@ -440,7 +440,7 @@ no section drove a graph test node. It closes the second half of the fifth accep
 
 ## Related
 
-- [MUX-127](../backlog/MUX-127-review-completion-routing.md) — review completion routes nowhere on failure
+- [MUX-127](./MUX-127-review-completion-routing.md) — review completion routes nowhere on failure
   and loops on success; the same junction
 - [MUX-009](./MUX-009-response-echo-chain-retrigger.md) — a response echo re-triggers the chain;
   possibly the same mechanism from the other side
@@ -448,7 +448,7 @@ no section drove a graph test node. It closes the second half of the fifth accep
   with no brake
 - [MUX-172](../completed/MUX-172-plan-verify-gate-hardcodes-success.md) — why each of these chains also
   reaches plan
-- [MUX-032](../backlog/MUX-032-loop-detector-granularity.md) — the detector that saw this and could not act
+- [MUX-032](./MUX-032-loop-detector-granularity.md) — the detector that saw this and could not act
 
 ## Status
 

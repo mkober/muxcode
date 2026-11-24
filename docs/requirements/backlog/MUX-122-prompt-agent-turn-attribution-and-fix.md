@@ -141,3 +141,6 @@ cannot produce the trace can only guess a fifth fix, which this spec forbids in 
 ## Status
 
 **Backlog** — 0/25, parked 2026-11-17 at selection; see the findings above.
+
+**2026-11-24 — stays parked**, on the user's decision relayed by edit, after the user went through
+every parked spec: it needs a traced run with a model API key.
