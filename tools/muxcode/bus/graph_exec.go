@@ -2820,9 +2820,18 @@ func parseExitSentinel(payload string) (string, bool) {
 // work, because the non-hook providers have no other road and holding every
 // one of their nodes is not a fix.
 //
-// Only the read side is ordered here; the row a forger appends to the JSONL by
-// hand can still claim any source. That needs provenance the agent cannot
-// author — see SourceSelfReported.
+// A `hook` row is observed evidence only when its transcript witness confirms
+// it (corroborateHookRow, MUX-185): the label is written by the writer, so a
+// line appended by hand, or a crafted payload piped into `muxcode hook bash`,
+// could otherwise claim it. Every refusal is logged once as
+// history-row-rejected. A row its own witness contradicts — wrong exit code or
+// outcome, another command, a background or unfinished call, a transcript
+// outside the provider's root — is no evidence at all. A row naming no
+// witness (a legacy row inside the node's window, or a witness-less road) is
+// returned relabelled self-reported, ranked below every genuine self-report:
+// evidence of last resort only. Genuine hook rows come only from roads that
+// always supply a witness (Claude, hook-road Codex), so this costs no road its
+// observed evidence.
 func latestAuthoritativeRow(session, role string, since int64) (ConsoleEntry, bool) {
 	return latestAuthoritativeRowFunc(session, role, since, nil)
 }
@@ -2833,8 +2842,8 @@ func latestAuthoritativeRow(session, role string, since int64) (ConsoleEntry, bo
 // precedence above. A nil accept takes any row.
 func latestAuthoritativeRowFunc(session, role string, since int64, accept func(ConsoleEntry) bool) (ConsoleEntry, bool) {
 	entries := ReadConsoleEntries(HistoryPath(session, role), 0)
-	var selfReported ConsoleEntry
-	var haveSelfReported bool
+	var selfReported, unwitnessed ConsoleEntry
+	var haveSelfReported, haveUnwitnessed bool
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
 		if e.TS < since || e.Outcome == OutcomeUnknown || e.Outcome == "" {
@@ -2845,7 +2854,15 @@ func latestAuthoritativeRowFunc(session, role string, since int64, accept func(C
 		}
 		switch e.Source {
 		case SourceHook:
-			return e, true
+			reason := corroborateHookRow(e)
+			if reason == "" {
+				return e, true
+			}
+			logHistoryRowRejected(session, role, e, reason)
+			if reason == reasonNoWitness && !haveUnwitnessed {
+				e.Source = SourceSelfReported
+				unwitnessed, haveUnwitnessed = e, true
+			}
 		case SourceSelfReported:
 			if !haveSelfReported {
 				selfReported, haveSelfReported = e, true
@@ -2853,7 +2870,10 @@ func latestAuthoritativeRowFunc(session, role string, since int64, accept func(C
 		}
 		// Any other source — synthesized, legacy, or unrecognised — is not evidence.
 	}
-	return selfReported, haveSelfReported
+	if haveSelfReported {
+		return selfReported, true
+	}
+	return unwitnessed, haveUnwitnessed
 }
 
 // harvestWaitingNode releases human gates whose approval marker has

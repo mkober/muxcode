@@ -948,6 +948,13 @@ func nonEmptyLines(s string) []string {
 
 // HookHistoryEntry represents a JSONL history entry written by the bash hook.
 // Extends the base HistoryEntry from guard.go with additional hook-specific fields.
+//
+// Actor is BusActorVerified at write time and proves person versus agent,
+// nothing more: a hook and the agent's own Bash shell share one runtime
+// ancestor, so it never tells an observed row from a forged one (MUX-185 D4).
+// ToolUseID and TranscriptPath are copied from the hook payload where it
+// supplies them (Claude, hook-road Codex) and name the provider transcript
+// record a reader corroborates a hook row against.
 type HookHistoryEntry struct {
 	TS          int64  `json:"ts"`
 	Command     string `json:"command"`
@@ -966,6 +973,11 @@ type HookHistoryEntry struct {
 	// self-logged path, SourceBusResponse for entries synthesized from a bus
 	// response payload. See history_provenance.go.
 	Source string `json:"source,omitempty"`
+	// Actor: person versus agent only — see the type doc.
+	Actor string `json:"actor,omitempty"`
+	// The transcript witness — see the type doc.
+	ToolUseID      string `json:"tool_use_id,omitempty"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
 }
 
 // WriteHookHistory appends a history entry to a JSONL file with file-level locking
@@ -1168,76 +1180,49 @@ func ProcessBashHook(session, role string, ev *ToolEvent) HookBashResult {
 		return result
 	}
 
+	observed := func() HookHistoryEntry {
+		return HookHistoryEntry{
+			TS:             ts,
+			Command:        command,
+			Description:    ev.ToolInput.Description,
+			ExitCode:       exitCode,
+			Outcome:        outcome,
+			Output:         output,
+			Actor:          BusActorVerified(),
+			ToolUseID:      ev.ToolUseID,
+			TranscriptPath: ev.TranscriptPath,
+		}
+	}
+
 	switch cmdType {
 	case CmdBuild, CmdBuildPrecheck:
-		errors := ExtractErrors(output, 20, 1000)
-		changes := ExtractBuildChanges()
-		entry := HookHistoryEntry{
-			TS:          ts,
-			Command:     command,
-			Description: ev.ToolInput.Description,
-			ExitCode:    exitCode,
-			Outcome:     outcome,
-			Output:      output,
-			Errors:      errors,
-			Changes:     changes,
-		}
+		entry := observed()
+		entry.Errors = ExtractErrors(output, 20, 1000)
+		entry.Changes = ExtractBuildChanges()
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "build-history.jsonl"), entry, maxHistory)
 		result.Logged = true
 
 	case CmdTest, CmdTestPrecheck:
-		errors := ExtractErrors(output, 20, 1000)
-		entry := HookHistoryEntry{
-			TS:          ts,
-			Command:     command,
-			Description: ev.ToolInput.Description,
-			ExitCode:    exitCode,
-			Outcome:     outcome,
-			Output:      output,
-			Errors:      errors,
-		}
+		entry := observed()
+		entry.Errors = ExtractErrors(output, 20, 1000)
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "test-history.jsonl"), entry, maxHistory)
 		result.Logged = true
 
 	case CmdDeploy, CmdDeployApply:
-		errors := ExtractErrors(output, 20, 2000)
-		entry := HookHistoryEntry{
-			TS:          ts,
-			Command:     command,
-			Description: ev.ToolInput.Description,
-			ExitCode:    exitCode,
-			Outcome:     outcome,
-			Output:      output,
-			Errors:      errors,
-		}
+		entry := observed()
+		entry.Errors = ExtractErrors(output, 20, 2000)
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "deploy-history.jsonl"), entry, maxHistory)
 		result.Logged = true
 
 	case CmdGit:
-		summary := ExtractGitSummary(firstCmd, output)
-		entry := HookHistoryEntry{
-			TS:          ts,
-			Command:     command,
-			Description: ev.ToolInput.Description,
-			ExitCode:    exitCode,
-			Outcome:     outcome,
-			Output:      output,
-			Summary:     summary,
-		}
+		entry := observed()
+		entry.Summary = ExtractGitSummary(firstCmd, output)
 		_ = WriteHookHistory(filepath.Join(BusDir(session), "commit-history.jsonl"), entry, maxHistory)
 		result.Logged = true
 
 	case CmdUnknown:
 		if role == "run" || role == "runner" || role == "watch" {
-			entry := HookHistoryEntry{
-				TS:          ts,
-				Command:     command,
-				Description: ev.ToolInput.Description,
-				ExitCode:    exitCode,
-				Outcome:     outcome,
-				Output:      output,
-			}
-			_ = WriteHookHistory(filepath.Join(BusDir(session), role+"-history.jsonl"), entry, maxHistory)
+			_ = WriteHookHistory(filepath.Join(BusDir(session), role+"-history.jsonl"), observed(), maxHistory)
 			result.Logged = true
 		}
 	}
@@ -1456,7 +1441,7 @@ func GuardDecisionFor(role string, ev *ToolEvent) *GuardDecision {
 		return d
 	}
 	if cmd := ev.ToolInput.Command; cmd != "" {
-		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckEvidenceGuard, CheckListenerGuard, CheckPIIPipeGuard} {
+		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckHistoryWriteGuard, CheckEvidenceGuard, CheckListenerGuard, CheckPIIPipeGuard} {
 			if d := check(role, cmd); d != nil && d.Blocked {
 				return d
 			}
