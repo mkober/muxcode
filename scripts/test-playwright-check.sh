@@ -16,6 +16,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FIXTURE_DIR="$REPO_DIR/test/fixtures/vite-react-app"
+# The dev server's log, outside the fixture: vite-test.log there is tracked,
+# and each run rewrote it in the checkout (MUX-236).
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/playwright-check.XXXXXX")"
+VITE_LOG="$LOG_DIR/vite-test.log"
 CHECK_SCRIPT="$REPO_DIR/scripts/playwright-check.js"
 PORT=5199
 BASE_URL="http://localhost:$PORT"
@@ -43,6 +47,7 @@ cleanup() {
   fi
   # Kill any lingering process on the port
   lsof -ti :$PORT 2>/dev/null | xargs kill 2>/dev/null || true
+  rm -rf "$LOG_DIR"
 }
 trap cleanup EXIT
 
@@ -91,7 +96,7 @@ export NODE_PATH="$FIXTURE_DIR/node_modules"
 # --- Start dev server ---
 
 log_info "Starting Vite dev server on port $PORT..."
-npx vite --port $PORT --strictPort &>"$FIXTURE_DIR/vite-test.log" &
+npx vite --port $PORT --strictPort &>"$VITE_LOG" &
 SERVER_PID=$!
 
 # Wait for server to be ready
@@ -101,7 +106,7 @@ for i in $(seq 1 30); do
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo -e "${RED}FAIL${NC}: Dev server exited unexpectedly"
-    tail -10 "$FIXTURE_DIR/vite-test.log" 2>/dev/null || true
+    tail -10 "$VITE_LOG" 2>/dev/null || true
     exit 1
   fi
   sleep 1
@@ -109,7 +114,7 @@ done
 
 if ! curl -sf "$BASE_URL/" -o /dev/null 2>/dev/null; then
   echo -e "${RED}FAIL${NC}: Dev server failed to start within 30s"
-  tail -10 "$FIXTURE_DIR/vite-test.log" 2>/dev/null || true
+  tail -10 "$VITE_LOG" 2>/dev/null || true
   exit 1
 fi
 

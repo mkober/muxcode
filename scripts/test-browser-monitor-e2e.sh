@@ -33,6 +33,9 @@ log_info() { echo -e "  ${YELLOW}INFO${NC} $1"; }
 . "$(dirname "${BASH_SOURCE[0]}")/lib/muxcode-bus-dir.sh"
 BUS_DIR="$(muxcode_bus_dir muxcode "$SESSION")" || exit 1
 FIXTURE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test/fixtures/vite-react-app"
+# The dev server's log, outside the fixture: vite-test.log there is tracked (MUX-236).
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/browser-monitor-e2e.XXXXXX")"
+VITE_LOG="$LOG_DIR/vite-test.log"
 CHECK_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/playwright-check.js"
 PORT=5199
 BASE_URL="http://localhost:$PORT"
@@ -45,6 +48,7 @@ cleanup() {
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   lsof -ti :$PORT 2>/dev/null | xargs kill 2>/dev/null || true
+  rm -rf "$LOG_DIR"
   # Clean up test state file entries
   if [ -f "$BUS_DIR/serve-state.json" ]; then
     python3 -c "
@@ -98,7 +102,7 @@ fi
 
 # Start server
 log_info "Starting Vite dev server on port $PORT..."
-npx vite --port $PORT --strictPort &>"$FIXTURE_DIR/vite-test.log" &
+npx vite --port $PORT --strictPort &>"$VITE_LOG" &
 SERVER_PID=$!
 
 for i in $(seq 1 30); do
@@ -112,7 +116,7 @@ if curl -sf "$BASE_URL/" -o /dev/null 2>/dev/null; then
   log_pass "Vite dev server started on port $PORT (pid $SERVER_PID)"
 else
   log_fail "Vite dev server" "failed to start within 30s"
-  tail -5 "$FIXTURE_DIR/vite-test.log" 2>/dev/null || true
+  tail -5 "$VITE_LOG" 2>/dev/null || true
   exit 1
 fi
 

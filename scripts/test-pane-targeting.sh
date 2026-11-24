@@ -94,10 +94,13 @@ echo "=== pane targeting integration test (MUX-117) ==="
 # glyph PS1 so idle detection and injection behave — the MUX-103 pattern),
 # tagged the way TagWindowPanes stamps them at creation. review gets the
 # window marker but NO pane tags: the marked-but-untagged broken contract.
-tmux new-session -d -s "$SESSION" -n edit -x 220 -y 50
-for w in build run review; do tmux new-window -t "$SESSION" -n "$w"; done
+# Every pane starts in $WORK: a stand-in shell executes what is typed into
+# it, and the wake payload's `[edit>probe]` is a redirect — run from the
+# checkout it created `probe]` there (MUX-236).
+tmux new-session -d -s "$SESSION" -n edit -x 220 -y 50 -c "$WORK"
+for w in build run review; do tmux new-window -t "$SESSION" -n "$w" -c "$WORK"; done
 for w in edit build run review; do
-  tmux split-window -h -t "$SESSION:$w"
+  tmux split-window -h -t "$SESSION:$w" -c "$WORK"
   tmux send-keys -t "$SESSION:$w.1" -l -- 'PS1="❯ "; clear'
   tmux send-keys -t "$SESSION:$w.1" Enter
 done
@@ -128,7 +131,7 @@ fi
 # real graph UI so the later sweep recognizes it by start command.
 
 echo "-- three-pane delivery"
-tmux split-window -vf -d -l 5 -t "$SESSION:build" "muxcode graph ui"
+tmux split-window -vf -d -l 5 -t "$SESSION:build" -c "$WORK" "muxcode graph ui"
 sleep 1
 BUILD_CTL=$(panes_of build | awk -F: '$2=="muxcode"{print $1}' | head -1)
 [ -n "$BUILD_CTL" ] && tmux set-option -p -t "$SESSION:build.$BUILD_CTL" @muxcode_pane control
@@ -145,7 +148,7 @@ fi
 # delivering to the same pane id.
 
 echo "-- insert-before negative control"
-BUILD_INTRUDER=$(tmux split-window -hb -d -P -F '#{pane_id}' -t "$SESSION:build.1")
+BUILD_INTRUDER=$(tmux split-window -hb -d -P -F '#{pane_id}' -t "$SESSION:build.1" -c "$WORK")
 sleep 1
 resolved=$("$MUX" pane build agent 2>/dev/null)
 if [ "$resolved" = "$BUILD_AGENT" ]; then
@@ -171,8 +174,8 @@ fi
 # to the creation-order index and logs ONE pane-fallback event per window.
 
 echo "-- legacy fallback"
-tmux new-session -d -s "$LEGACY" -n build -x 220 -y 50
-tmux split-window -h -t "$LEGACY:build"
+tmux new-session -d -s "$LEGACY" -n build -x 220 -y 50 -c "$WORK"
+tmux split-window -h -t "$LEGACY:build" -c "$WORK"
 tmux send-keys -t "$LEGACY:build.1" -l -- 'PS1="❯ "; clear'
 tmux send-keys -t "$LEGACY:build.1" Enter
 sleep 1
@@ -242,7 +245,7 @@ fi
 # injections must land in the tagged pane, not at the old index.
 
 echo "-- clear and compact"
-RUN_INTRUDER=$(tmux split-window -hb -d -P -F '#{pane_id}' -t "$SESSION:run.1")
+RUN_INTRUDER=$(tmux split-window -hb -d -P -F '#{pane_id}' -t "$SESSION:run.1" -c "$WORK")
 sleep 1
 clr_out=$("$MUX" clear run 2>&1)
 sleep 1
@@ -317,7 +320,7 @@ if [ -n "$NEW_CTL" ] && [ "$(tag_of "$NEW_CTL")" = "control" ] && [ "$resolved" 
 else
   fail "respawned pane re-identified (id=$NEW_CTL tag=$(tag_of "$NEW_CTL") resolved=$resolved)"
 fi
-tmux split-window -vf -d -l 5 -t "$SESSION:edit" "muxcode graph ui"
+tmux split-window -vf -d -l 5 -t "$SESSION:edit" -c "$WORK" "muxcode graph ui"
 sleep 6
 if [ "$(panes_of edit | grep -c ':muxcode$')" = "1" ]; then
   ok "duplicate control pane converged to one survivor"
