@@ -20,11 +20,54 @@ func TestBusBaseEnvPairs(t *testing.T) {
 		t.Errorf("busBaseEnvPairs() = %v, want %v", got, want)
 	}
 
-	// Negative control: unset and relative values are never exported.
+	// Negative control: an unset or relative MUXCODE_BUS_BASE is never exported.
+	t.Setenv(BusDirBaseEnv, "relative/base")
+	for _, p := range busBaseEnvPairs() {
+		if p[0] == BusDirBaseEnv {
+			t.Errorf("busBaseEnvPairs() exported a relative %s: %v", BusDirBaseEnv, p)
+		}
+	}
+}
+
+// TestBusBaseEnvPlan_XDGStateHomeNeverEmpty: whatever the launcher holds —
+// unset, empty, relative — panes get an absolute XDG_STATE_HOME, the base
+// StateDir resolved, never an empty one Neovim reads as a relative path and
+// writes its state under the working directory (MUX-237). An absolute value
+// passes unchanged; MUXCODE_BUS_BASE keeps its blank.
+func TestBusBaseEnvPlan_XDGStateHomeNeverEmpty(t *testing.T) {
+	home, abs := t.TempDir(), t.TempDir()+"/"
+	t.Setenv("HOME", home)
 	t.Setenv(BusDirBaseEnv, "")
-	t.Setenv("XDG_STATE_HOME", "relative/state")
-	if got := busBaseEnvPairs(); len(got) != 0 {
-		t.Errorf("busBaseEnvPairs() = %v, want none for unset/relative values", got)
+	def := filepath.Join(home, ".local", "state")
+	for _, tc := range []struct {
+		name, val, want string
+		unset           bool
+	}{
+		{"unset", "", def, true},
+		{"empty", "", def, false},
+		{"relative", "relative/state", def, false},
+		{"absolute", abs, abs, false},
+	} {
+		t.Setenv("XDG_STATE_HOME", tc.val)
+		if tc.unset {
+			os.Unsetenv("XDG_STATE_HOME")
+		}
+		set, blank := busBaseEnvPlan()
+		var got string
+		for _, p := range set {
+			if p[0] == "XDG_STATE_HOME" {
+				got = p[1]
+			}
+		}
+		if got != tc.want {
+			t.Errorf("%s: XDG_STATE_HOME set to %q, want %q", tc.name, got, tc.want)
+		}
+		if len(blank) != 1 || blank[0] != BusDirBaseEnv {
+			t.Errorf("%s: blank = %v, want only %s", tc.name, blank, BusDirBaseEnv)
+		}
+		if filepath.Join(got, "muxcode") != filepath.Clean(StateDir()) {
+			t.Errorf("%s: exported base %q is not StateDir()'s parent %q", tc.name, got, StateDir())
+		}
 	}
 }
 

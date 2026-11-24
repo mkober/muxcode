@@ -340,9 +340,7 @@ func (d *Daemon) Run() error {
 	}
 	busDir := bus.BusDir(d.session)
 	os.Setenv(bus.BusDirEnv, busDir)
-	// A session launched before MUX-208 lacks it; fails harmlessly before the launcher creates the session.
-	_ = bus.TmuxSetEnv(d.session, bus.BusDirEnv, busDir)
-	bus.ExportBusBaseEnv(d.session)
+	bus.ExportSessionBusEnv(d.session)
 
 	// Set BUS_SESSION so downstream code (ResolveProviderCLI → BusSession())
 	// resolves the correct session. Without this, BusSession() falls through
