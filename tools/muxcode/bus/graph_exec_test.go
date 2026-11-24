@@ -841,8 +841,8 @@ func TestObservedRowOutranksSelfReport(t *testing.T) {
 	since := time.Now().Unix() - 1
 	path := HistoryPath(runTestSession, "build")
 
-	observed := HookHistoryEntry{TS: time.Now().Unix(), Command: "./build.sh",
-		ExitCode: "1", Outcome: OutcomeFailure}
+	call := claudeCall{id: "toolu_observed", command: "./build.sh", exit: 1}
+	observed := hookRow(time.Now().Unix(), claudeTranscript(t, call), call, "1")
 	if err := WriteHookHistory(path, observed, 100); err != nil {
 		t.Fatal(err)
 	}
@@ -913,9 +913,8 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 		t.Errorf("a raw row with %q source was accepted as evidence: %+v", row.Source, row)
 	}
 
-	// Positive control: with the same file and helper, a properly stamped row
-	// IS evidence — so the rejection above is the rule working, not the
-	// fixture failing to be read at all.
+	// Positive control: a stamped row is read from the same file — as last
+	// resort, having no witness (MUX-185) — so the rejection above is the rule.
 	observed := HookHistoryEntry{TS: now + 2, Command: "./build.sh",
 		ExitCode: "0", Outcome: OutcomeSuccess}
 	if err := WriteHookHistory(path, observed, 100); err != nil {
@@ -927,18 +926,12 @@ func TestRawRowWithoutHookSourceIsNotEvidence(t *testing.T) {
 	}
 }
 
-// TestForgedHookRowIsNotEvidence reproduces MUX-185: a line an agent's shell
-// appends to the JSONL with "source":"hook" is taken as observed evidence, and
-// outranks the honest self-report beneath it. The label is written by the
-// writer, so nothing in the row distinguishes it from WriteHookHistory's own.
-//
-// Red by construction until the reader corroborates a hook row (MUX-185
-// Phase 4), so it runs only with MUXCODE_PIN_MUX185=1 — un-gated, it would fail
-// the graph's test node before any fix exists. Phase 4 removes the gate.
+// TestForgedHookRowIsNotEvidence is MUX-185's reproduction, flipped by Phase 4:
+// a line an agent's shell appends to the JSONL with "source":"hook" names no
+// transcript witness, so it is refused as observed evidence, ranks below the
+// honest self-reported failure beneath it, and is logged history-row-rejected.
+// Before Phase 4 the same fixture returned the forged success.
 func TestForgedHookRowIsNotEvidence(t *testing.T) {
-	if os.Getenv("MUXCODE_PIN_MUX185") != "1" {
-		t.Skip("MUX-185 reproduction, red until Phase 4 — set MUXCODE_PIN_MUX185=1 to run it")
-	}
 	useTempBusDir(t)
 	if err := os.MkdirAll(BusDir(runTestSession), 0755); err != nil {
 		t.Fatal(err)
@@ -964,8 +957,11 @@ func TestForgedHookRowIsNotEvidence(t *testing.T) {
 	f.Close()
 
 	row, ok := latestAuthoritativeRow(runTestSession, "test", since)
-	if ok && row.Source == SourceHook {
-		t.Fatalf("a hand-appended \"source\":\"hook\" row was accepted as observed evidence: %+v", row)
+	if !ok || row.Outcome != OutcomeFailure || row.Source != SourceSelfReported {
+		t.Fatalf("row = (%+v, %v), want the honest self-reported failure — the forged hook row was taken", row, ok)
+	}
+	if got := rejectionsFor(t, path); len(got) != 1 || !strings.Contains(got[0], "no witness") {
+		t.Errorf("rejection rows = %q, want one naming the missing witness", got)
 	}
 }
 
@@ -1277,6 +1273,12 @@ func TestLatestAuthoritativeRowFuncMixedRows(t *testing.T) {
 		return HookHistoryEntry{TS: time.Now().Unix() + offset, Command: cmd,
 			ExitCode: code, Outcome: outcome, Source: source}
 	}
+	observedFail := claudeCall{id: "toolu_mixed", command: "./build.sh", exit: 1}
+	transcript := claudeTranscript(t, observedFail)
+	witnessed := func(e HookHistoryEntry) HookHistoryEntry {
+		e.ToolUseID, e.TranscriptPath = observedFail.id, transcript
+		return e
+	}
 	cases := []struct {
 		name string
 		rows []HookHistoryEntry
@@ -1293,7 +1295,7 @@ func TestLatestAuthoritativeRowFuncMixedRows(t *testing.T) {
 		{
 			name: "an observed failure outranks a newer matching self-report",
 			rows: []HookHistoryEntry{
-				row("./build.sh", OutcomeFailure, "", 1),
+				witnessed(row("./build.sh", OutcomeFailure, "", 1)),
 				row("./build.sh", OutcomeSuccess, SourceSelfReported, 2),
 			},
 			want: OutcomeFailure,
@@ -1594,6 +1596,79 @@ func TestWriteHookHistoryStampsSource(t *testing.T) {
 	for i, w := range want {
 		if entries[i].Source != w {
 			t.Errorf("entry %d source = %q, want %q", i, entries[i].Source, w)
+		}
+	}
+
+	// MUX-185: witness fields round-trip; a row without them still reads as before.
+	witnessed := HookHistoryEntry{TS: time.Now().Unix() + 3, Command: "./build.sh", ExitCode: "0",
+		Outcome: OutcomeSuccess, Actor: "build", ToolUseID: "toolu_x", TranscriptPath: "/t/s.jsonl"}
+	if err := WriteHookHistory(path, witnessed, 100); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("read %d lines, want 4", len(lines))
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(lines[3]), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range map[string]string{"source": SourceHook, "actor": "build", "tool_use_id": "toolu_x", "transcript_path": "/t/s.jsonl"} {
+		if raw[k] != v {
+			t.Errorf("witnessed row %s = %v, want %q", k, raw[k], v)
+		}
+	}
+	var bare map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &bare); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"actor", "tool_use_id", "transcript_path"} {
+		if _, ok := bare[k]; ok {
+			t.Errorf("unwitnessed row carries %q: %s", k, lines[0])
+		}
+	}
+	if got := ReadConsoleEntries(path, 0); len(got) != 4 || got[0].Outcome != OutcomeSuccess {
+		t.Errorf("unwitnessed row no longer reads back: %+v", got)
+	}
+}
+
+// TestProcessBashHookRecordsWitness pins the writer side of MUX-185 on the
+// road that produces it: a Claude PostToolUse payload's tool_use_id and
+// transcript_path, and the acting role, reach the hook row.
+func TestProcessBashHookRecordsWitness(t *testing.T) {
+	useTempBusDir(t)
+	session := "test-bash-witness"
+	t.Setenv("BUS_SESSION", session)
+	t.Setenv("AGENT_ROLE", "build")
+	if err := os.MkdirAll(BusDir(session), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := ParseToolEvent([]byte(`{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_01W",` +
+		`"transcript_path":"/home/u/.claude/projects/p/s.jsonl","tool_input":{"command":"./build.sh"},` +
+		`"tool_response":{"stdout":"ok","stderr":"","interrupted":false,"isImage":false}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := ProcessBashHook(session, "build", ev); !res.Logged {
+		t.Fatalf("build not logged: %+v", res)
+	}
+	data, err := os.ReadFile(HistoryPath(session, "build"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(data))), &row); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"source": SourceHook, "actor": "build", "tool_use_id": "toolu_01W",
+		"transcript_path": "/home/u/.claude/projects/p/s.jsonl", "exit_code": "0"}
+	for k, v := range want {
+		if row[k] != v {
+			t.Errorf("row %s = %v, want %q", k, row[k], v)
 		}
 	}
 }

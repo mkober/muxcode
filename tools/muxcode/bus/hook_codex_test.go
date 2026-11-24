@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -34,6 +35,32 @@ func codexTranscriptPath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// codexRolloutRunning copies the captured rollout under a scratch CODEX_HOME,
+// the provider root a hook row's witness must sit under (MUX-185), with both
+// shell calls' argv rewritten to command — so a row whose command is changed
+// for the test stays one its own transcript confirms.
+func codexRolloutRunning(t *testing.T, command string) string {
+	t.Helper()
+	data, err := os.ReadFile(codexTranscriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, _ := json.Marshal(command)
+	for _, orig := range []string{`"echo spike-ok; exit 3"`, `"printf hi"`} {
+		data = bytes.ReplaceAll(data, []byte(`"-lc",`+orig+`]`), []byte(`"-lc",`+string(argv)+`]`))
+	}
+	home := t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	path := filepath.Join(home, "sessions", "rollout.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func fastTranscript(t *testing.T) {
@@ -501,9 +528,10 @@ func TestCodexHookRow_IsAuthoritativeForGraph(t *testing.T) {
 	}
 	since := time.Now().Unix() - 1
 
+	rollout := codexRolloutRunning(t, "./build.sh")
 	failing := codexEvent(t, "post-tool-use-bash-exit3.json")
 	failing.ToolInput.Command = "./build.sh"
-	failing.TranscriptPath = codexTranscriptPath(t)
+	failing.TranscriptPath = rollout
 	res := ProcessBashHook(session, "build", failing)
 	if res.CommandType != CmdBuild || !res.Logged {
 		t.Fatalf("failing build not logged: %+v", res)
@@ -515,7 +543,7 @@ func TestCodexHookRow_IsAuthoritativeForGraph(t *testing.T) {
 
 	passing := codexEvent(t, "post-tool-use-bash-ok.json")
 	passing.ToolInput.Command = "./build.sh"
-	passing.TranscriptPath = codexTranscriptPath(t)
+	passing.TranscriptPath = rollout
 	if res := ProcessBashHook(session, "build", passing); !res.Logged {
 		t.Fatal("passing build not logged")
 	}

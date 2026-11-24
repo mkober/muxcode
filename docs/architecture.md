@@ -588,6 +588,38 @@ timeout, is a *failure*; anything else is `unknown`. An unknown outcome routes a
 rarely produce authoritative rows, so stalling every run on them would make graphs unusable
 outside Claude Code.
 
+**Which row is authoritative**
+([MUX-185](requirements/completed/MUX-185-history-row-provenance-declared-not-proven.md)). A row's
+`source` label is written into a file the agent's own shell can append to, so
+`latestAuthoritativeRow` (`bus/graph_exec.go`) does not take `"source":"hook"` at its word. It
+ranks the rows at or after the node's start:
+
+| Rank | Row | Why |
+|------|-----|-----|
+| 1 | The newest `hook` row the provider's transcript corroborates | The row's `tool_use_id` is in the transcript it names, under the provider's own transcript root, with the same command, affirmatively finished in the foreground, at the same exit code, and the row's outcome agrees with that code (`corroborateHookRow`, `bus/history_witness.go`) |
+| 2 | The newest `self-reported` row (`muxcode log`) | Evidence of last resort on roads with no hook, as before |
+| 3 | The newest **unwitnessed** `hook` row — one naming no `tool_use_id` or `transcript_path` | Returned relabelled `self-reported`, below every genuine self-report: a legacy row inside the node's window, or a row on a witness-less road. A road whose only rows are these still decides as it did |
+| — | A `hook` row whose own witness **contradicts** it | **No evidence at all**, not even last resort: another exit code or outcome, another command, a background, interrupted or unfinished call, a transcript outside the provider root or unreadable, an unknown `tool_use_id` |
+
+Each failed corroboration, of either kind, writes a `history-row-rejected` lifecycle row naming
+file, timestamp, role and reason. Parsed transcript facts are cached by canonical path and `tool_use_id`; a row's
+acceptance never is, so every row is compared on every read.
+
+What this is and is not: every process here runs as one uid, so **no road has a boundary**. The
+`hook guard` clause that refuses writes to `*-history.jsonl` is a *cost*; the transcript witness is
+*corroboration* (a second artifact a forger must also fabricate); `actor` on a row is
+*attribution*, person versus agent only; the rejection row is *detection*. Scrape-road Codex,
+OpenCode, the local harness and `muxcode agent` write no genuine `hook` rows, so they have no
+witness and need none. Legacy `hook` rows are not migrated: before the node's start they are never
+read, inside its window they carry no witness and rank third. **Deferred:** a daemon-held signing secret — the hook
+handing each event to the daemon, which alone appends under a per-session key — is the only option
+that reaches every road. It waits because it makes the hook road asynchronous and rotates its key
+on every daemon relaunch, and under the adversary modelled here (an agent taking the one-command
+shortcut, not one that campaigns) the guard and the witness already remove the shortcut. It becomes
+its own spec if a forged row is observed on a witnessed road, if a witness-less road needs hook
+evidence, or if a provider changes its transcript shape. The per-check table is in
+[Hooks](hooks.md#hook-bash-bash-hook).
+
 **Join barriers count edge fires, not re-derived outcomes.** `joinBarrierMet` counts
 `run.EdgeFires` — the routing layer's own persisted decision record — rather than
 re-checking each upstream node's outcome. Re-deriving is precisely how fan-in once

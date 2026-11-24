@@ -44,7 +44,7 @@ decided here". Open:
 |---|----------|---------|
 | 1 | Is the rule prose only, or enforced | prose in `CLAUDE.md` and the reviewer definition · enforced somewhere |
 | 2 | If enforced, where | a graph `join` of test and review set to `all` rather than either alone · the executor ignores an `EXIT=0` from the role that authored the diff · the chain withholds a success whose sender authored the change |
-| 3 | How "authored the diff" is known | provenance is declared, not proven, until [MUX-185](./MUX-185-history-row-provenance-declared-not-proven.md) lands — a mechanical form may have to wait for it |
+| 3 | How "authored the diff" is known | provenance is declared, not proven, until [MUX-185](../completed/MUX-185-history-row-provenance-declared-not-proven.md) lands — a mechanical form may have to wait for it |
 
 Phase 1 (the prose rule) needs none of these. Phase 2 needs all three.
 

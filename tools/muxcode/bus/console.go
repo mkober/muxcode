@@ -50,6 +50,9 @@ type ConsoleEntry struct {
 	// Source is the entry's provenance — empty means the authoritative hook or
 	// self-logged path; SourceBusResponse means synthesized from a reply.
 	Source string `json:"source"`
+	// The transcript witness a hook row names (MUX-185) — see corroborateHookRow.
+	ToolUseID      string `json:"tool_use_id"`
+	TranscriptPath string `json:"transcript_path"`
 	// API-specific fields
 	Method       string `json:"method"`
 	URL          string `json:"url"`

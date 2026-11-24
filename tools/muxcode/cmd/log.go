@@ -148,6 +148,7 @@ func runLog(args []string, stdin io.Reader) error {
 		Output:   output,
 		Outcome:  outcome,
 		Source:   bus.SourceSelfReported,
+		Actor:    bus.BusActorVerified(),
 	}
 
 	// WriteHookHistory creates the directory and rotates; it is the one road

@@ -602,6 +602,7 @@ func logWaitResponseToHistory(session, role, action, payload string) {
 	if !ok {
 		return
 	}
+	entry.Actor = bus.BusActorVerified()
 
 	historyPath := bus.HistoryPath(session, role)
 	_ = bus.WriteHookHistory(historyPath, entry, 100)

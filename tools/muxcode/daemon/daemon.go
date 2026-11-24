@@ -4201,6 +4201,7 @@ func logTaskToConsoleHistory(session, role, action, output string, errored bool)
 	if !ok {
 		return
 	}
+	entry.Actor = "daemon"
 
 	historyPath := bus.HistoryPath(session, role)
 	if err := bus.WriteHookHistory(historyPath, entry, 100); err != nil {

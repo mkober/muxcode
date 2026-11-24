@@ -236,6 +236,55 @@ Detects build, test, deploy, and git commands, drives event chains, transitions 
 
 **Unfinished calls** ([MUX-176](requirements/completed/MUX-176-run-chain-fires-success-on-backgrounded-call.md)). A call that had not finished when its hook fired is not evidence of an outcome. On 2026-09-10, three times, the run agent backgrounded an integration script; within seconds of dispatch `hook bash` wrote an `exit 0` / `success` run-history row, the run chain's `bash *.sh` allowlist sent watch "Run succeeded", and watch posted an all-clear on a run that exited 1 about three minutes later. The mechanism was measured on 2026-10-22 (Claude Code 2.1.308, a real `claude -p` with `config/settings.json`'s Bash hooks): Claude completes a `run_in_background` Bash call **at dispatch** (`duration_ms` ≈ 374) and fires `PostToolUse` then, with a `tool_response` carrying `backgroundTaskId` and **no exit status** — and **no hook fires when the background task ends**. `resolveExitCode`'s `"0"` default read that as success. A foreground call that outlives its timeout is moved to the background the same way, carrying `backgroundTaskId` (plus `timedOutAfterMs`) and no `run_in_background` flag. `(*ToolEvent).backgroundLaunch` (`bus/hook.go`) now decides it: such a call still transitions the workflow, since the work is under way, but writes **no history row** and **names no chain** (`HookBashResult.Chain` is empty, so `cmd/hook.go` never calls `triggerChain`). Either signal counts — `tool_input.run_in_background` with any value except absent or `false` (an explicit `null` counts), or `tool_response.backgroundTaskId` of any value — and completion that cannot be read fails closed: a `PostToolUse` with neither an object `tool_response` nor an `exit_code` is unfinished too. Exempt, because finished by construction: `PostToolUseFailure` (the failure line *is* the result, and withholding it would hide a failure) and Codex-shaped events (a string `tool_response`, status from the rollout transcript); a top-level `exit_code` only keeps a response-less or non-object-response `PostToolUse` out of the fail-closed rule — the `run_in_background` and `backgroundTaskId` signals still withhold it. A withheld edge is visible: lifecycle event `chain-withheld` (source `hook`, level `info`), detail `<chain> chain not fired for <role> — the call had not finished when its hook fired (background task <id|unknown>): <command>`, the command scrubbed for the role (`ScrubForRole`) and clipped to 160 runes; a call that feeds no chain logs nothing. Find it with `muxcode lifecycle show --event chain-withheld`. What hooks cannot recover is the background task's real exit code — a backgrounded run's result reaches the bus only through the agent's own reply; reading Claude's task output file was rejected because its path is internal Claude layout, not a hook contract. Pinned by `TestProcessBashHook_UnfinishedCallWithholdsChain` (the measured payload, the timed-out shape, unexpected flag and id shapes, a missing or non-object response, a credential in the command — each fixture first checked to reach the watch edge *without* the guard) and its negative control `TestProcessBashHook_FinishedCallStillFiresChain` (an explicit `false` flag, a failure event carrying the flag, a bare `exit_code`, a Codex event — row kept, edge fired, no `chain-withheld`), alongside `TestProcessBashHook_ClaudeFailureEventFiresFailureChain`'s success case (`bus/hook_test.go`); end to end by `scripts/test-chain-completion.sh` (floor 13; opt-in `--live` runs one real `claude -p` that backgrounds a failing script and holds the session open past its end). The precedent is the passing-precheck rule below: both say a call that proves nothing about the stage's result is not chain evidence.
 
+**What a history row's provenance proves** ([MUX-185](requirements/completed/MUX-185-history-row-provenance-declared-not-proven.md)). `hook bash` stamps each row `"source":"hook"` — but `<role>-history.jsonl` is a file the agent's own shell can append to, so the label alone is a declaration. Three things stand behind it, none of them a boundary: everything here runs as one uid.
+
+| Control | What it is | Where |
+|---------|-----------|-------|
+| The row's witness fields | `tool_use_id` and `transcript_path`, copied from the hook payload, and `actor` (`BusActorVerified`) | `HookHistoryEntry`, `bus/hook.go`. `muxcode log` rows carry `actor` only |
+| The history-file guard | `hook guard` denies, for **every** role, a Bash call that writes to a `*-history.jsonl` file or runs `muxcode hook bash` itself; a read is allowed | `CheckHistoryWriteGuard`, `bus/history_guard.go` |
+| The transcript witness | The reader accepts a `hook` row as observed evidence only when the provider's own transcript agrees with it | `corroborateHookRow`, `bus/history_witness.go` |
+
+`actor` proves **person versus agent and nothing more** — the hook and the agent's shell share the same runtime ancestor, so it never tells a hook's row from a forged one.
+
+The guard refuses the forms it can see in the command string: a redirect (`>`, `>>`, `>|`, `&>`, including a `$VAR` or `$(muxcode bus-dir)` path), `tee`, `sed -i` / `perl -i`, `cp` / `mv` / `install` / `ln` / `rsync` / `dd of=` onto the file, an interpreter with write intent naming it, and the same inside `bash -c` or `eval`. It matches the file's **basename** as written, so such a file anywhere is refused, not only under a bus directory. It does not see a computed basename or a heredoc script fed to an interpreter, and it does not run at all where no `PreToolUse` hook does (OpenCode, scrape-road Codex). It is a **cost**: it removes the one-command shortcut.
+
+The witness check, in order — the first failure is the row's rejection reason:
+
+| # | Check | Reason on failure |
+|---|-------|-------------------|
+| 1 | The row names both `tool_use_id` and `transcript_path` | `no witness` |
+| 2 | `transcript_path` is absolute, readable, and resolves (`EvalSymlinks`) under a provider transcript root: `$CLAUDE_CONFIG_DIR/projects` or `~/.claude/projects` for Claude, `$CODEX_HOME/sessions` or `~/.codex/sessions` for Codex — configured and default both count | `transcript_path is not absolute`, `transcript unreadable`, or `transcript_path outside the provider transcript root`; a file outside the root is never opened |
+| 3 | A record for the id exists in the transcript | `tool_use_id not in transcript` |
+| 4 | The command matches — Claude: the assistant `tool_use`'s `input.command`; Codex: the item's shell command, the PII-scrub wrap removed | `command differs from transcript` |
+| 5 | The transcript **affirmatively** shows the call finished in the foreground (below) | `call not final in transcript: <why>` |
+| 6 | That exit code equals the row's | `exit code X, transcript says Y` |
+| 7 | The row's outcome agrees with the corroborated exit code | `outcome X contradicts exit code N` |
+
+Check 5 requires completion to be stated, never inferred from an absent field:
+
+| Provider | Reads as finished | Not final — `<why>` |
+|----------|-------------------|---------------------|
+| Claude, `is_error` false | `toolUseResult` is an object with **no `backgroundTaskId` key at all** (an explicit `null` counts as present) and `interrupted` present and false — exit 0 | `no is_error`, `no completion record`, `background`, `no interrupted flag`, `interrupted` |
+| Claude, `is_error` true | The result text leads with `Exit code N` — exit N | `no exit code` |
+| Codex | `item_completed` with a **numeric** `exit_code` | `no exit_code` — a `completed` or `failed` status alone is not enough, unlike the hook's own `transcriptItemVerdict` fallback when it writes the row |
+
+Check 2 exists because `transcript_path` is written by the same hand as the row: unpinned, a forger names its own file. The witness is **corroboration** — a second artifact a forger must also fabricate, in a file the same uid can still append to.
+
+What a failed check costs the row depends on which check. A row that names a witness which then **contradicts** it — checks 2 to 7 — is **no evidence at all**: it is dropped, and never used even as a last resort. A row that names **no witness** (check 1) is returned relabelled `self-reported` and ranked **below every genuine self-report**. So the reader's order is: a corroborated `hook` row, then the newest genuine `self-reported` row, then the newest unwitnessed `hook` row.
+
+A refusal writes one `history-row-rejected` lifecycle row (`warn`, source `daemon`): `<history file> row ts=<ts> role=<role>: <reason>`, once per file, timestamp, id and reason, since the reader runs every executor tick. Find them with `muxcode lifecycle show --event history-row-rejected`. That is **detection**; it prevents nothing.
+
+Per road:
+
+| Road | Genuine `hook` rows | Guard | Witness |
+|------|--------------------|-------|---------|
+| Claude | Yes, always with witness fields | Cost | Corroboration |
+| Hook-road Codex | Yes, always with witness fields | Cost | Corroboration |
+| Scrape-road Codex, OpenCode | None — only `muxcode log` rows, self-reported, evidence of last resort as before | None | Not applicable; a `hook` row here names no witness, so it ranks below the role's own self-reports |
+| Local harness, `muxcode agent` | None — sourceless rows, not evidence | None | Not applicable |
+
+A **legacy** row — `hook`-labelled, written before these fields existed — is not migrated. One older than the reading node's start is never read; one inside a node's window has no witness, so it is read as self-reported and ranks below every genuine self-report. A daemon-held signing secret, the only option that would reach every road, is deferred: see the spec's "The model".
+
 The chain edges:
 
 ```
