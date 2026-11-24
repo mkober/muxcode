@@ -183,7 +183,7 @@ run should attempt unattended.
   behind); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
   [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) (why the build node's green meant
   nothing here); [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md) (single-use
-  approvals — a re-entered `sync-gate` needs a fresh one); [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md)
+  approvals — a re-entered `sync-gate` needs a fresh one); [MUX-165](../completed/MUX-165-gated-jira-write-declined-by-requester-rule.md)
   (the other consent instrument the graph carries, filed today).
 
 ## Status

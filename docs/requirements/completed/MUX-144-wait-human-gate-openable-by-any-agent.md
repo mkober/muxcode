@@ -430,7 +430,7 @@ made.
       re-judge and no existing check to extend. Judging it on the gate means a **new** send-time check
       on the gated Atlassian actions (`validateGates` already names them) carrying the same provenance
       test, or a recorded decision to leave that path to plan's rule
-      ([MUX-165](../backlog/MUX-165-gated-jira-write-declined-by-requester-rule.md)). Here as a Phase 4
+      ([MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md)). Here as a Phase 4
       step or as its own spec — the user's call
 
 ### Phase 5: Integration test

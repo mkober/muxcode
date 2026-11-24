@@ -576,6 +576,17 @@ relayed from edit, or a `daemon` tracker write whose `Origin:` line names a grap
 executes without asking again. A tracker write from any other agent, or a `daemon` one naming no
 graph run, is declined.
 
+The incident behind it is a double consent. On 2026-09-09 (`is-advising-gateway`, `story-to-spec`
+run `1788964667`) the user approved `update-gate`; the dispatch that followed carried no run, gate
+or approver, only the template's "The user approved…" sentence, and plan's rule then tested the
+sender. Plan declined the `daemon` `jira-update` (`EXIT=1`) and the run failed with no live edge,
+while its sibling `issue-update` succeeded on the same gate. The write happened only after the same
+approval was carried twice more: edit relayed it, and the user retyped the request in plan's pane.
+Neither changed the consent, only who carried it. The fix has two halves: the bus verifies the gate
+approval at the send (MUX-181, above), so a delivered graph tracker write is the verified consent,
+and plan's rule accepts that delivery instead of asking for the approval again
+([MUX-165](requirements/completed/MUX-165-gated-jira-write-declined-by-requester-rule.md)).
+
 As on the git road, this is **corroboration and a cost against a same-uid agent, not a boundary**:
 the forged marker alone is refused, but an agent that forges both the marker and its audit row
 defeats it. And the check runs in the sender's `sendMessage` — a message that never passes through
