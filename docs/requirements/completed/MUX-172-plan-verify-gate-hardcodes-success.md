@@ -164,7 +164,7 @@ seeds now end `EXIT=0`, because a sentinel-less reply is withheld. Re-run the sa
   changed-file list names the last routed batch, not the spec's work — the two compound);
   [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) (the three controls this fire
   already has, all about the pointer, none about the verdict);
-  [MUX-127](../backlog/MUX-127-review-completion-routing.md) (review-completion routing, the same junction).
+  [MUX-127](./MUX-127-review-completion-routing.md) (review-completion routing, the same junction).
 
 ## Status
 

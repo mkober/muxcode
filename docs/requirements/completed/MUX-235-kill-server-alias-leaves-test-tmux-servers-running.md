@@ -303,7 +303,7 @@ Two servers leaked before the fix are still running — pid 11235 (`pane-id-test
   `test-graph-node-caps`, whose fix uses the bare `kill-server`
 - [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) — the orphan reaper,
   which does not cover a live scratch server
-- [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md) — parked; its remaining scope is the
+- [MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — parked; its remaining scope is the
   scripts' own cleanup
 
 ### Findings at activation (2026-11-18)

@@ -60,7 +60,7 @@ have been running left a fresh 149 MB behind.
    (`goToolchainRoots`, `:153`) to **the build role only**. The test role runs under the default
    sandbox, where `~/Library/Caches/go-build` is unwritable, so `go test` fails on the cache path and
    the model routes around it with `GOCACHE=/tmp/…` — the
-   [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) shape, an agent working around the
+   [MUX-153](../completed/MUX-153-codex-test-agent-cannot-run-the-suite.md) shape, an agent working around the
    sandbox, producing disk this time instead of silence.
 
 ### Why this is worse than wasted disk
@@ -78,109 +78,116 @@ rare again.
 | Spec / commit | Relationship |
 |---------------|--------------|
 | [`MUX-002`](../completed/MUX-002-disk-pressure-wrong-filesystem.md) | The signal redesign — pressure from free headroom and muxcode's own footprint instead of percent-used. This is its ladder missing the dominant consumer of that footprint; its own test header describes the exact symptom ("ran cleanup every 60 seconds forever, freed 0 B every time") returning by another road |
-| [`MUX-153`](./MUX-153-codex-test-agent-cannot-run-the-suite.md) | The sandbox limitation the caches work around; Phase 2's cache grant is the next step that spec needs anyway |
+| [`MUX-153`](../completed/MUX-153-codex-test-agent-cannot-run-the-suite.md) | The sandbox limitation the caches work around; Phase 2's cache grant is the next step that spec needs anyway |
 | [`MUX-157`](./MUX-157-role-boundary-an-agent-can-ignore.md) | The 24-directory burst is that incident's footprint on disk |
-| [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Same family — a resource the daemon can count but not reap |
+| [`MUX-147`](../completed/MUX-147-process-leak-and-memory-footprint.md) | Same family — a resource the daemon can count but not reap |
 | `dba6f93` | Fixed the sweep's identity guard; this spec fixes the pressure that invokes the sweep |
+
+## Decisions (user, 2026-11-24)
+
+The user's decisions, relayed by edit. The spec was parked on three decisions it marked "open, the
+user's call"; all three are settled and the scope is cut to what the evidence still supports.
+
+| # | Question | Decision |
+|---|----------|----------|
+| 1 | Which codex roles get the Go cache grant | **Settled, nothing to build.** The test role already holds the grant — `codexWritableRoots` (`bus/provider_codex.go`) gives `goToolchainRoots()` to build and test — and since 2026-11-02 every Codex role launches with no sandbox by default (`codexSandboxMode` returns `danger-full-access`), so `go test` writes the real cache. The reason agents invented `/tmp` caches is gone on the default road |
+| 2 | How `/tmp` caches are recognised for removal | **Age floor only**, over the `muxcode-go*cache*` names. No muxcode-owned session-scoped `GOCACHE` |
+| 3 | Back-off after unclearable cycles | **Stop until the footprint changes**, with a 30 min ceiling re-check |
+
+**Scope, as decided.** Ship the accounting fix now — `freed` includes stale bytes and
+`ineffective := freed == 0` — together with the `disk-pressure-unclearable` event and the Decision 3
+back-off. Then **re-measure before building more**: the `/tmp` cache-removal stage, the block-based
+footprint and the stage-4 gate are built only if the re-measure shows the caches are still being
+created or still present.
+
+**State at the decision** (read by plan, 2026-11-24): `ls /tmp | grep -c muxcode-go` reports `0` — no
+muxcode Go cache directory exists under `/tmp` on this machine today. The accounting defect is
+unchanged in code: `checkDiskPressure` (`daemon/daemon.go`) still computes
+`totalFreed := claudeFreed + artifactFreed + goCacheFreed` (no stale bytes) and
+`ineffective := staleCleaned == 0 && claudeCleaned == 0 && artifactCleaned == 0 && goCacheCleaned == 0`
+(counts, not bytes).
 
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] The footprint and the cleanup agree: every directory the footprint counts is one some stage can remove, or the pressure row names it as unclearable — never a silent `freed=0 B`
-- [ ] A stage removes muxcode-created Go caches under the `/tmp` prefix (`muxcode-gocache*`, `muxcode-go-cache`, `muxcode-go-build-cache`) — subject to an age floor — and reports their bytes in `freed`
-- [ ] Negative control: the toolchain's `go env GOCACHE` is never deleted to relieve a footprint made of `/tmp` copies — stage 4 runs only when the footprint is still over the limit **after** the `/tmp` caches are gone, and only under the existing same-device guard
-- [ ] Negative control: a live session's bus directory is never swept — pins `dba6f93` on this path
 - [ ] `ineffective` is decided on **bytes freed**, and `freed` includes stale bytes; a `stale=N` count can no longer make a zero-byte cycle read as effective
-- [ ] Three consecutive zero-byte cycles under pressure raise a distinct `disk-pressure-unclearable` lifecycle event naming the largest unclearable paths, and the ladder backs off until the footprint changes — `CleanupStale` is not invoked every 60 s against a footprint it cannot move
-- [ ] The footprint measures allocated blocks, not apparent size, so the number in the row is the disk the directories actually cost
-- [ ] The codex test role receives the Go cache roots (Decision 1 settles which other roles), so the `/tmp` workaround is never needed — negative control: a full codex build+test cycle creates no new `/tmp/muxcode-go*` directory
-- [ ] `scripts/test-disk-pressure.sh` covers the new stage, the two negative controls, the byte-based `ineffective`, and the back-off, behind its coverage floor
-- [ ] Docs: `configuration.md` (the new event, the age floor, the back-off), `architecture.md` (the ladder), `CLAUDE.md` (the Codex sandbox note gains the cache grant)
+- [ ] Three consecutive zero-byte cycles under pressure raise a distinct `disk-pressure-unclearable` lifecycle event naming the largest counted paths, and the ladder stops until the footprint changes, re-checking at most every 30 min — `CleanupStale` is not invoked every 60 s against a footprint it cannot move
+- [ ] Negative control: a cycle that frees bytes resets the zero-cycle counter and the back-off
+- [ ] Negative control: a live session's bus directory is never swept — pins `dba6f93` on this path
+- [x] The codex test role receives the Go cache roots, so the `/tmp` workaround is not needed — shipped: `codexWritableRoots` grants `goToolchainRoots()` to test (`bus/provider_codex.go`), and Codex runs unsandboxed by default (`codexSandboxMode`, 2026-11-02). Decision 1
+- [ ] The re-measure is recorded in this spec: whether any `/tmp/muxcode-go*cache*` directory exists or is created across a full codex build+test cycle, and what the recurring `stale=N` count is
+- [ ] If the re-measure finds such caches: a stage removes them (`muxcode-gocache*`, `muxcode-go-cache`, `muxcode-go-build-cache`) subject to the age floor and reports their bytes in `freed`; the toolchain's `go env GOCACHE` is never deleted to relieve a footprint made of `/tmp` copies; the footprint measures allocated blocks. If it finds none, this item is ticked with the measurement and the stage is not built
+- [ ] `scripts/test-disk-pressure.sh` covers the byte-based `ineffective`, the unclearable event, the back-off and its reset, behind its coverage floor
+- [ ] Docs: `configuration.md` (the new event, the back-off), `architecture.md` (the ladder's accounting and back-off)
 
 ### Technical approach
 
-- **Prevent before cleaning.** The cheapest fix removes the creator: `codexWritableRoots` grants
-  `goToolchainRoots()` to every codex role that compiles, not build alone. Once `go test` can write
-  the real cache, no agent has a reason to invent a `/tmp` one. This is MUX-153's next step regardless.
-- **Own the path when a sandboxed role must have one.** Rather than leaving `GOCACHE` to the model,
-  muxcode sets `GOCACHE`/`GOMODCACHE` in the launch environment of sandboxed codex roles to a
-  session-scoped directory it names (`/tmp/muxcode-gocache-<session>-<role>`), so stage 1 removes it
-  with the session exactly as it removes the bus directory — cleanup keyed on liveness, no age
-  guessing (Decision 2).
-- **Clean what is counted.** A new stage between 1 and 2 removes `/tmp/muxcode-go*cache*` entries
-  older than the age floor (default 10 min — derived state, so a cache deleted under a running
-  `go test` costs one rebuild, never data), reporting bytes in `freed`. Stage 4 stays last, behind
-  `GoCacheRelievesTmp`, and additionally behind "still over the limit after the `/tmp` caches".
 - **Honest accounting.** `freed` includes stale bytes; `ineffective := freed == 0`; the pressure row
-  lists the three largest counted paths so it is actionable; after three zero-byte cycles the daemon
-  logs `disk-pressure-unclearable` once and backs off (Decision 3) until `MuxcodeTmpFootprint` changes.
-- **Measure blocks.** `dirSize` sums `st_blocks × 512` where available, apparent size otherwise, so
-  the footprint matches `du`.
+  lists the three largest counted paths so it is actionable.
+- **Back-off (Decision 3).** After three zero-byte cycles the daemon logs `disk-pressure-unclearable`
+  once and stops running the ladder until `MuxcodeTmpFootprint` changes, re-checking at a 30 min
+  ceiling.
+- **Re-measure, then decide.** With the grant and the unsandboxed default in place, the creator of
+  the `/tmp` caches may be gone. One codex build+test cycle and a look at `/tmp` settle whether the
+  removal stage is still worth building.
+- **Clean what is counted — only if the re-measure calls for it (Decision 2).** A stage between 1
+  and 2 removes `/tmp/muxcode-go*cache*` entries older than the age floor (default 10 min — derived
+  state, so a cache deleted under a running `go test` costs one rebuild, never data), reporting
+  bytes in `freed`. Stage 4 stays last, behind `GoCacheRelievesTmp`, and additionally behind "still
+  over the limit after the `/tmp` caches". `dirSize` sums `st_blocks × 512` where available.
 
 ### Key files
 
 | File | Change |
 |------|--------|
-| `tools/muxcode/bus/cleanup.go` | `MuxcodeTmpFootprint` (`:446`) block-based and reporting top paths; new `CleanupTmpGoCaches`; `CheckDiskPressure` (`:507`) gains the stage and the post-stage gate for stage 4 |
-| `tools/muxcode/bus/artifacts.go` | `PurgeGoBuildCache` (`:186`) unchanged in target, gated on the post-cleanup footprint |
 | `tools/muxcode/daemon/daemon.go` | `checkDiskPressure`: byte-based `ineffective`, stale bytes in `freed`, zero-cycle counter, `disk-pressure-unclearable`, back-off |
-| `tools/muxcode/bus/provider_codex.go` | `codexWritableRoots` (`:91`) grants the Go caches per Decision 1; launch env sets a session-scoped `GOCACHE` for sandboxed roles |
-| `tools/muxcode/bus/config.go` | `MUXCODE_TMP_GOCACHE_AGE`, `MUXCODE_DISK_PRESSURE_BACKOFF` |
+| `tools/muxcode/bus/cleanup.go` | `CleanupStale` reports the bytes it removed; `MuxcodeTmpFootprint` returns the largest entries for the row. Phase 4 only: `CleanupTmpGoCaches`, block-based `dirSize`, the stage-4 gate |
+| `tools/muxcode/bus/config.go` | `MUXCODE_DISK_PRESSURE_BACKOFF`; Phase 4 only: `MUXCODE_TMP_GOCACHE_AGE` |
 | `scripts/test-disk-pressure.sh` | Extended (Phase 6) |
-| `docs/configuration.md`, `docs/architecture.md`, `CLAUDE.md` | Phase 5 |
-
-### Decisions — open, the user's call
-
-| # | Question | Options | Recommendation |
-|---|----------|---------|----------------|
-| 1 | Which codex roles get the Go cache grant | build only (today) · build + test · every role that may compile (build, test, run) | **build + test + run** — the roles whose definitions run Go; review and analyze are `-a on-request` read-only roles and should not compile at all |
-| 2 | How `/tmp` caches are recognised for removal | age floor over the `muxcode-go*cache*` names · muxcode-owned session-scoped `GOCACHE` cleaned with the session · both | **Both** — the owned path is the durable answer and keys on liveness; the age rule mops up the ad-hoc names that already exist and any a model still invents |
-| 3 | Back-off after unclearable cycles | fixed 30 min · exponential from 1 min to 30 min · stop until the footprint changes | **Stop until the footprint changes**, with a 30 min ceiling re-check — the sweep should not run against a number that has not moved |
+| `docs/configuration.md`, `docs/architecture.md` | Phase 5 |
 
 ## Implementation
 
 ### Phase 1: Pin
 
-- [ ] Characterization: a scratch `/tmp` (via `busDirOverride`) holding a `muxcode-gocache.X` dir over the limit → `TmpPressure` true, the ladder runs, `freed=0`; failure message names Phase 3
-- [ ] Characterization: `ineffective` reads false with `stale=1, freed=0` — pins the accounting defect for Phase 4
-- [ ] Establish what the recurring `stale=12` is: re-counted or re-created — read from a live daemon with `CleanupStale(dryRun=true)`; record the answer in this spec
-- [ ] Measure `dirSize` against `du` on one real cache directory and record the ratio
+- [ ] Characterization: `ineffective` reads false with `stale=1, freed=0` — pins the accounting defect for Phase 2; the test asserts today's behaviour, so the suite stays green until Phase 2 flips its expectation
+- [ ] Establish what the recurring `stale=N` is: re-counted or re-created — read from a live daemon with `CleanupStale(dryRun=true)`; record the answer in this spec
 
-### Phase 2: Stop the creation
+### Phase 2: Honest accounting and back-off
 
-- [ ] `codexWritableRoots` grants `goToolchainRoots()` per Decision 1; `TestCodexBuildExecArgs_BuildGetsInstallRoots` gains its sibling for test
-- [ ] Sandboxed codex roles launch with `GOCACHE`/`GOMODCACHE` set to a session-scoped muxcode-owned path (Decision 2), created at launch, removed by stage 1 with the session
-- [ ] Negative control: the build role's roots are unchanged; a non-compiling role gets no cache roots
-- [ ] Live check: a full codex build+test cycle leaves no new `/tmp/muxcode-go*` directory
-
-### Phase 3: Clean what is counted
-
-- [ ] `CleanupTmpGoCaches`: `/tmp/muxcode-go*cache*` older than the age floor, bytes reported; wired as the stage after `CleanupStale`
-- [ ] `MuxcodeTmpFootprint` measures blocks and returns the three largest entries for the row
-- [ ] Stage 4 gated on the post-cleanup footprint as well as `GoCacheRelievesTmp`
-- [ ] Negative controls: `go env GOCACHE` untouched with `/tmp` caches present; a live session's bus dir untouched (`dba6f93` pin on this path); a cache younger than the floor survives
-- [ ] Tests for each, in `cleanup_test.go` / `artifacts_test.go` under the scratch-tmp override — never the real `/tmp`
-
-### Phase 4: Honest accounting and back-off
-
-- [ ] `freed` includes stale bytes; `ineffective := freed == 0`
-- [ ] Zero-byte cycle counter; on the third, `disk-pressure-unclearable` with the top paths, then back-off per Decision 3
-- [ ] `shouldAlertDiskPressure` and the new back-off pinned in `disk_pressure_alert_test.go`: once per window, and not at all while backed off
+- [ ] `CleanupStale` reports bytes removed; `freed` includes them; `ineffective := freed == 0`; Phase 1's characterization flips in the same change
+- [ ] The pressure row names the three largest counted paths
+- [ ] Zero-byte cycle counter; on the third, `disk-pressure-unclearable` with the top paths, then the ladder stops until the footprint changes, with a 30 min ceiling re-check (Decision 3)
+- [ ] `shouldAlertDiskPressure` and the back-off pinned in `disk_pressure_alert_test.go`: once per window, and not at all while backed off
 - [ ] Negative control: a cycle that frees bytes resets the counter and the back-off
+- [ ] Negative control: a live session's bus directory is untouched (`dba6f93` pin on this path), under the scratch-tmp override — never the real `/tmp`
+
+### Phase 3: Re-measure
+
+- [ ] Run one full codex build+test cycle on the default (unsandboxed) road and list `/tmp/muxcode-go*`: record the count before and after, and each directory's size by `dirSize` and by `du`
+- [ ] Repeat under `MUXCODE_CODEX_SANDBOX=workspace-write`, the opt-out where the grant is what matters; record the same
+- [ ] Record the verdict here: caches still created (Phase 4 proceeds) or not (Phase 4's steps are ticked as not built, each annotated with this measurement)
+
+### Phase 4: Clean what is counted — only if Phase 3 finds caches
+
+- [ ] `CleanupTmpGoCaches`: `/tmp/muxcode-go*cache*` older than the age floor (`MUXCODE_TMP_GOCACHE_AGE`, default 10 min), bytes reported; wired as the stage after `CleanupStale` (Decision 2 — age floor only)
+- [ ] `MuxcodeTmpFootprint` measures allocated blocks
+- [ ] Stage 4 gated on the post-cleanup footprint as well as `GoCacheRelievesTmp`
+- [ ] Negative controls: `go env GOCACHE` untouched with `/tmp` caches present; a cache younger than the floor survives; tests under the scratch-tmp override
 
 ### Phase 5: Docs
 
-- [ ] `docs/configuration.md`: `MUXCODE_TMP_GOCACHE_AGE`, `MUXCODE_DISK_PRESSURE_BACKOFF`, the `disk-pressure-unclearable` event, block-based footprint
-- [ ] `docs/architecture.md`: the ladder with its new stage and the stage-4 gate
-- [ ] `CLAUDE.md`: the Codex sandbox constraint names which roles hold the cache grant and the owned `GOCACHE`
+- [ ] `docs/configuration.md`: `MUXCODE_DISK_PRESSURE_BACKOFF`, the `disk-pressure-unclearable` event, and — if Phase 4 was built — `MUXCODE_TMP_GOCACHE_AGE` and the block-based footprint
+- [ ] `docs/architecture.md`: the ladder's byte-based accounting and back-off, and the new stage if built
 
 ### Phase 6: Integration test
 
-- [ ] Extend `scripts/test-disk-pressure.sh` (hermetic: scratch tmp via the override, never the real `/tmp`): a `muxcode-gocache.X` fixture over the limit is removed and reported in `freed`; one under the age floor survives; a fake `GOCACHE` on the same device is untouched; a live bus dir is untouched
-- [ ] Accounting: `stale=N, freed=0` reads ineffective; three zero-byte cycles emit `disk-pressure-unclearable` once and the fourth cycle does not run the ladder
-- [ ] Sandbox: launch a scratch codex test agent (skipped **with reason** without codex) → `go env GOCACHE` writable from its pane, no `/tmp/muxcode-go*` created
-- [ ] Coverage floor keeps a skipped live section from reading green
+- [ ] Extend `scripts/test-disk-pressure.sh` (hermetic: scratch tmp via the override, never the real `/tmp`): `stale=N, freed=0` reads ineffective; stale bytes appear in `freed`
+- [ ] Three zero-byte cycles emit `disk-pressure-unclearable` once and the fourth cycle does not run the ladder; a footprint change runs it again
+- [ ] Negative control: a cycle that frees bytes emits no `disk-pressure-unclearable` and leaves no back-off; a live bus dir is untouched
+- [ ] If Phase 4 was built: a `muxcode-gocache.X` fixture over the limit is removed and reported in `freed`, one under the age floor survives, a fake `GOCACHE` on the same device is untouched
+- [ ] Coverage floor keeps a skipped section from reading green
 - [ ] Run the script and record pass/fail counts in this spec
 
 ## Notes
@@ -191,10 +198,15 @@ rare again.
   disk-pressure`, 14 that day), and `du -sc` for the block count. The creation burst's alignment
   with the MUX-157 window, the `stale=12`/`ineffective` interaction, and the apparent-vs-block
   under-count are plan's additions.
-- Immediate relief is manual and safe: the directories are derived state, so `rm -rf
-  /tmp/muxcode-go*cache*` costs one rebuild per agent and stops the 60-second cycle tonight — a user
-  action, not one this spec automates ahead of Phase 3.
+- The Mechanism section describes the code as filed. Item 5 ("grants the Go caches to the build
+  role only") is no longer true — see Decision 1. Items 1–4 were not re-read line by line on
+  2026-11-24 beyond the accounting lines quoted under Decisions; their line numbers are September's.
+- Rewritten 2026-11-24 to the user's decisions: the owned session-scoped `GOCACHE`, the grant work
+  and the `CLAUDE.md` step are dropped; the removal stage is conditional on Phase 3.
+- Immediate relief, if the caches reappear, is manual and safe: the directories are derived state,
+  so `rm -rf /tmp/muxcode-go*cache*` costs one rebuild per agent — a user action.
 
 ## Status
 
-**Backlog** — filed 2026-09-08 on the user's request. Not started. 0/35 items.
+**Backlog** — unparked 2026-11-24 on the user's decisions. Not started; one criterion ticked as
+already shipped.

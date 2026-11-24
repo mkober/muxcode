@@ -486,7 +486,7 @@ Still uncommitted: `pane.go` and `pane_test.go` remain untracked, so a clean che
 still produces neither.
 
 **The graph run died rather than routing to its fix node** — a template defect, not a property of
-this work, now filed as [MUX-127](../backlog/MUX-127-review-completion-routing.md) Defect A. The must-fixes
+this work, now filed as [MUX-127](./MUX-127-review-completion-routing.md) Defect A. The must-fixes
 above were applied *despite* the run failing, not because of it: nothing routed them. Run
 `1788195259-req-code-pr-3fbcc7da` ended `failed` at 13:48:50 — `node review failed with no live
 edge`. The frozen `req-code-pr` definition has `build → fix` and `test → fix`, but `review` has

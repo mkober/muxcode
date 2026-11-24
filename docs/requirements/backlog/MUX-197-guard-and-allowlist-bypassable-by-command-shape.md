@@ -69,22 +69,53 @@ round found one it missed: attached `env -S` options, `$'…'` escapes, tab sepa
 program words. A real shell parser is ruled out by the stdlib-only constraint, and a partial one is
 the thing that kept failing.
 
+## Decisions (user, 2026-11-24)
+
+The user's explicit choices, relayed by edit. The spec was parked because its Phase 1 presented
+options A–D and no decision was recorded; both are now made.
+
+| # | Question | Decision |
+|---|----------|----------|
+| D1 | The delegation guard for edit and plan | **Option D — accept and document.** The guard keeps prefix matching and its shape gaps. It is a delegation nudge; the bus authority checks (`CheckCommitAuthority`, `CheckAtlassianAuthority`, gate authority) are the boundary. No guard matcher change ships |
+| D2 | The local-LLM allowlist | **Option B — plain commands only.** `isBashAllowed` admits a line only when it is a plain command (the `exceptApplies` shape) that matches a pattern |
+
+**Cost accepted with D1:** the direct-execution row of the blast radius stays open — an edit or plan
+agent that works around the guard by command shape is not stopped by it. The docs say so.
+
+**Cost accepted with D2:** local-LLM agents lose pipes, redirects, `;`, `&&` and `$` in Bash calls.
+A definition body or harness prompt that tells a local agent to run a compound line has to be
+rewritten to plain commands, in the same change.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] Every shape in both Observed tables has a test that asserts the chosen behaviour (blocked, or
-      documented as out of scope with the reason)
-- [ ] Each blocked shape has a negative control: the nearest legitimate command still passes
-      (`gh issue list --state open`, `git status`, `cd tools/muxcode && ls`)
-- [ ] The decision on the local-LLM allowlist is recorded with its cost — a plain-only allowlist
-      removes pipes, redirects and `$` from local agents — and the user has chosen it
-- [ ] `docs/hooks.md` and `docs/agents.md` Known-gaps notes are updated to match what shipped
+- [ ] Every guard shape in the first Observed table has a test pinning today's behaviour (the
+      prohibited command runs unmatched), named as the documented gap it is — so a later change to
+      the matcher shows up as a diff in expectations, not as a surprise
+- [ ] Every allowlist shape in the second Observed table is refused by `isBashAllowed` in **both**
+      modules (`bus/tools.go`, `harness/tools.go`)
+- [ ] Negative control for each refused allowlist shape: the nearest plain command still passes
+      (`git status`, `git status --short`, `gh issue list --state open`)
+- [ ] Negative control: every Bash line the local-agent definitions and harness prompts tell a
+      local agent to run still passes the plain-only allowlist — found by reading
+      `agents/harness/` and the harness prompt builder, each line listed in the test
+- [ ] `docs/hooks.md` and `docs/agents.md`: the Known-gaps note states the guard's gaps as accepted
+      (D1) and names the bus authority checks as the boundary; the Allowlist-gap note is replaced by
+      the plain-only rule and what local agents lose (D2)
 - [ ] The guard's documented scope stays "delegation nudge"; no doc claims it is a security boundary
 
 ### Technical approach
 
-Options to weigh in Phase 1 (not a decision):
+- **Guard (D1).** No matcher change. Phase 1's table-driven tests pin the gaps; Phase 3 documents
+  them as accepted.
+- **Allowlist (D2).** `isBashAllowed` first asks whether the line is plain — one statement, no
+  `;`, `|`, `&`, redirect, `$`, backtick, subshell, brace or newline — and only then glob-matches
+  it. The plain test is the one `exceptApplies` already applies in `bus/hook.go`; the harness is a
+  separate module with no shared code, so it carries its own copy and a test asserting the two agree
+  on one shared table of lines.
+
+The options as weighed (D and B chosen):
 
 | Option | Idea | Cost |
 |--------|------|------|
@@ -106,30 +137,49 @@ Options to weigh in Phase 1 (not a decision):
 
 ## Implementation
 
-### Phase 1: Pin and decide
+### Phase 1: Pin
 
-- [ ] Add table-driven tests for every Observed shape, asserting today's (bypassed) behaviour, so the
-      fix is visible as a diff in expectations
-- [ ] Present options A–D to the user with the cost of each; record the decision here
+- [ ] Table-driven guard tests for every shape in the first Observed table, asserting today's
+      behaviour (not matched) and labelled as accepted gaps (D1)
+- [ ] Table-driven allowlist tests for both rows of the second Observed table, in both modules,
+      asserting today's behaviour (admitted) — Phase 2 flips them in the same change, so the suite
+      is never left red
+- [ ] List every Bash line the local-agent definitions (`agents/harness/`) and the harness prompt
+      builder tell a local agent to run; record here any that is not plain
 
-### Phase 2: Guard
+### Phase 2: Plain-only allowlist (D2)
 
-- [ ] Implement the chosen guard option for edit and plan
-- [ ] Negative controls for every refused shape
+- [ ] `isBashAllowed` in `bus/tools.go` refuses a non-plain line before glob matching; Phase 1's
+      allowlist expectations flip
+- [ ] The same in `harness/tools.go`, with one shared table of lines asserted in both modules so the
+      two copies cannot drift
+- [ ] Rewrite any non-plain line found in Phase 1 to plain commands, in the same change
+- [ ] Negative controls: `git status`, `git status --short` and `gh issue list --state open` pass;
+      every listed definition line passes
+- [ ] A refused line's tool result says why (not plain) and names the plain alternative, so a local
+      model is not left retrying the same shape
 
-### Phase 3: Allowlist
+### Phase 3: Docs (D1 and D2)
 
-- [ ] Implement the chosen allowlist option in `bus/tools.go` and `harness/tools.go` alike
-- [ ] Negative controls: existing local-agent sequences (definition bodies) still pass
+- [ ] `docs/hooks.md`: the Known-gaps note reads as an accepted limit — the shapes, the statement
+      that the guard is a delegation nudge, and the bus authority checks as the boundary
+- [ ] `docs/agents.md`: the Allowlist-gap note is replaced by the plain-only rule and its cost to
+      local agents
+- [ ] `CLAUDE.md`: one clause on the local-LLM allowlist being plain-only, if the harness paragraph
+      is the place the next reader would look
 
 ### Phase 4: Integration test
 
-- [ ] Create `scripts/test-guard-command-shape.sh`: feed each Observed shape to `muxcode hook guard`
-      as edit and as plan, and assert the chosen verdict
-- [ ] Assert the negative controls pass the guard for the same roles
-- [ ] Run the local-LLM executor's allowlist over both tables and assert the chosen verdict
+- [ ] Create `scripts/test-guard-command-shape.sh` (hermetic, scratch bus, muxcode built from the
+      tree): feed each guard shape to `muxcode hook guard` as edit and as plan and assert it is
+      **allowed** — the accepted gap, pinned — with the plain prohibited command (`gh pr merge 1`,
+      `git push`) denied beside it as the control showing the guard still works
+- [ ] Run the local-LLM executor's allowlist over the second Observed table through the binary and
+      assert each compound line is refused and each plain neighbour admitted
+- [ ] Negative control: a build of a scratch copy with the plain test removed from `isBashAllowed`
+      admits `git status; git push`, which the assertion above rejects
 - [ ] Coverage floor so a skipped section cannot report green
-- [ ] Run the script and verify all checks pass
+- [ ] Run the script and record pass/fail counts in this spec
 
 ## Related
 
@@ -139,6 +189,16 @@ Options to weigh in Phase 1 (not a decision):
   Known-gaps note
 - [Agents — tool profiles](../../agents.md#tool-profiles) — the allowlist-gap note
 
+## Notes
+
+- The Mechanism table's line numbers are as filed (2026-09-28). On 2026-11-24 the functions stand at
+  `guardRulesForRole` `bus/hook.go:1405`, `checkAgainstRules` `:1877`, `exceptApplies` `:1927`,
+  `isBashAllowed` `bus/tools.go:203` and `harness/tools.go:196`; the Known-gaps notes are at
+  `docs/hooks.md:137` and `docs/agents.md:607`.
+- Whether any local-agent definition line is non-plain today was not checked at the decision;
+  Phase 1's third step establishes it.
+
 ## Status
 
-Backlog
+Backlog — unparked 2026-11-24 on the user's decisions (D1 = D, accept and document; D2 = B,
+plain-only allowlist). Not started.

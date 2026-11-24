@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#145](https://github.com/mkober/muxcode/issues/145)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 Two agent definitions instruct their agents to resolve the bus directory with `muxcode bus-dir`.
 There is no such subcommand: `bus-dir` is absent from `knownSubcommands` (`main.go:24-30`), so
 `routeFor` (`main.go:142-154`) treats it as a project name — the launcher road, or the near-miss
@@ -103,9 +105,20 @@ it today and it prints the session's bus directory — and `agents/log-watcher.m
 read the rest of this spec's criteria against the tree. Parked rather than worked: closing a spec as
 overtaken is the user's call.
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+`muxcode bus-dir` exists since [MUX-208](./MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md),
+and `agents/log-watcher.md` and `agents/dev-server.md` call it as
+`${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}` (checked by plan at close). The defect as titled is gone.
+
 ## Status
 
-Backlog — parked 2026-11-17 at selection; see the findings above.
+**Complete — closed as overtaken 2026-11-24** at 0/12, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** Backlog — parked 2026-11-17 at selection; see the findings above.
 
 Filed 2026-09-24 on the user's instruction relayed by edit, from the session notes; absence of the
 subcommand and the two references verified the same day. Not started.

@@ -107,7 +107,7 @@ agent's own relaunch may be suppressed exactly when it is needed.
 
 | Spec | Relationship |
 |------|--------------|
-| [`MUX-147`](../backlog/MUX-147-process-leak-and-memory-footprint.md) | Orphaned **harness** processes after daemon restarts — the same reparent-to-launchd shape, a different process, no message loss |
+| [`MUX-147`](./MUX-147-process-leak-and-memory-footprint.md) | Orphaned **harness** processes after daemon restarts — the same reparent-to-launchd shape, a different process, no message loss |
 | [`MUX-155`](./MUX-155-send-dedup-keys-on-target-not-sender.md) | Filed the same afternoon for plan's dropped notifies; edit's late `test153-followup` is **this** defect, not that one — the two were disentangled by checking each inbox |
 | [`MUX-050`](./MUX-050-delivery-acknowledgement.md) | The receipt model this defect defeats from inside |
 

@@ -438,7 +438,7 @@ rather than completing the intent. The profile also allows `Bash(muxcode graph *
 `muxcode help` — orientation calls — were.
 
 Two separable things, filed as such: a **real profile gap** (no discovery affordance) becomes
-[`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md), and the **cross-run failure mode**
+[`MUX-173`](../backlog/MUX-173-prompt-profile-no-discovery-affordance.md), and the **cross-run failure mode**
 (narration instead of action) is the stronger candidate cause, recorded there as the open question.
 `Loop detected: edit (message)` appears in both runs (10:32:52, 10:46:16) near the create intent;
 whether it contributes is unestablished.

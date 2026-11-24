@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#110](https://github.com/mkober/muxcode/issues/110)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 `checkStalledTasks` is **not inert**. It fired **26 times on 2026-08-28** alone. Yet three live
 stalls that day — two `pr-read` tasks and one spawn task, each idle for 4–8 minutes — were resolved
 only by a human running `muxcode deliver --force`.
@@ -31,7 +33,7 @@ Parsed from the raw log by timestamp:
 
 **26 task-stall rows that day.** The "zero rows" reading came from `muxcode lifecycle show`, whose
 default limit truncates any query to the most recent 50 entries — see
-[MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md), filed alongside this. **The investigation
+[MUX-124](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md), filed alongside this. **The investigation
 tool produced the false premise**, which is why that bug is worth fixing before anyone debugs
 timing-sensitive daemon behaviour again.
 
@@ -185,6 +187,20 @@ with evidence — cannot be met: the evidence no longer exists, and the fix is d
 that evidence points at. It needs fresh misses to investigate, or the user's word to re-scope it
 around today's watchdog.
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+The evidence is gone — Phase 1 reconstructs three stalls of 2026-08-28 from a lifecycle log that
+now starts 2026-10-21 — and the watchdog has been reworked since: `PaneShowsRecoverableIdle`,
+`AgentIsWorking`, the stall debounce, and
+[MUX-232](./MUX-232-redrive-arrives-truncated-with-no-id-and-no-reply-route.md)'s
+re-drive. Closed. A narrow spec for a spawn-role `checkStalledTasks` regression is filed only if
+such a test fails; none has been written or run.
+
 ## Status
 
-**Backlog** — 0/22, parked 2026-11-17 at selection; see the findings above.
+**Complete — closed as overtaken 2026-11-24** at 0/22, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** **Backlog** — 0/22, parked 2026-11-17 at selection; see the findings above.

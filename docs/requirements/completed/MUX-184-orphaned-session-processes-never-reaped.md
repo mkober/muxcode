@@ -52,7 +52,7 @@ Three claims in the handoff did not survive verification and are recorded correc
 Orphans are not inert. An orphaned listener consumes bus messages for a session that no longer
 exists ([MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — 31 alive at its
 second occurrence, a user-authorised `cdk deploy` acked and never run). Orphaned harnesses burn CPU
-and memory ([MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md) — 36 holding ~243 MB at its
+and memory ([MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — 36 holding ~243 MB at its
 measurement). This spec is the mechanism both of those symptoms share.
 
 ### Mechanism — what runs, when, and what it reaps
@@ -158,7 +158,7 @@ that blindness, which is one reason the pid records above matter.
 
 ### Family
 
-- [MUX-147](../backlog/MUX-147-process-leak-and-memory-footprint.md) — the harness family. Its Phases 2–3 (reaper design; *"may a daemon reap another session's processes?"*) are this spec's Phases 2–3 restricted to one family; its footprint half is untouched here. Since 2026-11-15 its reaper items are ticked there as deferred to this spec (Decision 5).
+- [MUX-147](./MUX-147-process-leak-and-memory-footprint.md) — the harness family. Its Phases 2–3 (reaper design; *"may a daemon reap another session's processes?"*) are this spec's Phases 2–3 restricted to one family; its footprint half is untouched here. Since 2026-11-15 its reaper items are ticked there as deferred to this spec (Decision 5).
 - [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) — the listener family. Its listener-side self-exit and receipt attribution stay there; its daemon-side census is this reaper.
 - [MUX-161](./MUX-161-upgrade-daemons-ps-blocked-in-codex-sandbox.md) — `ps` is unavailable to a Codex build agent; any reaper on the `ps` road shares it.
 - [MUX-008](../backlog/MUX-008-unverified-daemon-auto-restart.md) — the fire-and-hope relaunch; bears on whether a reaped daemon stays reaped.

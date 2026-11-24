@@ -67,11 +67,43 @@ place.
 | [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md) | Adjacent: guards whether an approval is *current*, not whether it is *human* — unchanged |
 | [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) | Same lesson: a role's definition is a behavioural boundary, and this spec is what a mechanical one would look like for one write path |
 
+## Decisions (user, 2026-11-24)
+
+The user's decision, relayed by edit. The spec was parked because Phase 2's seam was the user's
+choice among three and unrecorded.
+
+| Question | Decision |
+|----------|----------|
+| The seam | **Seam (a) — at the send.** A verifier in `sendMessage`, beside `CheckCommitAuthorityForMessage`, keyed on the raw sender being `daemon` plus the gate approval that the message's `GraphRun`/`GraphNode` lead to |
+| One mechanism or two | **One verifier serves both this spec and [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md)**; plan's rule loosens to accept gate-approved writes. The two ship together |
+
+**Division of the work.** This spec owns the **verifier** — the send-time check, its refusal row,
+the inverted MUX-144 pins and the integration script. MUX-165 owns the **rule change** — plan's
+definition (`agents/planner.md`), the `CLAUDE.md` Atlassian-authority clause and the consent-path
+wording — and lands in the same change set, after this spec's Phase 2.
+
+**Found in code at the decision (2026-11-24), and folded in below:**
+
+- The validator's list is now `gatedTrackerWriteActions` (`bus/graph.go:209`) and holds three
+  actions: `jira-write`, `confluence-write` **and `issue-write`**. GitHub issue writes moved to plan
+  after this spec was filed, and four builtin nodes send one (`bus/graph_templates.go:192`, `:297`
+  and the `jira-write` nodes at `:191`, `:393`). The verifier keys on that list, so it covers
+  `issue-write` too. That widening follows from "keyed on the list the validator keeps" and was not
+  spelled out in the user's decision — flagged to edit.
+- `agents/planner.md:179` already tells plan to honour a gate-dispatched `jira-write`/`issue-write`
+  after confirming the gate with `muxcode graph status <run>` (commit `b8bfcab`). So the acceptance
+  half exists as a behavioural rule today; what is still missing is the mechanical refusal this spec
+  builds.
+- `sendMessage` still carries only the commit check (`bus/inbox.go:316`), and both pins
+  (`TestGraphAtlassianWriteRefusedOnlyByConfiguration`, `TestGraphAtlassianWriteNeedsNoBypass`,
+  `bus/graph_bypass_test.go:332`, `:355`) still assert the undefended shape.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A graph-dispatched Atlassian write (`jira-write`, `confluence-write`) is **bound to the
+- [ ] A graph-dispatched tracker write (`jira-write`, `confluence-write`, `issue-write` — the
+      validator's `gatedTrackerWriteActions`) is **bound to the
       `wait_human` gate that released it** — attributable, authorized and audited approval, message
       matched to its frozen node — before plan acts on it, by a mechanical check and not by plan's
       reading of the payload
@@ -79,8 +111,11 @@ place.
       marker is refused **and logged**, naming the reason
 - [ ] The template sentence *"The user approved the tracker update"* no longer carries any weight:
       the decision rests on the gate's record, whatever the payload says
-- [ ] **Negative control:** plan's own legitimate, user-relayed Jira and Confluence writes (a
-      `jira-write` request **from `edit`**) are completely unaffected
+- [ ] The check sits in `sendMessage` beside `CheckCommitAuthorityForMessage` and is keyed on the
+      **raw** sender `daemon`, never the normalized role — so a refused dispatch never reaches
+      plan's inbox
+- [ ] **Negative control:** plan's own legitimate, user-relayed tracker writes (a `jira-write` or
+      `issue-write` request **from `edit`**) are completely unaffected
 - [ ] **Negative control:** a graph-dispatched `jira-read` / `confluence-read` is unaffected — reads
       stay open to every role
 - [ ] The two MUX-144 Phase 1 pins that assert the current shape
@@ -89,8 +124,17 @@ place.
 
 ### Technical approach
 
-**The seam is the open design question, and this spec does not settle it.** Three candidates, each
-with a cost the user should weigh:
+**The seam is decided: at the send** (Decisions above). `CheckTrackerWriteForMessage(session, m)`
+— the name is the implementer's — returns "" unless `m` is a request whose action is in
+`gatedTrackerWriteActions` **and** whose raw sender is the graph (`isGraphDispatch(m.From)`); for
+those it asks the two questions `checkGraphCommitDispatch` asks of a commit: is the message the work
+the frozen graph defines for the node it names (`dispatchMatchesNode`), and does a `wait_human` gate
+whose territory holds that node carry an approval that is attributable, authorized and corroborated
+by its `graph-gate-approved` row (`graphGateApprovalAuthorizes`, `gateApprovalHolds`). Anything else
+is refused and logged `tracker-write-refused`, fail closed. Any other sender is not this check's
+business: `edit` relays the user, and a non-edit agent's request is plan's rule to decline.
+
+The three candidates as weighed, kept for the record:
 
 | Seam | Shape | Cost |
 |------|-------|------|
@@ -100,9 +144,10 @@ with a cost the user should weigh:
 
 The first is the recommendation on the evidence: it is one predicate away from the landed commit
 road, and its negative control (an `edit`-originated request passes) is the same test the commit road
-already has — and it is the shape MUX-165's approach already names as `VerifyGateProvenance` (with
-`muxcode graph provenance <task-id>` as its CLI), so the two specs build it once. The decision is
-Phase 2's, recorded in this spec before any code moves.
+already has. It was the recommendation and is the user's choice. MUX-165 as filed named a
+receiver-side `VerifyGateProvenance` with a `muxcode graph provenance <task-id>` CLI; under seam (a)
+the verification happens before delivery, so that CLI is not built and MUX-165 is rewritten to lean
+on this check.
 
 ### Key files
 
@@ -128,27 +173,34 @@ Phase 2's, recorded in this spec before any code moves.
 - [ ] Re-read `TestGraphAtlassianWriteNeedsNoBypass` and record in this spec which of its assertions
       survive the fix and which invert
 
-### Phase 2: Decide the seam
+### Phase 2: Bind the dispatch to the gate (seam a)
 
-- [ ] Record the user's choice among the three seams above, with the reason, in this spec's Notes
-- [ ] If the send seam: confirm `IsAtlassianMutatingAction` / `gatedAtlassianActions` agree on the
-      action list, or name which one the check keys on
-
-### Phase 3: Bind the dispatch to the gate
-
-- [ ] Implement the chosen seam; a graph-dispatched Atlassian write is judged on `approvalDenial` +
-      node binding, refused and logged otherwise
-- [ ] Invert the Phase 1 pins; the discriminating pair reads refused-then-allowed with the sender unchanged
-- [ ] Negative control: an `edit`-originated `jira-write` and a `daemon`-originated `jira-read` pass untouched
+- [ ] The send-time check keys on `gatedTrackerWriteActions` — one list, shared with the validator,
+      so the two cannot disagree; a test fails if an action is added to one and not the other
+- [ ] Implement it in `sendMessage` beside the commit check, requests only: a `daemon`-sent tracker
+      write is judged on node binding plus the gate's audited approval, refused and logged
+      `tracker-write-refused` (naming run, node and reason) otherwise
+- [ ] Invert the Phase 1 pins in the same change, so the suite is never left red; the discriminating
+      pair reads refused-then-allowed with the sender unchanged
+- [ ] Negative control: an `edit`-originated `jira-write` and `issue-write`, and a `daemon`-originated
+      `jira-read`, pass untouched
 - [ ] Positive control through the real executor: a gated `jira-write` released by a person still
-      reaches plan's inbox carrying its provenance
+      reaches plan's inbox carrying its run and node
+- [ ] Every builtin template that sends a tracker write (`10-story-to-spec` `jira-update` and
+      `issue-update`, `20-defect-to-spec` `issue`, `110-pr-merge` `tracker`) still dispatches after
+      its gate is approved — read from `graph_templates.go`, not from this list
+
+### Phase 3: Hand-off to MUX-165
+
+- [ ] MUX-165's rule change (`agents/planner.md`, `CLAUDE.md`) lands in the same change set, after
+      Phase 2 — plan is told a delivered `daemon` tracker write has been verified only once that is
+      true
 
 ### Phase 4: Docs
 
-- [ ] `docs/architecture.md` "Authority gates — what actually holds": the Atlassian road paragraph
-- [ ] `CLAUDE.md` Atlassian-authority constraint: the mechanical check beside the relayed-from-edit rule
-- [ ] `agents/planner.md`: plan may treat a **verified** gate dispatch as consent — the rule MUX-165
-      needs, stated only once this control exists
+- [ ] `docs/architecture.md` "Authority gates — what actually holds": the tracker-write road
+      paragraph, with the refusal row
+- [ ] `docs/agent-bus.md`: the `tracker-write-refused` row and the gate rule's second half
 
 ### Phase 5: Integration test
 
@@ -158,10 +210,14 @@ Phase 2's, recorded in this spec before any code moves.
       refusal row logged
 - [ ] Test: an authorized non-creator approval releases the gate → plan's inbox holds the dispatch with
       its provenance
+- [ ] Test: a hand-written `daemon` `jira-write` naming a real run and node but a different payload,
+      and one carrying no run or node, are each refused with a `tracker-write-refused` row
 - [ ] Negative control: an `edit`-sent `jira-write` in the same session is delivered untouched
 - [ ] Negative control: `validateGates` still rejects an ungated `jira-write` node
+- [ ] Control: a muxcode built from a scratch copy with the send-time check removed delivers the
+      unapproved dispatch, which the first test rejects
 - [ ] Coverage floor so a skipped section cannot report green
-- [ ] Run the script and verify all checks pass
+- [ ] Run the script and record pass/fail counts in this spec
 
 ## Notes
 
@@ -175,9 +231,9 @@ Phase 2's, recorded in this spec before any code moves.
 
 ## Status
 
-Backlog — filed 2026-09-13, 0/25. Co-scheduled with MUX-165 (`⇄`).
+Backlog — filed 2026-09-13. Not started. Ships together with MUX-165 (`⇄`): this spec owns the
+verifier, MUX-165 the rule change.
 
-**Parked 2026-11-13** on the user's decision, relayed by edit. `55-defect-backlog-loop` run
-`1794607423` activated it the same day and no work was done. Phase 2's seam is the user's choice
-and is not recorded, and the spec ships together with MUX-165; returning it to `drafts/` is the
-user's call.
+Parked 2026-11-13 on an unrecorded seam; **unparked 2026-11-24** on the user's decision — seam (a),
+at the send, one verifier for both specs. The Context tables' file and line references are as filed
+at `23d2804`; the Decisions section carries what was re-read on 2026-11-24.

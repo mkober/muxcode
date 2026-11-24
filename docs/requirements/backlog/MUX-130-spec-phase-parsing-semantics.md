@@ -9,17 +9,18 @@ definitions disagree for **8 of 76** specs carrying phases, and the disagreement
 direction: the `phase-progress` guard can be inflated into permitting a per-phase commit it exists to
 decline.
 
-Tracking: _(no GitHub issue yet)_
+> **Read first: [State of the code on 2026-11-24](#state-of-the-code-on-2026-11-24).** The Context
+> below is the finding as filed on 2026-08-31. [MUX-183](../completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md)
+> has since replaced two of the four predicates, which closes Defect A and narrows Defect B; Defects
+> C, D and E stand. The user settled the open decisions on 2026-11-24.
 
-> **Adjacent spec — keep separate.**
+> **Adjacent spec — lands together.**
 > [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) covers a run carrying **two unreconciled
-> phase identities** (live `SpecCurrentPhase` vs frozen `IntentPhase`). That is **not** a parsing bug:
-> in the case it documents both parses are *correct*, and the defect is that two correct parses of
-> different things are used interchangeably. This spec owns how a phase is **read**; MUX-143 owns which
-> phase a run **means**. They meet in one place worth watching — MUX-143's Defect A (a human-parked
-> checkbox pinning derivation forever) proposes touching `SpecPhases()` item recognition, which is this
-> spec's parser, so **sequence MUX-143's Phase 3 after this spec's parser work** or resolve the overlap
-> deliberately.
+> phase identities** (live `SpecCurrentPhase` vs frozen `IntentPhase`). This spec owns how a phase is
+> **read**; MUX-143 owns which phase a run **means**. They meet in the parser: MUX-143's Defect A is
+> settled as blessing a non-`Phase` `### Deferred` heading, which is the same heading rule this spec's
+> Phase 3 scoping rewrites — so **MUX-143's Defect A lands with this spec's Phase 3**, in one change
+> to `parseSpecPhases`, and MUX-143 keeps its dependency on this spec.
 
 ## Context
 
@@ -176,7 +177,7 @@ that misleads): the mechanism built to catch a mistake is the mechanism that sto
 - [x] MUX-031's duplicate headings are real file structure (`## Verification notes`), confirmed by
       reading the headings with their enclosing `##` sections
 - [x] 8 specs carry phase headings outside an `## Implementation` section
-- [x] Two of the divergent specs — [`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md)
+- [x] Two of the divergent specs — [`MUX-120`](../completed/MUX-120-spawn-worker-never-woken-for-seeded-task.md)
       and [`MUX-128`](./MUX-128-fkey-navigation-for-spawn-windows.md) — are in `backlog/` **now**, so
       either could become the active spec
 
@@ -189,179 +190,225 @@ that misleads): the mechanism built to catch a mistake is the mechanism that sto
       against the Go implementation.** Phase 1 exists to close this gap with a Go test rather than
       inherit the replica's authority
 
+## State of the code on 2026-11-24
+
+Read by plan in `bus/spec_items.go` and `bus/graph_exec.go` before the decisions below were recorded.
+Line numbers elsewhere in this spec are from 2026-08-31 and no longer hold.
+
+| Defect | Then | Now |
+|--------|------|-----|
+| A — two definitions of complete | `SpecCompletedPhaseCount` (non-contiguous count) fed the guard, `SpecJustCompletedPhase` (prefix walk) fed `${completed_phase}` | **Closed by MUX-183.** Both functions are gone. `phaseCommitReady` is the one predicate behind the `phase-progress` guard, the `spec_phase_committable` condition and `${completed_phase}`: a phase complete in the working tree and not complete in HEAD's copy of the spec (`newlyCompletedPhases`, `specAtHEAD`). The three cannot disagree |
+| B — `### Phase N` matched document-wide | every phase heading anywhere counted, and an empty one counted as complete | **Narrowed, not closed.** `parseSpecPhases` still appends every `### Phase N` in the file. But `SpecPhase.Complete()` now needs at least one ticked box and none open (MUX-183 defect 2), so a narrative `### Phase 3 (date) — 4/4 steps` heading is empty, not complete, and no longer inflates the count. A phase heading outside the implementation section that **holds checkboxes** still parses as a phase |
+| C — duplicate and non-monotonic numbers | silently accepted | **Stands.** `newlyCompletedPhases` keys shipped phases by number, `SpecPhaseOpenItems` sums duplicate sections, `SpecCurrentPhase` picks the lowest number |
+| D — `Number 0` as the unset sentinel | Phase 0 invisible to both predicates | **Half closed.** `${completed_phase}` now reads `phaseCommitVerdict.ready`, so a completed Phase 0 is named. `SpecCurrentPhase` still tests `best.Number == 0`, and `resolveCurrentPhaseText` and `conditions.go` still read `p.Number == 0` as "none" |
+| E — a sentinel interpolated as a phase name | `… steps of (no open phase)` | **Stands.** `resolveCurrentPhaseText` returns `(no open phase)` into the same slot |
+
+Survey of `docs/requirements/` on 2026-11-24 (a Python replica of the heading rule, **not** run
+against the Go parser — Phase 1 reproduces it in Go):
+
+| Measure | Count | Which |
+|---------|-------|-------|
+| Specs carrying `### Phase N` | 184 | — |
+| …with one outside a `## Implementation…` section | 8 | all in `completed/`: MUX-031, 069, 071, 077, 094, 105, 109, 117 |
+| …of those, whose outside headings hold checkboxes | 2 | MUX-069 (`## Design`, `## Success criteria`), MUX-077 (`## Acceptance criteria`) |
+| …in `backlog/` or `drafts/` | 0 | the two backlog specs named in 2026-08-31's survey (MUX-120, MUX-128) no longer show it |
+| Duplicate or non-monotonic numbers inside the implementation section | 3 | `completed/` MUX-109, MUX-114, MUX-207 |
+| Specs with a Phase 0 | 5 | `backlog/` MUX-022, MUX-116; `completed/` MUX-042, MUX-071, MUX-131 |
+
+So no spec that can become active today is misparsed by scoping. The scoping rule is still worth
+landing — nothing stops the next spec from putting boxes under a phase heading in its verification
+notes — but the "8 of 76 disagree, in the unsafe direction" finding is history.
+
 ## Decisions
 
-### 1. "Complete" means the contiguous prefix — settled 2026-08-31 (maintainer)
+### 1. "Complete" means the contiguous prefix — settled 2026-08-31 (maintainer); overtaken in mechanism by MUX-183
 
-A spec is complete **up to its frontier**. Phase 1 ✓, Phase 2 ✗, Phase 3 ✓ counts as **one** phase
-complete, not two.
+The decision was that Phase 1 ✓, Phase 2 ✗, Phase 3 ✓ counts as **one** phase complete, so that
+`SpecCompletedPhaseCount` and `SpecJustCompletedPhase` became one definition with two projections.
 
-This collapses Defect A rather than documenting around it: `SpecCompletedPhaseCount` becomes the
-**length** of the contiguous prefix and `SpecJustCompletedPhase` its **last element** — one definition
-with two projections, so they cannot drift apart again. The guard and the `${completed_phase}` gate
-message stop being able to disagree by construction.
+MUX-183 reached the aim by another road: there is now one predicate, anchored on HEAD, and no count
+is compared with anything. It did **not** adopt the prefix rule. Under `phaseCommitReady` a later
+phase that is complete in the tree and not at HEAD is committable while an earlier phase stays open.
+This spec does not put the prefix rule back: the 2026-11-24 decisions say to rewrite Phase 4 around
+MUX-183's logic, and decision 4 below covers what an open earlier item does (it holds the *loop*).
+Phase 1 pins the behaviour as it is. Declining a commit for a phase stranded behind an open earlier
+one would be a new blocking rule and is the user's to ask for — see [Notes](#notes).
 
-**Direction of change is safe.** Contiguous-prefix counts are ≤ the current non-contiguous counts, and
-the guard declines when `completed < prior+1`, so a lower count means *more* declines. This fix cannot
-make the guard more permissive than it is today.
+## Decisions (user, 2026-11-24)
 
-#### The consequence: out-of-order phase work stops counting
+Relayed by edit. These settle the three decisions this spec left open for the maintainer.
 
-Closing a later phase while an earlier one stays open no longer advances the count, so the commit that
-closes it is **declined**. Measured across the repo — **8 specs currently have phases stranded behind
-an open earlier phase**:
+| # | Question | Decision |
+|---|----------|----------|
+| 2 | Should phase parsing be scoped to a section? | **(a)** Only `### Phase N` under `## Implementation` is a phase. No pattern-matched section, no marker |
+| 3 | Are duplicate phase numbers an error or a warning? | **(b)** A warning surfaced at dispatch. Not a validation error at `spec set`, not last-wins |
+| 4 | When graph and spec disagree, who wins? | A **deliberately open item holds the loop**, and the gate text says so — naming the phase and the open item, so the hold reads as the spec's instruction and not as a stuck run |
 
-| Spec | Phases stranded behind an open one |
-|---|---|
-| `completed/MUX-031` | 8 |
-| `completed/MUX-105` | 5 |
-| `completed/MUX-108` | 4 |
-| `completed/MUX-109` | 3 |
-| `completed/MUX-014`, `completed/MUX-050` | 2 each |
-| `backlog/MUX-120`, `backlog/MUX-128` | 1 each |
+Also directed: rewrite the stale Phase 4 around MUX-183's HEAD-anchored logic, and re-measure the
+stranded specs. [MUX-143](./MUX-143-run-carries-two-phase-identities.md)'s Defect A — a `### Deferred`
+heading as the way to park an item — lands with this spec's scoping.
 
-The realistic trigger is a **deliberately-open item** — an acceptance criterion that cannot be
-exercised without side effects, left open on purpose. [MUX-117](../completed/MUX-117-pane-targeting-by-identity.md)
-carried exactly one such item in Phase 4 while later work continued. Under this decision the frontier
-stalls there and every subsequent per-phase commit is declined.
-
-**This is acceptable, and the reason is in the code**: a `phase-progress` decline routes to the stuck
-gate — `graph_exec.go` states it is "the gate-and-ask trigger, not a dead end". So the effect is *the
-run asks the human*, not *the run dies*. A deliberately-open item making the orchestrator stop and ask
-is defensible behaviour. It must be **documented in the decline text**, though, or it reads as a bug.
-
-#### Sequencing is load-bearing: scoping must land before semantics
-
-Most of the stranding above is a **Defect B artifact**, not real out-of-order work. MUX-031's 8
-stranded phases are almost entirely its `## Verification notes` duplicates; scoped to its 7 real
-phases it strands **zero**. Landing the contiguous-prefix change *before* section scoping combines an
-inflated phase list with strict prefix semantics — the maximum-over-declining configuration, and one
-that would look like the fix made things worse. **Phase 3 (scoping) must land before Phase 4
-(semantics).** The implementation order below already reflects this; do not reorder it.
-
-## Open decisions (maintainer)
-
-Still open. These change the shape of the fix and should be settled before Phase 3.
-
-| # | Question | Options |
-|---|----------|---------|
-| 2 | Should phase parsing be scoped to a section? | (a) only `### Phase N` under `## Implementation`; (b) first `## Implementation`-like section by pattern; (c) an explicit marker in the spec |
-| 3 | Are duplicate phase numbers an error or a warning? | (a) validation error at `spec set`; (b) warning surfaced at dispatch; (c) accept, last-wins |
-| 4 | When graph and spec disagree, who wins? | MUX-121's original question. Decision 1 removes the *predicate* disagreement; what remains is whether a deliberately-open item is a legitimate reason to hold the loop. If it is, the gate message must say so rather than naming a phase number that reads as a mistake |
+How decision 4 and MUX-143's `### Deferred` fit together: an open box **inside** a phase holds the
+loop on that phase, on purpose, and the gate says which box. An item that should not hold the loop is
+moved under `### Deferred`, where no phase owns it. It still counts for `SpecOpenItems`, so the spec
+cannot close while it is open.
 
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] `SpecCompletedPhaseCount` returns the **length of the contiguous prefix** of complete phases, and
-      `SpecJustCompletedPhase` returns that prefix's **last element** — derived from one traversal so
-      they cannot disagree (decision 1)
-- [ ] A spec with Phase 1 ✓, Phase 2 ✗, Phase 3 ✓ reports **one** phase complete, not two
-- [ ] A `phase-progress` decline caused by a stranded phase says so in its text — naming the open
-      earlier phase blocking the frontier, not just the counts
-- [ ] Phase headings are recognised only within the spec's implementation section — a
-      `## Verification notes` section naming phases does not inflate the phase count
-- [ ] `SpecPhases` on `completed/MUX-031-graph-run-tui.md` returns **7** phases, not 15
-- [ ] Duplicate or non-monotonic phase numbers are surfaced, not silently accepted
-- [ ] A gate message never implies completeness while `SpecOpenItems` is non-zero — either the phase
-      text accounts for unscoped items, or it states plainly that items remain outside the phases
+- [x] The commit guard, the pre-gate condition and `${completed_phase}` read one definition of
+      "complete" and cannot disagree — shipped by MUX-183 (`phaseCommitReady`); the two predicates
+      this criterion was written against no longer exist
+- [ ] A `### Phase N` heading is a phase only inside the spec's `## Implementation` section
+      (decision 2a) — a `## Verification notes`, `## Design` or `## Acceptance criteria` section naming
+      phases contributes none, with or without checkboxes
+- [ ] `SpecPhases` on `completed/MUX-031-graph-run-tui.md` returns **7** phases, not 15, and on
+      `completed/MUX-077-planner-agent.md` only its implementation phases
+- [ ] A spec with phase headings and **no** `## Implementation` section degrades explicitly — a named
+      error or warning the guard and the gate text carry — never silently to zero phases
+- [ ] Duplicate or non-monotonic phase numbers inside the implementation section raise a warning at
+      dispatch (decision 3b): a lifecycle row and a line in the dispatch or gate text naming the
+      numbers; the run is not refused
+- [ ] A run held on a phase with an open item says so (decision 4): the stuck-gate text and the
+      `phase-progress` decline name the lowest open phase and its open items, and state that an item
+      left open on purpose holds the loop until it is ticked or moved under `### Deferred`
+- [ ] A gate or dispatch message never interpolates a "no phase" sentinel where a phase name belongs:
+      the no-open-phase case has its own sentence, chosen before substitution
+- [ ] A gate message never implies completeness while `SpecOpenItems` is non-zero — it states that
+      items remain outside the phases
 - [ ] **Negative control:** a spec that genuinely has nothing open still renders its honest completion
       text — the fix must not make every finished spec look unfinished
-- [ ] A spec numbering phases from **0** behaves correctly: Phase 0 can be the reported current phase,
-      and a spec with only Phase 0 complete names it rather than rendering `(no completed phase)`
-- [ ] **Negative control:** the genuine "no phases complete" and "no open phase" cases still render
-      their honest empty text — the fix must distinguish *absent* from *zero*, not conflate them the
-      other way
-- [ ] `phaseProgressGuardAllows` compares against a count that cannot exceed the spec's real phase
-      count
-- [ ] A spec whose verification section names phases cannot weaken the guard — pinned by a negative
-      control that fails if the scoping is removed
-- [ ] The survey is re-runnable: a check reports divergent specs so this cannot silently return
-- [ ] No existing spec's guard behaviour changes except where it was measurably wrong — the 8
-      divergent specs are enumerated before and after with the delta explained
+- [ ] A spec numbering phases from **0** behaves correctly: Phase 0 can be the reported current phase
+      while a later phase is also open, and `spec_phases_remaining` counts it
+- [ ] **Negative control:** the genuine "no open phase" case still renders its honest text — the fix
+      distinguishes *absent* from *zero*, and does not conflate them the other way
+- [ ] A spec whose non-implementation section names phases with checkboxes cannot make a commit
+      ready — pinned by a negative control that fails if the scoping is removed
+- [ ] The survey is re-runnable: a Go test or script reports specs with phase headings outside the
+      implementation section and with duplicate numbers, so this cannot silently return
+- [ ] No existing spec's guard behaviour changes except where it was measurably wrong — the specs in
+      the survey table above are enumerated before and after with the delta explained
 
 ### Key files
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/spec_items.go` | All four predicates, both regexes — the whole defect surface |
-| `tools/muxcode/bus/graph_exec.go` | `phaseProgressGuardAllows` (:273), `resolveCompletedPhaseText` (:343), `resolveCurrentPhaseText` (:358) |
-| `tools/muxcode/bus/spec_items_test.go` | Existing predicate tests — where the pinning tests land |
-| `tools/muxcode/bus/graph_exec_test.go` | Guard tests, incl. the phase-complete guard at :894 |
+| `tools/muxcode/bus/spec_items.go` | `parseSpecPhases`, `SpecPhase.Complete`, `SpecCurrentPhase`, `newlyCompletedPhases`, `SpecPhaseOpenItems` |
+| `tools/muxcode/bus/graph_exec.go` | `phaseCommitReady`, `phaseProgressGuardAllows`, `resolveCompletedPhaseText`, `resolveCurrentPhaseText` |
+| `tools/muxcode/bus/conditions.go` | `spec_phases_remaining`, `spec_phase_committable` |
+| `tools/muxcode/bus/graph_run.go` | `specPhaseLoopCap` — the phase count a loop edge is capped by |
+| `tools/muxcode/bus/spec_items_test.go`, `graph_exec_test.go` | Where the pinning tests land |
 | `docs/requirements/completed/MUX-121-multi-phase-sequential-graph.md` | Post-close observation this spec supersedes |
+| `docs/requirements/completed/MUX-183-phase-commit-ready-recredits-shipped-phases.md` | The HEAD-anchored predicate Phase 4 builds on |
 
 ## Implementation
 
 ### Phase 1: Pin the current behaviour in Go
 
-- [ ] Write a Go test that asserts the **current** divergent behaviour of `SpecCompletedPhaseCount`
-      vs `SpecJustCompletedPhase` on a fixture with a gap (1 ✓, 2 ✗, 3 ✓) — a characterization test,
-      green before any fix
-- [ ] Assert `SpecPhases` on a fixture mirroring MUX-031's shape returns the inflated count today
-- [ ] Confirm the Python survey's numbers reproduce in Go for at least MUX-031 and MUX-109; record
-      any discrepancy rather than adjusting the fixture to match
+- [ ] Characterization tests, green before any fix: `SpecPhases` on a fixture mirroring MUX-031's
+      shape returns the document-wide count; a fixture with boxes under a phase heading in
+      `## Acceptance criteria` (MUX-077's shape) makes `phaseCommitReady` ready on that heading alone
+- [ ] Characterization test: under HEAD anchoring a phase complete in the tree behind an open earlier
+      phase **is** committable — recorded as today's behaviour, see decision 1
+- [ ] Characterization tests for Defect D (`SpecCurrentPhase` loses an open Phase 0 to a later open
+      phase) and Defect C (duplicate numbers: what `newlyCompletedPhases` and `SpecCurrentPhase`
+      return)
+- [ ] Reproduce the 2026-11-24 survey in Go over `docs/requirements/`; record any discrepancy with
+      the table above rather than adjusting it
 - [ ] Do **not** change behaviour in this phase — the point is a trustworthy baseline
 
 ### Phase 2: Decide and document the semantics
 
-- [x] Settle decision 1 — **contiguous prefix**, maintainer 2026-08-31, recorded in [Decisions](#decisions)
-- [ ] Settle open decisions 2–4 with the maintainer; record each alongside decision 1
-- [ ] Write the contiguous-prefix definition as a doc comment at both predicates, each naming the other
-      as its sibling projection
-- [ ] State which predicate each caller must use and why
+- [x] Settle decision 1 — **contiguous prefix**, maintainer 2026-08-31, recorded in [Decisions](#decisions); overtaken in mechanism by MUX-183
+- [x] Settle open decisions 2–4 — the user, 2026-11-24, relayed by edit, recorded in [Decisions (user, 2026-11-24)](#decisions-user-2026-11-24)
+- [ ] Doc comments at `parseSpecPhases`, `SpecCurrentPhase` and `phaseCommitReady`: what a phase is
+      (decision 2a), what holds the loop (decision 4), and which predicate each caller must use
+- [ ] `docs/architecture.md` graph section: the same three statements, and the `### Deferred` heading
+      (with MUX-143)
 
 ### Phase 3: Scope phase parsing to the implementation section
 
-- [ ] Add section scoping to `SpecPhases` per decision 2
-- [ ] Verify `SpecPhases` on MUX-031 returns 7
-- [ ] Re-run the survey across all specs; confirm the divergent set shrinks and enumerate what changed
-- [ ] Handle specs with no recognisable implementation section — degrade explicitly, never silently
-      to zero phases (a zero-phase spec makes the guard vacuous)
+- [ ] `parseSpecPhases` recognises `### Phase N` only inside `## Implementation` (a heading whose text
+      begins `Implementation`, so `## Implementation phases` is included — the exact match is pinned
+      by test); the Phase 1 characterization tests are inverted in the same change
+- [ ] A non-`Phase` `###` heading inside the section still ends the current phase, so boxes under
+      `### Deferred` belong to no phase — the rule MUX-143's Defect A blesses; its test and doc line
+      land in this change
+- [ ] `SpecPhases` on MUX-031 returns 7
+- [ ] Re-run the survey across all specs; enumerate what changed for each spec in the table
+- [ ] Specs with phase headings and no implementation section degrade explicitly, never silently to
+      zero phases (a zero-phase spec makes `spec_phases_remaining` end a run at once and gives the
+      loop cap nothing to count)
 
-### Phase 4: Reconcile the predicates and the guard
+### Phase 4: Reconcile what is left around the HEAD-anchored predicate
 
-> **Do not start before Phase 3 lands** — strict prefix semantics over an unscoped (inflated) phase
-> list is the maximum-over-declining configuration. See [Sequencing](#sequencing-is-load-bearing-scoping-must-land-before-semantics).
+> Rewritten 2026-11-24. The phase as filed derived `SpecCompletedPhaseCount` and
+> `SpecJustCompletedPhase` from one prefix walk; MUX-183 removed both. What is left is everything
+> `phaseCommitReady` and `SpecCurrentPhase` still get wrong or say badly. **Do not start before
+> Phase 3 lands** — the texts below name phases, and they must name scoped ones.
 
-- [ ] Derive both `SpecCompletedPhaseCount` and `SpecJustCompletedPhase` from **one** contiguous-prefix
-      traversal — count and last element, not two independent walks (decision 1)
-- [ ] Ensure `phaseProgressGuardAllows` cannot compare against a count exceeding the real phase count
-- [ ] Extend the decline text to name the open earlier phase when the frontier is stalled behind one
-- [ ] Re-measure the stranded-phase table in [Decisions](#the-consequence-out-of-order-phase-work-stops-counting)
-      after scoping; confirm the count drops and record the new numbers
-- [ ] Surface duplicate/non-monotonic phase numbers per decision 3
-- [ ] Re-check `resolveCompletedPhaseText` and `resolveCurrentPhaseText` still return honest text
-      under the new semantics, including the degradation strings
+- [ ] Phase 0: `SpecCurrentPhase` and its callers carry an explicit "found" result instead of testing
+      `Number == 0` (`resolveCurrentPhaseText`, the `spec_phases_remaining` condition); `phaseCommitVerdict`
+      already does this through `ready`
+- [ ] Duplicate or non-monotonic numbers: detected in the one parse, surfaced at dispatch as a
+      lifecycle row and a line in the node's message (decision 3b); `newlyCompletedPhases` and
+      `SpecPhaseOpenItems` behaviour on duplicates stated in their doc comments and pinned
+- [ ] `phaseProgressGuardAllows` decline text and the stuck gate name the lowest open phase and its
+      open items, and say that an item left open on purpose holds the loop (decision 4)
+- [ ] `resolveCurrentPhaseText` no longer returns a sentinel into a noun slot: the builtin templates
+      that use `${current_phase}` get a distinct sentence for the no-open-phase case, chosen before
+      substitution; where `SpecOpenItems` is non-zero that sentence says items remain outside the phases
+- [ ] Re-check `resolveCompletedPhaseText` still returns honest text, including its degradation
+      strings
+- [ ] Re-measure the stranded specs: for every spec in `backlog/` and `drafts/`, which phases are
+      complete behind an open earlier phase, under the scoped parser; record the table here in place
+      of 2026-08-31's (which measured the unscoped parser and the removed prefix predicate)
 
 ### Phase 5: Negative controls
 
-- [ ] Test that fails if section scoping is removed — a fixture with a `## Verification notes` section
-      naming phases must not inflate the count
-- [ ] Test that fails if the guard's comparison is reverted to the unscoped count — asserts the guard
-      **declines** a no-progress commit on a spec whose verification section names phases
+- [ ] Test that fails if section scoping is removed — a fixture with boxes under a phase heading in a
+      non-implementation section must not yield a phase
 - [ ] Test asserting the guard still **allows** a legitimate phase-closing commit — the guard must not
-      become uniformly restrictive (a guard that always declines passes every decline test). This
-      control matters more under decision 1, which moves the guard toward declining
-- [ ] Test pinning the contiguous-prefix consequence in **both** directions: closing a phase stranded
-      behind an open earlier one **declines**, and closing the open earlier phase then **allows** —
-      proving the frontier advances rather than latching
-- [ ] Test that the decline text names the blocking earlier phase; a decline that only prints counts
-      is indistinguishable from the inflated-count bug this spec fixes
+      become uniformly restrictive (a guard that always declines passes every decline test)
+- [ ] Test that the decline and gate text name the open phase and item; **control** — a spec with
+      nothing open renders its completion text with no hold wording
+- [ ] Test that a duplicate-number spec warns and a clean spec does not
+- [ ] Test that an open Phase 0 is the current phase while Phase 1 is also open; **control** — a spec
+      with no open phase still reports none
 - [ ] Confirm each negative control fails when its fix is reverted; a green suite that would stay
       green without the change proves nothing
 
 ### Phase 6: Integration test
 
 - [ ] Extend `scripts/test-multi-phase-graph.sh` (or add `scripts/test-spec-phase-parsing.sh`) with a
-      fixture spec carrying a verification section that names phases
-- [ ] Drive a real run to the per-phase commit gate; verify the guard **declines** when no new phase
-      closed, with the decline reason naming the true count
-- [ ] Verify `${completed_phase}` in the gate message names the same phase the guard reasoned about —
-      the two must not disagree in the text a human approves
-- [ ] Negative control: the same fixture with its phase genuinely closed dispatches and completes
+      fixture spec whose verification section names phases with checkboxes, a duplicate phase number,
+      and one item left open on purpose
+- [ ] Drive a real run to the per-phase commit gate: the non-implementation headings contribute no
+      phase, and the guard declines when no implementation phase newly closed
+- [ ] The run holds on the phase with the open item, and the stuck gate's text names that phase and
+      item and says the hold is deliberate; the duplicate number produces the dispatch warning
+- [ ] `${completed_phase}` in the gate message names the phase the guard reasoned about
+- [ ] Negative control: the same fixture with the item ticked and its phase closed dispatches and
+      completes, with no hold wording and no warning once the duplicate is removed
 - [ ] Add a coverage floor so a skipped or partial run cannot report green
 - [ ] Run it and record passed/failed/exit code in this spec
+
+## Notes
+
+**Decision 1 and out-of-order completion — not reopened here.** Under MUX-183 a phase complete behind
+an open earlier phase may be committed; under 2026-08-31's prefix rule it would have been declined.
+Nothing in the 2026-11-24 decisions asks for the decline, and the run loop does not produce the case
+by itself — it hands out the lowest open phase, so a later phase closes first only when someone works
+out of order by hand. Phase 1 pins today's behaviour and Phase 4's re-measurement shows how many live
+specs are in that state. If the count is not zero and the user wants the decline, it is one rule in
+`newlyCompletedPhases`.
 
 ## Status
 
 Backlog
+
+Unparked 2026-11-24 on the user's decisions 2 (a), 3 (b) and 4, relayed by edit and recorded above.
+Phase 4 is rewritten around MUX-183's HEAD-anchored predicate, which had closed Defect A and narrowed
+Defect B since filing; one criterion is ticked as shipped by MUX-183. Lands with
+[MUX-143](./MUX-143-run-carries-two-phase-identities.md)'s Defect A. Not started.

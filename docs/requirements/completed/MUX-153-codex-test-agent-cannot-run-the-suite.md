@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#120](https://github.com/mkober/muxcode/issues/120)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 `TestProcessBatch_SimpleResponse` (`tools/muxcode-llm-harness/harness/loop_test.go:23`) binds a
 loopback listener via `httptest.NewServer`. Codex restricts network access by default and
 `BuildExecArgs` never lifts it, so the listen panics in `newLocalListener`, the harness module fails,
@@ -142,9 +144,28 @@ Filed 2026-09-08 by plan from edit's handoff (`/tmp/mux-new-findings-20260908.md
 site, the `codexWritableRoots` role gate and the launch/force-respond rows were verified from this
 role. The default-restricted network claim rests on the corrected `CLAUDE.md` note; Phase 1 pins it.
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+No test binds a socket: the only files under `tools/` naming `httptest.NewServer` or `net.Listen(`
+are the two `pipeserver_test.go` helpers (checked by plan with `grep -rl` at close). And every Codex
+role launches with no sandbox by default since 2026-11-02 (`-s danger-full-access`), so the launch
+this spec opened with no longer fails.
+
+Never done, and closed with the spec: the suite run under the Codex sandbox itself (Phase 3's first
+test) and the two negative controls. Under `MUXCODE_CODEX_SANDBOX=workspace-write` the test role's
+behaviour is unverified.
+
+Kept as a follow-up: the guard against new socket binds —
+[MUX-238](../backlog/MUX-238-nothing-fails-when-a-test-binds-a-socket.md).
+
 ## Status
 
-**Backlog — parked 2026-09-08 22:10 at 3/19, Phase 2 at 3/7.** Moved back from `drafts/` on the
+**Complete — closed as overtaken 2026-11-24** at 3/19, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** **Backlog — parked 2026-09-08 22:10 at 3/19, Phase 2 at 3/7.** Moved back from `drafts/` on the
 user's instruction: Phase 3's proof — the suite under the codex sandbox itself — never ran, and
 nothing moved since the afternoon. The record below is as it stood when parked.
 

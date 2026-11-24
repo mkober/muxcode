@@ -134,7 +134,7 @@ are what held. Neither is a structural fix.
 - A human approved a gate for a commit that could never have succeeded
 - Continued `verify-spec` traffic against a **terminal** run afterwards — every fire answered was
   against a run that had already failed and could not proceed (the same shape as
-  [`MUX-127`](../backlog/MUX-127-review-completion-routing.md) census fires 12–14)
+  [`MUX-127`](./MUX-127-review-completion-routing.md) census fires 12–14)
 
 ### Scope
 
@@ -143,7 +143,7 @@ produces artifacts consumed by a later node has this gap — the spawn contract 
 step at all, so this is not a one-template typo.
 
 Related: [`MUX-091`](../completed/MUX-091-spawn-worktrees.md) added worktree isolation;
-[`MUX-120`](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) covers spawn wake-up. Neither
+[`MUX-120`](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) covers spawn wake-up. Neither
 addresses harvesting a spawn's work.
 
 ## Requirements
@@ -478,6 +478,6 @@ Three things worth carrying forward:
   (`…OwnPortFixLoopRefusalIsExpected`) was **removed** when the blob-hash guard landed, rather than left
   contradicting the new behaviour.
 
-Related: [`MUX-135`](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) raises exposure to a
+Related: [`MUX-135`](./MUX-135-spawn-seed-record-gc-strands-completion.md) raises exposure to a
 separate defect — persistent workers mean longer iterations, and an iteration outliving the one-hour
 delivery-record retention becomes permanently uncompletable. That is filed separately and unfixed.

@@ -213,12 +213,12 @@ Therefore:
 |------|--------------|
 | [MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) | **Blocking.** Resume must carry the agent file; reproduced live on the manual path during this incident |
 | [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md) | Edit's bare `--resume` loses all launch flags — this spec makes that path automatic, so the fix must land with or before Phase 2 |
-| [MUX-008](./MUX-008-unverified-daemon-auto-restart.md) | Restart reported without confirming the agent came back; the definition-verification criterion here is the same shape |
+| [MUX-008](../backlog/MUX-008-unverified-daemon-auto-restart.md) | Restart reported without confirming the agent came back; the definition-verification criterion here is the same shape |
 | [MUX-131](../completed/MUX-131-spawn-implement-output-never-ported.md) | Worker reuse — dead-worker fallback semantics |
 | [MUX-123](./MUX-123-stall-watchdog-selective-misses.md) | A dead worker with a `running` node is exactly the stall this spec prevents at source |
 
 Together with MUX-136, MUX-126 and MUX-008 this forms the *restart and resume restore an agent
-incompletely* family named in the [defect clustering](./backlog.md#defects--prioritized). Those three
+incompletely* family named in the [defect clustering](../backlog/backlog.md#defects--prioritized). Those three
 describe what restore gets **wrong**; this one describes what restore does not **attempt**.
 
 ## Time Tracking

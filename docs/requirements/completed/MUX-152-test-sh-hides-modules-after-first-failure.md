@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#119](https://github.com/mkober/muxcode/issues/119)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 `test.sh` runs each Go module under `set -euo pipefail` in glob order, and the glob puts
 `tools/muxcode-llm-harness/` before `tools/muxcode/` because `-` (0x2D) sorts before `/` (0x2F). A
 failure anywhere in the harness module — `go vet` or `go test` — aborts the script before the bus
@@ -118,9 +120,22 @@ Filed 2026-09-08 by plan from edit's handoff (`/tmp/mux-new-findings-20260908.md
 was verified from `test.sh` and the glob order from the filesystem; the "65 pass / 1 fail" figure is
 edit's observation from the run and is recorded as reported.
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+Overtaken by [MUX-174](./MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md), which shipped
+the per-module summary, the non-zero exit and the `CLAUDE.md` row. The one criterion left — every
+module runs regardless of an earlier failure — is decided the other way: `test.sh` keeps
+stop-at-first-failure and names the rest `never executed`, pinned by
+`scripts/test-test-sh-coverage.sh`.
+
 ## Status
 
-**Backlog — parked 2026-11-14** — filed 2026-09-08. Not started.
+**Complete — closed as overtaken 2026-11-24** at 0/16, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** **Backlog — parked 2026-11-14** — filed 2026-09-08. Not started.
 
 Parked by plan at the `55-defect-backlog-loop` selection (run `1794626267`), under the standing rule that a spec holding an unrecorded design decision is not worked unattended. Since this was filed, [MUX-174](../completed/MUX-174-test-sh-repo-wide-vet-failure-harness-sandbox.md) changed `test.sh`:
 

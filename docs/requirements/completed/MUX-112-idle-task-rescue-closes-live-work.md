@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#46](https://github.com/mkober/muxcode/issues/46)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 The daemon treats "agent sitting at the `❯` prompt" as "agent finished without answering". An agent
 that launched background work — a long script, a `run_in_background` command — is at the prompt
 precisely *because* the work is still going. The rescue path then scrapes its pane, sends the
@@ -328,6 +330,23 @@ lifecycle log before writing._
 - [ ] Coverage floor so a skipped or short-circuited run cannot report green
 - [ ] Run the script and confirm all checks pass
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+The closure is already advisory: since [MUX-182](./MUX-182-cancelled-run-keeps-working-provenance-unreadable.md)
+(defect 4b) the rescue sends an `event:no-answer` notice and times the task out (`TimeoutTask`)
+instead of answering for the agent; a late real reply still completes the task; graph dispatches
+are exempt (`GraphOwnsTask`); `run` is excluded by default. Phase 3's question — advisory or
+authoritative — is answered: advisory.
+
+Kept as a follow-up, because it never shipped: the rescue still does not ask whether the role owns
+live background work, and its notice carries a dead pane's banner —
+[MUX-240](../backlog/MUX-240-idle-task-rescue-acts-on-a-role-with-live-background-work.md).
+
 ## Status
 
-Backlog
+**Complete — closed as overtaken 2026-11-24** at 0/28, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** Backlog

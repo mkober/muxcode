@@ -361,7 +361,7 @@ node at 121 s of a 300 s cap — with section B as the control.
 ## Notes
 
 - Filed 2026-11-17 by plan on the user's instruction.
-- Related: [MUX-225](../completed/MUX-225-reply-to-unknown-id-accepted-silently.md) — a reply with a wrong id; this is a reply with no id to give. [MUX-196](../completed/MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) — a relaunch clears a consumed dispatch and the executor re-sends it, a different recovery for a neighbouring state. [MUX-112](../backlog/MUX-112-idle-task-rescue-closes-live-work.md) — the idle-task rescue that closed the third request here.
+- Related: [MUX-225](../completed/MUX-225-reply-to-unknown-id-accepted-silently.md) — a reply with a wrong id; this is a reply with no id to give. [MUX-196](../completed/MUX-196-agent-launch-expires-in-flight-graph-dispatch.md) — a relaunch clears a consumed dispatch and the executor re-sends it, a different recovery for a neighbouring state. [MUX-112](./MUX-112-idle-task-rescue-closes-live-work.md) — the idle-task rescue that closed the third request here.
 - No user decision is open. The listener cause is recorded as not established and left out of the criteria.
 - 2026-11-17 14:14 — the user asked for this spec to be prioritized, relayed by edit: it blocks the `tibo` session. It was already the active spec.
 

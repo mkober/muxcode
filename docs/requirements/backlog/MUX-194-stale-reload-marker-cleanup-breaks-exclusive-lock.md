@@ -6,7 +6,8 @@
 lock** (`c047b7e`): every relauncher now takes it with `O_EXCL` before typing into a pane. Two older
 paths still treat the marker as a plain flag file: the daemon deletes any marker older than 60 s, and
 `diagnose` tells the operator to `rm` any marker it sees. Neither asks whether the holder is still
-running. A lock that anyone may delete by age is not a lock — and once it has been deleted, the holder's
+running. (The daemon half was closed by the lease in `98edfac` — see
+[Decisions](#decisions-user-2026-11-24); the `diagnose` half stands.) A lock that anyone may delete by age is not a lock — and once it has been deleted, the holder's
 own `release()` removes whoever took it next.
 
 ## Context
@@ -51,7 +52,7 @@ The cleanup exists for a real reason — a holder that crashed without releasing
 its role from health monitoring forever. But **process liveness alone is not the answer either**: two
 of the three holders can run inside the long-lived daemon, whose pid stays alive after a holder
 goroutine has died without releasing. The spec needs a holder identity *and* a bound for the in-daemon
-case (Decision 1).
+case — settled as the heartbeat, see [Decisions](#decisions-user-2026-11-24).
 
 ### Family
 
@@ -60,82 +61,103 @@ The restart/resume family in the defects table — [MUX-008](./MUX-008-unverifie
 [MUX-136](../completed/MUX-136-bare-resume-loses-agent-definition.md): *restart and resume restore an
 agent incompletely*. This one is the lock those paths share.
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Decision 1 is settled by what shipped: option (a), the heartbeat.** `98edfac`
+(MUX-139) made the marker a lease after this spec was filed, and the spec is restated to what is left.
+
+What shipped, read in the tree on 2026-11-24 (`bus/reload.go`):
+
+| Shipped | Where |
+|---------|-------|
+| The marker's content is an owner token, `reloading <pid>-<acquisition nanotime>`, written at the `O_EXCL` create | `acquireReloadMarker` `:58` |
+| A held marker's mtime is refreshed every 20 s (`reloadMarkerRenewEvery`) for as long as it is held, and only while it still carries the holder's token | `renewReloadMarker` `:97` |
+| `release` removes the marker only while it still carries the holder's token | `ownsReloadMarker` `:114` |
+| So the unchanged 60 s age rule (`IsReloadMarkerStale` `:273`) now reclaims only a holder that stopped renewing — a dead process, or a legacy bare `reloading` marker nobody renews | — |
+
+What is left, and is this spec's whole scope:
+
+1. `diagnose` reads a freshly renewed marker as **relaunch in progress** — not critical, no `rm` —
+   and keeps `reload-marker-stuck` for a marker past the stale threshold.
+2. `writeReloadMarker` moves into a `_test.go` file.
+3. Every stale removal writes a lifecycle row naming the role.
+
+The pid-and-start-time liveness probe and the per-holder ceiling (options b and c) are dropped.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] The marker records its holder — at least pid, process start time and a per-acquisition token — written atomically at acquisition
-- [ ] `release()` removes the marker **only if** it still carries the holder's own token; a holder whose marker was replaced leaves the new holder's marker in place — **negative control:** the owning holder's release does remove it
-- [ ] Stale cleanup removes a marker only when its holder is provably gone (Decision 1); a marker held past 60 s by a live holder is **not** removed — **negative control:** a marker whose holder process is dead **is** removed on the next pass
-- [ ] A marker in the legacy format (bare `reloading`, no holder) is still cleaned by age, so upgrading mid-reload cannot wedge a role
-- [ ] `diagnose` uses the same holder predicate: a live holder is reported as "relaunch in progress" (not critical, no `rm`); a dead holder's marker is `reload-marker-stuck` with a remediation that does not race a live holder
-- [ ] Every stale-marker removal is a lifecycle row naming the role and the holder it judged gone
-- [ ] `writeReloadMarker` moves into a `_test.go` file; no production code writes the marker non-exclusively
+- [x] The marker records its holder with a per-acquisition token written at acquisition — shipped in `98edfac` (MUX-139), `acquireReloadMarker`; the token is pid plus acquisition time, with no separate process start time, which the heartbeat makes unnecessary
+- [x] `release()` removes the marker only if it still carries the holder's own token — shipped in `98edfac`, `ownsReloadMarker`
+- [x] A marker held past 60 s by a live holder is not removed by stale cleanup — shipped in `98edfac`, `renewReloadMarker` keeps its mtime inside the threshold
+- [ ] The three shipped behaviours above are pinned by unit tests, each with its control: a foreign-token marker survives the first holder's release and the owner's release removes its own; a renewed marker older than 60 s by creation is not stale and an unrenewed one is; a legacy bare `reloading` marker is cleaned by age — existing tests are named here, missing ones added
+- [ ] `diagnose` on a marker inside the stale threshold reports "relaunch in progress": not critical, no `rm` in the remediation, `diagnose` exit code unaffected by it
+- [ ] `diagnose` on a marker past the threshold still reports critical `reload-marker-stuck` — **negative control**
+- [ ] `diagnose` and the daemon's cleanup share one predicate (`IsReloadMarkerStale`), so they cannot disagree about whether a lock is held
+- [ ] Every stale-marker removal is a lifecycle row naming the role and the marker's age and content
+- [ ] `writeReloadMarker` lives in a `_test.go` file; no production code writes the marker non-exclusively
 - [ ] `bash scripts/test-reload-marker-lock.sh` passes
 
 ### Technical approach
 
-1. **Holder identity.** `acquireReloadMarker` writes `pid`, `start` (process start time, so a reused pid
-   is not mistaken for the holder) and a random `token` as the marker's content, via the existing
-   `O_EXCL` create. `release` re-reads the marker and removes it only on a token match.
-2. **Liveness.** `IsReloadMarkerStale` parses the holder: a marker whose `pid`+`start` no longer names a
-   live process is stale at once; a live holder is stale only under Decision 1's in-daemon bound. An
-   unparseable or legacy marker falls back to today's 60 s age rule.
-3. **One predicate, three readers.** `CleanStaleReloadMarkers`, `checkReloadMarkerStuck` and any future
-   reader share it, so `diagnose` and the daemon cannot disagree about whether a lock is held.
-4. **Tidy-up.** Move `writeReloadMarker` to a test helper; the four test files that use it as a
-   foreign-holder fixture switch to writing a marker with a dead or foreign holder, so they exercise the
-   new predicate rather than the legacy fallback.
+1. **`checkReloadMarkerStuck`** (`bus/diagnose.go:933`) today reports critical for any present marker
+   and tells the operator to `rm` it — a lock held by a running resume included. Split on
+   `IsReloadMarkerStale`: fresh → an informational finding, "relaunch in progress", whose remediation
+   is to wait and re-run `diagnose`; stale → today's critical finding. Even the stale remediation
+   should not be a bare `rm`: between the report and the keypress a new holder may have acquired, so
+   it names the daemon's own cleanup (which re-checks) or tells the operator to re-check the age first.
+2. **Lifecycle row.** `CleanStaleReloadMarkers` returns a count and `checkCleanup` logs one aggregate
+   row (`reload-markers=<n>`). Log one row per removal — role, age, the marker's content (its token
+   names the holder's pid) — from the removal itself, so every caller is covered.
+3. **`writeReloadMarker`** has no production caller (checked 2026-11-24: defined in `bus/reload.go:28`,
+   called only from `agent_health_test.go`, `graph_exec_test.go`, `reload_test.go`,
+   `restart_resume_test.go` and `resume_test.go`). Move it into a `_test.go` helper in the same
+   package; the callers are unchanged.
 
 ### Key files
 
 | File | Purpose |
 |------|---------|
-| `tools/muxcode/bus/reload.go` | `acquireReloadMarker` (`:44`), `clearReloadMarker` (`:68`), `IsReloadMarkerStale` (`:221`), `CleanStaleReloadMarkers` (`:231`), `writeReloadMarker` (`:27`) |
-| `tools/muxcode/daemon/daemon.go` | `checkCleanup` (`:3772`) — the 300 s cleanup pass |
-| `tools/muxcode/bus/diagnose.go` | `checkReloadMarkerStuck` (`:889`) |
-| `tools/muxcode/bus/resume.go`, `bus/health.go`, `bus/reload.go:383` | The three holders |
+| `tools/muxcode/bus/reload.go` | `acquireReloadMarker`, `renewReloadMarker`, `ownsReloadMarker`, `IsReloadMarkerStale`, `CleanStaleReloadMarkers`, `writeReloadMarker` |
+| `tools/muxcode/daemon/daemon.go` | `checkCleanup` — the 300 s cleanup pass |
+| `tools/muxcode/bus/diagnose.go` | `checkReloadMarkerStuck` (`:933`) |
 | `scripts/test-reload-marker-lock.sh` | New integration script (Phase 3) |
 
 ## Implementation
 
-### Phase 1: Pin
+### Phase 1: Pin what shipped
 
-- [ ] Unit test: a marker acquired by a live holder and aged past 60 s is removed by `CleanStaleReloadMarkers` (asserts today's behaviour; Phase 2 inverts it)
-- [ ] Unit test: holder A acquires, the marker is deleted and holder B acquires, then A's `release()` removes B's marker (asserts today's behaviour; Phase 2 inverts it)
-- [ ] Unit test: a marker with no live holder is removed (negative control; stays green)
+- [ ] Name the existing unit tests that cover the token-checked release and the renewal; add the missing ones, each green on today's tree
+- [ ] Unit test: holder A acquires, the marker is replaced by a foreign token, A's `release()` leaves it — **control**: A's release removes its own marker
+- [ ] Unit test: a held marker with `reloadMarkerRenewEvery` shortened is not stale after the threshold has passed since creation — **control**: an unrenewed marker of the same age is stale and is removed
+- [ ] Unit test: a legacy bare `reloading` marker is cleaned by age
 
-### Phase 2: Holder-aware lock
+### Phase 2: Diagnose, lifecycle row, tidy-up
 
-- [ ] Write `pid`, `start` and `token` into the marker at acquisition
-- [ ] Token-checked `release`
-- [ ] Holder-aware `IsReloadMarkerStale`, with the Decision 1 bound for in-daemon holders and the legacy-format age fallback
-- [ ] `checkReloadMarkerStuck` on the shared predicate: live holder → not critical and no `rm`; dead holder → `reload-marker-stuck`
-- [ ] Lifecycle row on every stale removal (role, judged-gone holder)
-- [ ] Move `writeReloadMarker` into a `_test.go` file and update its four test-file callers
-- [ ] Invert the two Phase 1 pins; the negative control stays green
+- [ ] `checkReloadMarkerStuck` on `IsReloadMarkerStale`: fresh marker → "relaunch in progress", not critical, no `rm`; stale marker → `reload-marker-stuck` with a remediation that re-checks before removing
+- [ ] Update `TestCheckReloadMarkerStuck_Detected`/`_NotDetected` in the same change and add the fresh-marker case
+- [ ] One lifecycle row per stale removal: role, age, marker content
+- [ ] Move `writeReloadMarker` into a `_test.go` file
+- [ ] `docs/agent-bus.md` `muxcode diagnose` section and `docs/architecture.md`: the marker is a renewed lease; what `diagnose` reports for a fresh and a stale one
 
 ### Phase 3: Integration test
 
-- [ ] Create `scripts/test-reload-marker-lock.sh` (hermetic: scratch bus + real scratch daemon with its cleanup interval shortened for the test)
-- [ ] Test: a holder process kept alive past 60 s — the daemon's cleanup leaves its marker in place, and a concurrent `muxcode resume` of the role is refused as held
-- [ ] Test (negative control): kill the holder — the next cleanup pass removes the marker and logs the removal
+- [ ] Create `scripts/test-reload-marker-lock.sh` (hermetic: scratch bus, a scratch daemon on a private tmux server with its cleanup interval shortened for the test)
+- [ ] Test: a holder process kept alive past 60 s — the daemon's cleanup leaves its marker in place, a concurrent `muxcode resume` of the role is refused as held, and `diagnose` reports relaunch in progress, not critical
+- [ ] Test (negative control): kill the holder — once the marker passes the threshold `diagnose` reports `reload-marker-stuck`, the next cleanup pass removes the marker, and the lifecycle row names the role
 - [ ] Test: a replaced marker survives the original holder's release
-- [ ] Test: `diagnose` on a live-held marker is not critical; on a dead holder's marker it is `reload-marker-stuck`
 - [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run the script and record the pass/fail counts here
 
-## Open decisions
+## Notes
 
-### Decision 1 — how is a live in-daemon holder bounded?
-
-A pid check cannot tell a daemon goroutine that is still relaunching from one that died without
-releasing: the daemon's pid is alive either way. Options: (a) **heartbeat** — long holders refresh the
-marker's mtime (or a `beat` field) while holding, and a live-pid marker is stale only when its heartbeat
-is old; (b) **per-holder ceiling** — a live-pid marker is stale past a generous fixed bound (e.g. 10 min)
-well above any legitimate hold; (c) record the daemon's own start time and treat an in-daemon marker as
-stale after a daemon restart only. Recommendation: (b) — no background writer to get wrong, and the only
-cost of the ceiling is a role excluded from monitoring for a few extra minutes after an in-daemon crash.
+**A limit the heartbeat does not close.** The renewal runs in its own goroutine, so it proves the
+holder's *process* is alive and has not released — not that the relaunch is making progress. A holder
+hung inside a live daemon keeps renewing, and its role stays excluded from health monitoring until the
+daemon restarts. Not observed; recorded so the "relaunch in progress" finding is not read as proof of
+progress. A marker `diagnose` sees fresh on two runs far apart is the visible symptom, and the finding
+should print the marker's creation age for that reason.
 
 ## Out of scope
 
@@ -147,3 +169,7 @@ cost of the ceiling is a role excluded from monitoring for a few extra minutes a
 Backlog — filed 2026-09-28 on the user's instruction relayed by edit, from PR #95's MUX-126 lock
 change (`c047b7e`). Mechanism verified by plan against `c047b7e`; latent, not observed firing. Not
 started.
+
+Unparked 2026-11-24 on the user's decision relayed by edit: the heartbeat (option a) had already
+shipped in `98edfac` (MUX-139), so the spec is restated to the leftover — `diagnose`, the lifecycle
+row and the `writeReloadMarker` move. Three criteria are ticked as shipped, each naming the code.

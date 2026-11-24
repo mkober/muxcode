@@ -158,7 +158,7 @@ if size > prev && size > 0 {
 
 ### New evidence (2026-08-31): a 14-fire census, and the case that rules out the cheap fix
 
-Folded in from [`MUX-127`](../backlog/MUX-127-review-completion-routing.md) Defect B, which was found
+Folded in from [`MUX-127`](./MUX-127-review-completion-routing.md) Defect B, which was found
 independently and then recognised as this defect. MUX-127 records it as **new evidence for MUX-007,
 not a new defect**, and names these two specs as probable merge targets.
 

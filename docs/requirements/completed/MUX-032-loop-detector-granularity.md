@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#32](https://github.com/mkober/muxcode/issues/32)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 The daemon's message-loop detector (`DetectMessageLoop`, `bus/guard.go`) fires on normal, healthy edit↔commit traffic. Its ping-pong pass counts a request and its own correlated reply as loop evidence, and its tuple pass cannot tell two unrelated delegations apart from a repeated one. The result is alert fatigue on a safety detector — the operator learns to ignore it, so a genuine relay storm goes unread.
 
 ## Context
@@ -123,6 +125,17 @@ would now be built against a false positive nobody has recorded, and Phases 1 an
 and then fix behaviour that no longer exists. Whether to keep the remainder, and on what evidence,
 is a scoping decision for the user.
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+The three false alerts this spec recorded no longer fire — the ping-pong pass was fixed on other
+grounds. What remains, a content-aware tuple pass, has no recorded false positive behind it. Closed;
+reopen, as a new spec, on a recorded tuple-pass false positive.
+
 ## Status
 
-**Backlog** — 0/22, parked 2026-11-17 at selection; see the findings above.
+**Complete — closed as overtaken 2026-11-24** at 0/22, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** **Backlog** — 0/22, parked 2026-11-17 at selection; see the findings above.

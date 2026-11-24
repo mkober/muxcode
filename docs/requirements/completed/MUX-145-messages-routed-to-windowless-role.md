@@ -587,7 +587,7 @@ this session only — the guard is what stops it returning.
 Related: the diagnose half belongs to the same family as the `checkUnexplainedEvidence` invariant
 described in [`CLAUDE.md`](../../../CLAUDE.md) — verdict honesty rather than pattern coverage. The
 routing half is adjacent to, but distinct from,
-[`MUX-127`](../backlog/MUX-127-review-completion-routing.md): that one routes to the wrong *recipient*, this
+[`MUX-127`](./MUX-127-review-completion-routing.md): that one routes to the wrong *recipient*, this
 one routes to a recipient that does not exist.
 
 Defect C (2026-09-08) was root-caused by edit and handed over as `/tmp/mux-145-defect-c.md`; plan

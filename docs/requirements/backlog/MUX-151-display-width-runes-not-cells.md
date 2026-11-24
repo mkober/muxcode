@@ -18,9 +18,9 @@ the three sites below were re-verified against the tree at filing.
 
 | Site | Code | Verified |
 |------|------|----------|
-| `VisibleWidth` — the shared definition | `tui/styles.go:104` — `return len([]rune(StripAnsi(s)))` | Yes |
+| `VisibleWidth` — the shared definition | `tui/styles.go:117` (`:104` at filing) — `return len([]rune(StripAnsi(s)))` | Yes; re-read 2026-11-24 |
 | Popup auto-fit measurers | `bus/measure.go:40` — `utf8.RuneCountInString(StripANSI(ln))` in `MeasureLines`, which `MeasureText` and the per-popup measurers build on | Yes |
-| `fitPath` — the site review flagged | `cmd/launcher.go:138` — `r := []rune(s)` then a rune-sliced suffix `"…" + string(r[len(r)-(w-1):])` | Yes — **uncommitted** on the MUX-144 branch at filing (`git show HEAD:` has no `fitPath`), so its line number will move |
+| `fitPath` — the site review flagged | `cmd/launcher.go:189` — `r := []rune(s)` then a rune-sliced suffix `"…" + string(r[len(r)-(w-1):])` | Yes — uncommitted at filing, since committed; re-read 2026-11-24 |
 
 `VisibleWidth` is the base the other helpers stand on — `Pad` (`tui/styles.go:45`), `TruncateAnsi`
 (`:66`), `wrapPlain` (`tui/prompt.go:453`), `padVisible` (`:478`) — so the error is **systemic**, not
@@ -53,6 +53,28 @@ the first time any of those carries a wide character. Ranked accordingly; not ur
 | [`MUX-107`](./MUX-107-tui-component-kit.md) | A shared component kit is the natural home for the one width function; if MUX-107 lands first, this work goes into the kit rather than beside it |
 | [`MUX-031`](../completed/MUX-031-graph-run-tui.md) | Established the clamp-to-pane discipline this defect undermines |
 
+## Decisions (user, 2026-11-24)
+
+Relayed by edit; this spec was parked on its two open decisions and is unparked by them.
+
+| Question | Decision |
+|----------|----------|
+| Ambiguous-width characters (East Asian Width `A` — box drawing, some Greek/Cyrillic, `…`) | **1 cell** |
+| Where the table lives | **In `bus`, with `tui` delegating.** If [`MUX-107`](./MUX-107-tui-component-kit.md) lands later it may move into the kit then |
+| Before building | **Check `tui/frame_writer.go` first** |
+
+**`tui/frame_writer.go`, read 2026-11-24.** It already carries width data of its own:
+`narrowRanges` (`:170`, "Unicode 15 East Asian Width and category data") and `narrowRune` (`:178`),
+a conservative allow-list of code points *surely* one cell wide, used by `tokenLen`/`rowChange` to
+decide whether a row can be repainted from a column or must be rewritten whole. It is not a width
+function — anything outside the list is "uncertain" and costs a full-row rewrite, never a wrong
+column — and it lives in `tui`, where `bus/measure.go` cannot reach it. So it does not remove this
+spec's work, but it is a second table about the same question, and the two must not disagree: a
+rune `narrowRune` calls surely-one-cell must measure 1 in the new primitive. Phase 2 pins that
+with a test, and decides whether `narrowRune` is then derived from the `bus` table or kept as its
+own list beside the pin. Its list includes ambiguous-width ranges (box drawing `2500–257F` sits
+inside `2460–25FC`), which already assumes the 1-cell answer decided above.
+
 ## Requirements
 
 ### Acceptance criteria
@@ -63,6 +85,10 @@ the first time any of those carries a wide character. Ranked accordingly; not ur
   sized to content with wide characters present
 - [ ] `fitPath`, `Pad`, `TruncateAnsi`, `padVisible` and `wrapPlain` inherit it rather than each
   counting for themselves
+- [ ] Ambiguous-width (`A`) characters measure 1 cell, and the frames that use `─` and `…` in
+  width math do not shift
+- [ ] `tui/frame_writer.go`'s `narrowRune` and the new primitive agree: every rune it accepts
+  measures 1
 - [ ] No external dependency is introduced
 - [ ] **Negative control:** ASCII strings measure exactly as they do today, so no existing frame
   shifts by a column
@@ -78,7 +104,7 @@ Hand-roll the width table in one place (`tui/styles.go` or a new `tui/width.go`)
 - Wide (2 cells): the East Asian Width `W` and `F` ranges — Hangul Jamo, CJK Unified Ideographs and
   extensions, Hiragana/Katakana, fullwidth forms, and the emoji presentation blocks. A range table
   in source, with the Unicode version it was generated from recorded in a comment
-- Everything else: 1 cell
+- Everything else, ambiguous-width (`A`) included: 1 cell (decided 2026-11-24)
 
 `VisibleWidth` becomes `sum over runes of cellWidth(r)` after `StripAnsi`. `bus/measure.go` cannot
 import `tui` (dependency direction: `tui` imports `bus`), so the cell-width primitive lives in `bus`
@@ -93,10 +119,11 @@ fit one cell short.
 
 | File | Relevance |
 |------|-----------|
-| `tools/muxcode/tui/styles.go` | `VisibleWidth` (`:104`), `Pad` (`:45`), `TruncateAnsi` (`:66`) |
+| `tools/muxcode/tui/styles.go` | `VisibleWidth` (`:117`), `Pad`, `TruncateAnsi` |
+| `tools/muxcode/tui/frame_writer.go` | `narrowRanges` (`:170`), `narrowRune` (`:178`) — the existing surely-one-cell list the new table must agree with |
 | `tools/muxcode/tui/prompt.go` | `wrapPlain` (`:453`), `padVisible` (`:478`) |
 | `tools/muxcode/bus/measure.go` | `MeasureText` (`:30`), `MeasureLines` (`:40`) and the per-popup measurers |
-| `tools/muxcode/cmd/launcher.go` | `fitPath` (`:138` in the working tree at filing) |
+| `tools/muxcode/cmd/launcher.go` | `fitPath` (`:189`) |
 | `docs/tui-style.md` | Rules 2 and 4 — add the cell-width rule once this lands |
 
 ## Implementation
@@ -114,8 +141,10 @@ fit one cell short.
 
 - [ ] Add the range table and `CellWidth(r rune) int` in `bus`, with the Unicode version recorded
 - [ ] Add `bus.DisplayWidth(s string) int` = strip ANSI, sum cell widths
-- [ ] Unit tests: zero-width, wide, narrow, and mixed strings; ASCII negative control measures
-  identically to `len`
+- [ ] Unit tests: zero-width, wide, narrow, ambiguous (1 cell) and mixed strings; ASCII negative
+  control measures identically to `len`
+- [ ] Unit test: every rune in `tui`'s `narrowRanges` measures 1 in `bus.CellWidth`; record whether
+  `narrowRune` is then derived from the `bus` table or kept as its own list
 
 ### Phase 3: Route every site through it
 
@@ -139,15 +168,6 @@ fit one cell short.
 - [ ] Run the script and verify all checks pass
 - [ ] Add the cell-width rule to `docs/tui-style.md`
 
-## Open decisions
-
-- **Ambiguous-width characters** (East Asian Width `A` — box drawing, some Greek/Cyrillic, `…`):
-  terminals disagree on 1 vs 2 cells. Treating them as 1 matches most Western terminal defaults and
-  the project's existing frames, which already use `─` and `…` in width math. Recommend 1; not
-  chosen here.
-- **Where the table lives** if [`MUX-107`](./MUX-107-tui-component-kit.md) lands first: in the kit.
-  Otherwise `bus`, per the dependency direction above.
-
 ## Out of scope
 
 - Grapheme clustering (a flag emoji is two runes rendering as one 2-cell glyph; a ZWJ family is
@@ -157,6 +177,6 @@ fit one cell short.
 
 ## Status
 
-Draft — filed 2026-09-08 from the review finding on the banner restyle, via edit's handoff
-(`/tmp/muxcode-display-width-defect.md`). No implementation has started; `fitPath` itself is still
-uncommitted on the branch that surfaced it.
+**Backlog** — unparked 2026-11-24 on the user's decisions above. Not started.
+
+Filed 2026-09-08 from the review finding on the banner restyle, via edit's handoff.

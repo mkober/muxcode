@@ -83,7 +83,7 @@ codex agent replied anyway, because the bootstrap prints a reply instruction. Pr
 this line; the bus must.
 
 **Rejected — leave it to `DetectMessageLoop`.** It did alert, inside a minute; the detector is
-alert-only by design ([MUX-032](../backlog/MUX-032-loop-detector-granularity.md) is its
+alert-only by design ([MUX-032](./MUX-032-loop-detector-granularity.md) is its
 granularity work, not a drop path), so an alert is all it can ever give. The echo has to be
 refused where it enters.
 
@@ -127,12 +127,12 @@ refused where it enters.
   by the re-init anyway.
 - Edit's `build-test-review` run `1788982872-d67cd45e` (15:41): build green (row 15:41:24), the
   test node **timed out at 297 s with no row in the test store** — the codex test agent never ran
-  the suite ([MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)'s shape) — and
+  the suite ([MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md)'s shape) — and
   review never dispatched. The suite row Phase 1 waits on still does not exist.
 - Related: [MUX-009](./MUX-009-response-echo-chain-retrigger.md) (the other response
   echo — a `type: response` typed as a prompt on the scrape road — closed at its root by the hook
-  road; this one is the send-side sibling); [MUX-032](../backlog/MUX-032-loop-detector-granularity.md)
-  (the detector's blind spot for one-role echoes); [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)
+  road; this one is the send-side sibling); [MUX-032](./MUX-032-loop-detector-granularity.md)
+  (the detector's blind spot for one-role echoes); [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md)
   (the same codex test agent); [MUX-168](../completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md)
   (found in the same relaunch — the re-init that also emptied the test store).
 

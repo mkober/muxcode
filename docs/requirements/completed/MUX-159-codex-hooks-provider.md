@@ -451,7 +451,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   attribution rules apply to them too.
 - [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) — Phase 5 is the codex enforcement road
   it lists as missing.
-- [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) — hooks do not change the
+- [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) — hooks do not change the
   sandbox; a codex test agent still needs the socket-free suite.
 - [MUX-012](../backlog/MUX-012-remove-gated-pane-scrape-delivery.md) — deletes what this spec stops needing.
 - `bus/codex_events.go` parses `codex exec --json` — the non-interactive road. Whether hooks fire

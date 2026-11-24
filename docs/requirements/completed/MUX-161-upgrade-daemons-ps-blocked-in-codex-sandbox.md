@@ -45,7 +45,7 @@ is verified — by the suite, by review, by `verify-spec` — against a daemon t
 
 **In:** discovery without `ps`; a visible failure when the rollout cannot run; the monitor's pid
 stamp; an integration test. **Out:** widening the codex sandbox to permit `/bin/ps` (the sandbox
-policy is [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md)'s decision and a process
+policy is [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md)'s decision and a process
 list is more than a build needs); changing `build.sh`'s best-effort contract.
 
 ## Requirements
@@ -227,7 +227,7 @@ Not shown by it: `./build.sh` itself run by a live Codex build agent in a real s
 - Filed 2026-09-09 from edit's side finding during [MUX-159](./MUX-159-codex-hooks-provider.md)'s
   evidence-guard work; the three builds that showed it and the 00:56 `--dry-run` are recorded there
   (Notes, side finding a).
-- [MUX-153](../backlog/MUX-153-codex-test-agent-cannot-run-the-suite.md) and
+- [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) and
   [MUX-160](../backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md) are the same family — a codex
   sandbox refusing something a validation role's job requires — and this is the smallest member.
 - `docs/upgrade-daemons` semantics otherwise unchanged: version-aware skip (`Info.SameBuild`),

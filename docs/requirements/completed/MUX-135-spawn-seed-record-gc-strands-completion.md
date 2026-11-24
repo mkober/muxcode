@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#113](https://github.com/mkober/muxcode/issues/113)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 A spawn node completes when its seed message shows `responded`. That signal lives in a delivery-status
 record which `CleanExpiredDeliveries` deletes after **one hour** — with no exemption for a spawn still
 running. Once the record is gone, `spawnHasResponded` reads its absence as **"has not responded"**, and
@@ -137,6 +139,30 @@ the work most worth not losing: the long, substantial iterations.
 
 - [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) — same family: a spawn worker the executor launched delegating tree-scoped checks back to the shared agents (Defect 1, enforced by `CheckGraphNodeAuthority`) and the tree-less bus behind it (Defect 2, `CheckCrossTree`)
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+`spawnHasResponded` falls back to the worker's own reply in the session log when the seed's
+delivery record is gone (`workerRepliedInLog`, `bus/spawn.go`, shipped with
+[MUX-195](./MUX-195-graph-runs-never-reuse-idle-workers.md)) — this spec's second
+option. `CleanExpiredDeliveries` still drops seed records after an hour; the drop no longer strands
+the node.
+
+Checked by plan at close:
+
+| Asked | Tree today |
+|-------|-----------|
+| A reply still completes the node once the record is gone | `spawnHasResponded` → `workerRepliedInLog` |
+| Negative control: a spawn that never replied is not read as answered | `TestSpawnHasRespondedFallsBackToWorkerReply` — no reply, another role's reply and a reply to the previous seed each read unanswered |
+| A reply no longer in the log | **Not tested.** If the session log has rotated past the reply, the fallback reads unanswered — it fails closed, which is this spec's stranding in a narrower form |
+
+The decision was to file a follow-up only if no negative control existed. One does, so none was
+filed. The rotated-log case is recorded here and has no spec.
+
 ## Status
 
-Backlog
+**Complete — closed as overtaken 2026-11-24** at 0/19, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** Backlog

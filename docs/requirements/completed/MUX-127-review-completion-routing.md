@@ -2,6 +2,8 @@
 
 **Tracking:** [mkober/muxcode#112](https://github.com/mkober/muxcode/issues/112)
 
+**Closed as overtaken 2026-11-24** on the user's decision, relayed by edit — see [Decisions](#decisions-user-2026-11-24). Nothing further was built under this spec: the open boxes below record what it asked for, not work done.
+
 When a review finishes, two independent mechanisms decide what happens next: the **graph executor's
 edges** and the **chain's notify gates**. On 2026-08-31 both were observed mis-routing, in opposite
 directions, within the same hour:
@@ -310,6 +312,27 @@ template fix repairs one template; a validation rule prevents the class.
 | The two defects are treated as one | They have separate fix sites; a single patch will miss one | Acceptance criteria and phases are partitioned by defect |
 | Filing this spec triggers the very loop it describes | Writing this file is itself a plan-authored doc write | Expected; noted rather than worked around |
 
+
+## Decisions (user, 2026-11-24)
+
+Relayed by edit. **Close as overtaken.**
+
+Defect A is fixed in the templates: `50-spec-to-pr` and its siblings route `review → fix` on
+failure (`bus/graph_templates.go`). Defect B is fixed by
+[MUX-007](./MUX-007-verify-spec-stale-review-refire.md)'s movement gate,
+[MUX-172](./MUX-172-plan-verify-gate-hardcodes-success.md) and
+[MUX-219](./MUX-219-graph-run-review-fires-verify-spec-twice.md) — so the question of
+folding B into MUX-007 is moot.
+
+Not checked at close: this spec's own reproductions were never run, and its script
+`scripts/test-review-completion-routing.sh` was never written.
+
+Kept as a follow-up: `Validate()` rejects a graph whose review node has no failure route —
+[MUX-239](../backlog/MUX-239-validate-accepts-a-review-node-with-no-failure-route.md), whose first
+phase surveys every builtin's review nodes.
+
 ## Status
 
-Backlog
+**Complete — closed as overtaken 2026-11-24** at 0/36, on the user's decision relayed by edit. Not implemented under this spec; see Decisions above for what overtook it and what was left.
+
+**Previously:** Backlog

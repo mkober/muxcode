@@ -69,7 +69,7 @@ But (b) is not cosmetic, and it reaches further than the worker:
 - A worker may **declare a phase complete** on that basis, and that claim is harvested.
 - The harvested claim feeds `update-spec`, where **plan checks off acceptance criteria**. A false
   green can therefore be laundered into a spec tick — the exact failure mode
-  [MUX-136](../backlog/MUX-136-bare-resume-loses-agent-definition.md) exists to prevent, arriving by a
+  [MUX-136](./MUX-136-bare-resume-loses-agent-definition.md) exists to prevent, arriving by a
   different road.
 
 ### Relationship to existing specs
@@ -77,8 +77,8 @@ But (b) is not cosmetic, and it reaches further than the worker:
 | Spec | Relationship |
 |------|--------------|
 | [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) | **Qualifies its central table.** MUX-119 classes `implement`/`fix` spawns as "❌ No — isolated". They are isolated in *pane* terms, which is what that spec measures, but they are **not** isolated in delegation terms: they reach back into the shared `build`/`test` agents. The table is not wrong for its own question; it should not be read as a general isolation claim |
-| [MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — spawn workers the graph executor mismanages |
-| [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md) | Same family; both concern the spawn lifecycle rather than the graph shape |
+| [MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — spawn workers the graph executor mismanages |
+| [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Same family; both concern the spawn lifecycle rather than the graph shape |
 | [MUX-007](./MUX-007-verify-spec-stale-review-refire.md) | Same *class* as its changed-files problem — an agent reasoning about a tree other than the one under test |
 | [MUX-118](../backlog/MUX-118-rename-edit-role-to-code.md) | Any fix that introduces a distinct worker definition should land in step with the rename, not fight it |
 
@@ -330,7 +330,7 @@ Still reachable, and still this spec's remaining work:
 - **CLI spawns**, which default to a worktree (`--no-worktree` opts out) and whose delegated
   build/test/review still `CdPrefix` into the session checkout.
 - **A human working by hand in a worktree** who delegates — no spawn involved at all. This is the
-  [`MUX-136`](../backlog/MUX-136-bare-resume-loses-agent-definition.md) case, where a review re-reported a fixed
+  [`MUX-136`](./MUX-136-bare-resume-loses-agent-definition.md) case, where a review re-reported a fixed
   finding against main while the fix sat in a worktree.
 - **The cross-session case**, where the delegating and executing agents were never in the same tree.
 
@@ -369,7 +369,7 @@ here: the user's 2026-09-03 decision that graph spawns take **no worktree** and 
 (`graphSpawnFn`, `useWorktree=false`), after which "nothing to port" is the designed inert path. What
 MUX-178 observed on top of that — a node completing in **two seconds** with `success` — is a real
 defect, but it is the worker-never-worked shape
-([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md) /
+([MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) /
 [MUX-195](./MUX-195-graph-runs-never-reuse-idle-workers.md)), not the worktree's absence.
 Whoever picks up MUX-178 should start from that; a pointer was added there on 2026-09-30.
 
@@ -463,8 +463,8 @@ builtin's later changes.
 
 - [x] Add a note to [MUX-119](../backlog/MUX-119-graph-routes-edit-work-off-the-edit-agent.md) qualifying the
       "isolated" classification of `implement`/`fix` — pane-isolated, not delegation-isolated
-- [x] Cross-link from the spawn-family specs ([MUX-120](../backlog/MUX-120-spawn-worker-never-woken-for-seeded-task.md),
-      [MUX-135](../backlog/MUX-135-spawn-seed-record-gc-strands-completion.md))
+- [x] Cross-link from the spawn-family specs ([MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md),
+      [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md))
 - [x] Update `CLAUDE.md`'s graph-orchestration constraint if the fix changes what a spawn may do
       (the Workers sentence: no worktree, `CheckGraphNodeAuthority` refuses requests to roles the run
       owns while unowned peers stay reachable, `CheckCrossTree` with `MUXCODE_CROSS_TREE_GUARD=0`)

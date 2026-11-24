@@ -66,34 +66,71 @@ MUX-144's authority: the provenance a dispatch carries is only as good as the ap
 points at. Not in scope: the Atlassian CLI gate itself (`CheckAtlassianAuthority` stays role-based),
 the ADF payloads, or making commit's GitHub writes stricter.
 
+## Decisions (user, 2026-11-24)
+
+The user's decision, relayed by edit. This spec was parked because it ships together with
+[MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), whose seam was
+undecided.
+
+| Question | Decision |
+|----------|----------|
+| Where the consent is verified | **Seam (a) — at the send**, beside `CheckCommitAuthorityForMessage`, keyed on the raw sender `daemon` plus the gate approval the message's `GraphRun`/`GraphNode` lead to |
+| One mechanism or two | **One verifier serves both specs.** Plan's rule loosens to accept gate-approved writes |
+
+**Division of the work.** MUX-181 owns the **verifier** (the send-time check, its refusal row, the
+inverted pins). This spec owns the **rule change**: plan's definition (`agents/planner.md`), the
+`CLAUDE.md` Atlassian-authority clause, and the statement of which consent paths plan honours. The
+two land in one change set, the verifier first.
+
+**What that removes from this spec as filed.** A receiver-side verifier, a `Message.Provenance`
+field, the `muxcode graph provenance <task-id>` command and a validator rule about "dispatchable
+without provenance" were this spec's original approach. Under seam (a) none is built: the message
+already carries its run and node (`Message.GraphRun`/`GraphNode`, MUX-144 Phase 4), every executor
+dispatch is stamped with them, and a dispatch whose gate approval does not hold is refused before it
+reaches plan's inbox.
+
+**Found in code at the decision (2026-11-24):**
+
+- `agents/planner.md:179` already tells plan to honour a gate-dispatched `jira-write`/`issue-write`
+  once `muxcode graph status <run>` shows the gate approved (commit `b8bfcab`). So the 2026-09-09
+  decline would not recur under today's definition — but the test plan applies is a status read it
+  performs by hand, not a check the bus made. This spec's remaining work is to restate the rule on
+  MUX-181's verifier once that exists. Whether a `10-story-to-spec` run now completes at
+  `jira-update` has not been re-run.
+- `issue-update` in `10-story-to-spec` now dispatches to **plan** as `issue-write`
+  (`bus/graph_templates.go:192`), not to commit as the Mechanism section records; GitHub issue
+  writes sit behind the same gate list (`gatedTrackerWriteActions`, `bus/graph.go:209`). The rule
+  change covers `issue-write` alongside the two Atlassian actions.
+
 ## Requirements
 
 ### Acceptance criteria
 
-- [ ] A `jira-write` or `confluence-write` dispatched by the executor behind an approved `wait_human` gate carries verifiable gate provenance — run id, gate node id, `approved_by`, `approved_at` — and plan executes it without a relay or a retyped request: the 2026-09-09 run completes at `jira-update`
-- [ ] Plan verifies provenance against the run's approval record through a bus-side check (not by reading the payload's prose): a dispatch whose text says "the user approved" but carries no provenance, or whose provenance does not match `approvals/`, is declined exactly as today
-- [ ] The verifier applies the same actor rule as `CheckGateApprovalAuthority`: an approval recorded by an actor outside the sealed gate authority is not consent, so an agent that could write an approval file cannot mint provenance
-- [ ] Consent is verified once per decision: the same gate approval accepted from the daemon is not re-requested from edit or the user; edit's relay of a gate approval becomes unnecessary and the definition says so
-- [ ] Plan's rule text enumerates the consent paths it honours — typed into plan's pane, relayed from edit carrying the user's words, or a gate-approved dispatch with verified provenance — and names what it still refuses: any agent's bus message or unverified node text
-- [ ] `graph validate` rejects a builtin or user template whose Atlassian write node would be dispatched without provenance, so a template cannot pass validation and dead-end at plan
-- [ ] Docs: `docs/architecture.md` authority-gates paragraph and `docs/agent-bus.md` gate reference name provenance as the second half of the gate rule; `CLAUDE.md` Atlassian-authority bullet gains the clause
+- [ ] A `jira-write`, `confluence-write` or `issue-write` dispatched by the executor behind an approved `wait_human` gate is executed by plan without a relay or a retyped request: a `10-story-to-spec` run of the 2026-09-09 shape completes at `jira-update`
+- [ ] Plan's acceptance rests on MUX-181's send-time verifier, not on the payload's prose and not on a status read plan performs by hand: the definition says a `daemon` tracker write that was delivered has had its gate approval verified by the bus, and names the origin line (`graph run … · node …`) plan reads to tell such a dispatch from any other
+- [ ] A tracker-write request from any sender other than `edit` or a graph dispatch is declined exactly as today — a non-edit agent's bus message is never consent
+- [ ] Consent is verified once per decision: the same gate approval accepted from the daemon is not re-requested from edit or the user; the definition says edit's relay of a gate approval is unnecessary
+- [ ] Plan's rule text enumerates the consent paths it honours — typed into plan's pane, relayed from edit carrying the user's words, or a gate-approved graph dispatch — and names what it still refuses: any other agent's bus message, and node text claiming approval on a message that is not a graph dispatch
+- [ ] The rule change lands only together with MUX-181's verifier — never ahead of it
+- [ ] Docs: `docs/architecture.md` authority-gates paragraph names the three consent paths; `CLAUDE.md` Atlassian-authority and Plan-agent-scope bullets gain the clause
 
 ### Technical approach
 
-**Primary — carry the consent, verify it at the receiver.** The executor already knows everything the
-receiver needs: at dispatch of a node downstream of a gate, read `approvals/<gate>.approved` and
-attach `{run_id, gate, approved_by, approved_at}` to the message — a `Provenance` field on
-`Message` (preferred: the payload prose stays untouched and `validatePayload` limits are unaffected)
-or, failing that, a fixed header line the bus strips before display. A verifier
-`VerifyGateProvenance(session, msg) (Approval, error)` re-reads `run.json` (the node is downstream
-of that gate in this run), the approval file (present, same `approved_by`/`approved_at`), and
-applies `CheckGateApprovalAuthority`'s actor rule to `approved_by`. Expose it as
-`muxcode graph provenance <task-id>` (exit 0 with the approval, non-zero with the reason) so plan's
-definition can name one command as the test, and so a person can audit a write after the fact. Plan's
-`jira-write`/`confluence-write` handling: from `edit` → the relay path as today; from `daemon` →
-run the verifier, execute on success, decline with the verifier's reason on failure; from any other
-sender → decline. The single-use approval rule stays with the gate (MUX-132): provenance points at
-an approval, it does not consume one.
+**Primary — verified at the send, honoured at the receiver.** MUX-181 adds a send-time check that
+refuses a `daemon`-sent tracker write unless the message is the frozen node's own work and a
+`wait_human` gate over that node carries an attributable, authorized, corroborated approval — the
+same questions `checkGraphCommitDispatch` asks of a commit. This spec changes what plan is told:
+from `edit` → the relay path as today; from `daemon` as a graph dispatch → execute, the gate
+approval is the request and the bus verified it; from any other sender → decline. The
+`jira-write`/`confluence-write`/`issue-write` action rows stop saying only edit may originate them.
+The single-use approval rule stays with the gate (MUX-132).
+
+`agents/planner.md` is edit's file: plan drafts the wording in this spec, edit applies it.
+
+**Not chosen — verify at the receiver** (this spec's approach as filed: a `Provenance` field,
+`VerifyGateProvenance`, `muxcode graph provenance <task-id>`). It keeps a step plan performs by
+hand between the inbox and the write, which is the behavioural step the pair of specs exists to
+remove.
 
 **Rejected — route the write through edit.** Make the template send `jira-update` to edit, which
 relays to plan. That is what happened by hand on 2026-09-09, and it laundered the gate approval into
@@ -120,29 +157,29 @@ touches the tracker, which is the cost this spec exists to remove.
 
 ## Implementation
 
-### Phase 1: Provenance on the dispatch
+### Phase 1: What plan is shown
 
-- [ ] `Message.Provenance` (`run_id`, `gate`, `approved_by`, `approved_at`), serialised with the message and shown by `muxcode inbox` as one line
-- [ ] Executor: at dispatch of a node downstream of an approved gate, read the approval record and attach it; nodes with no gate upstream carry none
-- [ ] Unit tests: a gated send carries provenance matching `approvals/`; an ungated send carries none (negative control); a gate approved by an actor outside the sealed authority yields provenance the verifier rejects
+- [ ] Confirm, with a test, that a graph dispatch delivered to plan prints its run and node on the origin line (`FormatMessage`), and that a hand-written `daemon` message without them prints none — the line plan's rule will name
+- [ ] Draft the rule wording here: the three consent paths, what is still refused, and the sentence that a delivered graph tracker write has been verified at the send
 
-### Phase 2: The verifier and plan's rule
+### Phase 2: Plan's rule (after MUX-181 Phase 2)
 
-- [ ] `VerifyGateProvenance` in `bus/`: run exists, node downstream of the gate in `run.json`, approval file matches, `approved_by` passes the gate actor rule; typed reasons for each failure
-- [ ] `muxcode graph provenance <task-id>`: exit 0 and the approval on success, non-zero and the reason otherwise
-- [ ] Plan's definition (`agents/planner.md`, via edit) and `CLAUDE.md:109`: the three consent paths and the one command that tests the daemon path; the `jira-write`/`confluence-write` action rows no longer say "Only edit may originate this"
-- [ ] `graph validate`: an Atlassian write node must be downstream of a gate **and** the executor must be able to attach provenance for it; a template failing the second half names the node
+- [ ] `agents/planner.md` (applied by edit): the graph-dispatch row drops "confirm with `muxcode graph status`" in favour of the bus's verification, keeps `EXIT=1` for anything that is not a graph dispatch; the `jira-write`/`confluence-write`/`issue-write` action rows no longer say only edit may originate them; the consent paths are listed once
+- [ ] `CLAUDE.md` Atlassian-authority and Plan-agent-scope bullets: "relayed from edit" becomes "relayed from edit, or a gate-approved graph dispatch verified at the send"
+- [ ] The skills that restate the rule (`jira-manage-issues`, `jira-pr-comment`, `story-lifecycle`) are read; any that says a bus message from the daemon is never consent is brought into line
+- [ ] Negative control, in the definition's own words: a `jira-write` from `build`, `test`, `review` or `commit` is declined naming who asked
 
 ### Phase 3: Docs
 
-- [ ] `docs/architecture.md` authority-gates paragraph: the 2026-09-09 double consent as the incident, provenance as the fix
-- [ ] `docs/agent-bus.md`: `graph provenance` in the command table and one sentence at the gate rule (1717)
+- [ ] `docs/architecture.md` authority-gates paragraph: the 2026-09-09 double consent as the incident, send-time verification plus plan's rule as the fix
+- [ ] `docs/agent-bus.md`: one sentence at the gate rule — an approved gate is sufficient consent for the tracker write behind it
 
 ### Phase 4: Integration test
 
-- [ ] `scripts/test-graph-gated-jira-write.sh` (hermetic: scratch `BUS_SESSION`, scratch graph dir, `muxcode atlassian` shimmed on `PATH` to record calls without a network): a `wait_human → jira-write` graph, approved as the user → the dispatch carries provenance and `graph provenance` exits 0
-- [ ] Negative controls in the same script: the same dispatch with provenance stripped → non-zero and declined; an unapproved gate → the node never dispatches; an approval file written by hand as an agent actor → verifier rejects
-- [ ] The builtin `story-to-spec` template validates under the new rule and its `jira-update` node is dispatched with provenance
+- [ ] `scripts/test-graph-gated-jira-write.sh` (hermetic: scratch `BUS_SESSION`, scratch graph dir, a private tmux server, `muxcode atlassian` shimmed on `PATH` to record calls without a network, the script playing plan by the definition's rule): a `wait_human → jira-write` graph approved as the user → plan's inbox holds the dispatch with its origin line, the shim records one write, the node succeeds and the run completes
+- [ ] Negative controls in the same script: an unapproved gate → the node never reaches plan's inbox (MUX-181's refusal row present) and the shim records nothing; a `jira-write` sent by `build` → delivered, declined by the rule, the shim records nothing
+- [ ] The builtin `10-story-to-spec` template validates and, with its gate approved, its `jira-update` and `issue-update` nodes both reach plan
+- [ ] Coverage floor so a skipped section cannot report green
 - [ ] Run the script and record pass/fail counts in this spec
 
 ## Notes
@@ -163,4 +200,7 @@ touches the tracker, which is the cost this spec exists to remove.
 
 ## Status
 
-**Backlog** — 0/20. Filed 2026-09-09 11:12.
+**Backlog** — unparked 2026-11-24 on the user's decision (seam (a); one verifier, owned by MUX-181;
+this spec owns plan's rule change). Not started. Ships together with MUX-181. Filed 2026-09-09
+11:12. The Mechanism and Key files sections are as filed; the Decisions section carries what was
+re-read on 2026-11-24.

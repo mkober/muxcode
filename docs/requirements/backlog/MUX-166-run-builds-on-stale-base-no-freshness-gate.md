@@ -64,13 +64,28 @@ stays a gated commit-agent action; a conflict parks the run, it never leaves a h
 scope: making build/test nodes run against `main` (that is what the sync buys), the hollow build node
 (MUX-148/154/161), or what the other session does with its current rebase.
 
+## Decisions (user, 2026-11-24)
+
+The user's explicit choice, relayed by edit. The spec was parked on one decision it marked "owed":
+the behind-count at which a branch with no spec-file overlap is gated.
+
+| Question | Decision |
+|----------|----------|
+| No-overlap threshold | **Gate at 5 commits behind `origin/main` by default**, configurable through `MUXCODE_FRESHNESS_MAX_BEHIND` |
+| Overlap | **Always gates**, whatever the behind count — one upstream commit touching a spec-named file is enough |
+
+So a branch 1–4 behind with no overlap proceeds with a `branch-freshness` row; 5 or more behind
+gates; any overlap gates. The row records the numbers either way, so the threshold can be tuned
+from evidence.
+
 ## Requirements
 
 ### Acceptance criteria
 
 - [ ] A run cannot begin implementing on a branch behind `origin/main` whose upstream commits touch files the spec names without a person seeing the numbers: `spec-to-pr` parks at a `sync-gate` whose text carries the behind count, the upstream merges touching spec-named files (with the files), and the age of the last fetch — before the first `implement`
 - [ ] The check re-runs on every loop lap (`loop-check` → freshness → `implement`), so a run that goes stale mid-way parks too
-- [ ] A fresh branch — 0 behind, or behind with no spec-file overlap under the threshold — proceeds to `implement` with a `branch-freshness` lifecycle row recording the numbers: no gate, and no silence
+- [ ] A fresh branch — 0 behind, or fewer than `MUXCODE_FRESHNESS_MAX_BEHIND` (default 5) behind with no spec-file overlap — proceeds to `implement` with a `branch-freshness` lifecycle row recording the numbers: no gate, and no silence
+- [ ] A branch at or past the threshold gates with no overlap at all; a branch 1 behind gates when that one commit touches a spec-named file; `MUXCODE_FRESHNESS_MAX_BEHIND` moves the first and never the second
 - [ ] Freshness is measured against a **fetched** `origin/main` from `merge-base HEAD origin/main`, never `@{upstream}`; a fetch that fails or a ref older than the threshold trips the gate rather than reading as fresh (fail closed)
 - [ ] The sync is a gated commit-agent mutation — fetch, rebase onto `origin/main`, report — and a conflict aborts the rebase and parks the run with the conflict list, never a half-rebase in the tree
 - [ ] `graph validate` rejects a builtin template whose first `spawn` or `implement`-role node is reachable from `start` — or from a loop re-entry — without crossing a freshness check
@@ -90,7 +105,7 @@ text interpolated with the numbers and files), and `sync` (send to commit: "fetc
 onto origin/main; on conflict abort and report the list") looping back to `refresh`; `loop-check` and
 `stuck-gate` re-enter through `refresh`, not `implement`. Every evaluation writes a
 `branch-freshness` lifecycle row. Thresholds: gate on any overlap; gate on `behind ≥
-MUXCODE_FRESHNESS_MAX_BEHIND` without overlap (default owed — see Notes); gate on fetch age above
+MUXCODE_FRESHNESS_MAX_BEHIND` without overlap (default 5 — the user's decision of 2026-11-24); gate on fetch age above
 `MUXCODE_FRESHNESS_MAX_FETCH_AGE`.
 
 **Where the fetch runs.** The daemon already runs git for `PopulateGitInfo`, so the condition can
@@ -124,7 +139,8 @@ run should attempt unattended.
 ### Phase 1: The freshness facts
 
 - [ ] `BranchFreshness` in `bus/`: fetch with timeout, `merge-base` counts, upstream file list, spec-file intersection, fetch age; typed result with a one-line summary for gate text and lifecycle rows
-- [ ] Unit tests on scratch repos: fresh; behind without overlap; behind with overlap; upstream deleted a file the phase names; fetch failure → stale (negative control: a result computed from `@{upstream}` must not pass the overlap case)
+- [ ] Unit tests on scratch repos: fresh; 4 behind without overlap (fresh); 5 behind without overlap (stale); 1 behind with overlap (stale); upstream deleted a file the phase names; fetch failure → stale (negative control: a result computed from `@{upstream}` must not pass the overlap case)
+- [ ] `MUXCODE_FRESHNESS_MAX_BEHIND` read through the config layer (default 5); an override of 2 gates at 2 behind, and an override of 100 still gates on overlap
 - [ ] `console.go` ahead/behind reads the same measure
 
 ### Phase 2: The gate in the graph
@@ -139,11 +155,14 @@ run should attempt unattended.
 
 - [ ] `docs/architecture.md` graph section: the freshness gate, with the 2026-09-09 run as the incident; `docs/agent-bus.md`: the two condition types and the template's new nodes
 - [ ] `CLAUDE.md` conditional-chains constraint: the condition count and the freshness rule in one clause
+- [ ] `docs/configuration.md`: `MUXCODE_FRESHNESS_MAX_BEHIND` (default 5; overlap gates regardless) and `MUXCODE_FRESHNESS_MAX_FETCH_AGE`
 
 ### Phase 4: Integration test
 
 - [ ] `scripts/test-branch-freshness-gate.sh` (hermetic: scratch bare `origin`, scratch clone, scratch `BUS_SESSION`, commit agent stubbed): replay the incident shape — branch cut, `main` advanced by merges that delete a file the phase writes — and assert the run parks at `sync-gate` with the file named and a `branch-freshness` row
 - [ ] Fresh branch → `implement` dispatched with no gate and a row recording 0 behind (negative control for the gate)
+- [ ] Threshold: 4 behind with no overlap → no gate, row records 4; 5 behind with no overlap → `sync-gate`; with `MUXCODE_FRESHNESS_MAX_BEHIND=100`, 1 behind with overlap still parks at `sync-gate`
+- [ ] Coverage floor so a skipped section cannot report green
 - [ ] Approve the gate → stub sync rebases → `refresh` passes → `implement` dispatched; a conflicting sync → run parks with the conflict list and a clean tree (`git status` shows no rebase in progress)
 - [ ] Run the script and record pass/fail counts in this spec
 
@@ -153,10 +172,13 @@ run should attempt unattended.
   (screenshot) with the timeline re-verified read-only against `~/Repos/pkh/is-advising-gateway`
   (branch history, `origin/main` since July 10, the in-progress rebase) and that session's log (run
   `28374348` started 11:09:03 at `implement`; commit gates 11:42:08 and 13:03:36).
-- Decision owed: the no-overlap threshold. Gating every run that is 1 behind on an active repo
-  would make the gate noise; gating only on overlap misses a stale toolchain or config the spec does
-  not name. A default of 5 with overlap always gating is the proposal; the row records the numbers
-  either way so the threshold can be tuned from evidence.
+- The no-overlap threshold was decided by the user on 2026-11-24 (see Decisions): 5 by default,
+  configurable, overlap always gating. The reasoning as filed: gating every run that is 1 behind on
+  an active repo would make the gate noise; gating only on overlap misses a stale toolchain or
+  config the spec does not name.
+- The Mechanism section's file and line references are as filed on 2026-09-09 and were not re-read
+  on 2026-11-24; the template is now named `50-spec-to-pr`, and the condition set has grown from
+  the eleven types counted there to sixteen. Phase 1 re-reads them before building.
 - Related: [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) (the gate the sync sits
   behind); [MUX-148](../completed/MUX-148-node-outcome-reads-command-ran-as-task-done.md) and
   [MUX-154](../completed/MUX-154-codex-status-line-closes-tracked-tasks.md) (why the build node's green meant
@@ -166,4 +188,5 @@ run should attempt unattended.
 
 ## Status
 
-**Backlog** — 0/22. Filed 2026-09-09 13:58.
+**Backlog** — unparked 2026-11-24 on the user's decision (threshold 5, configurable; overlap always
+gates). Not started. Filed 2026-09-09 13:58.
