@@ -9,7 +9,7 @@ tags: [jira, github, pr, integration]
 
 Post a comment on a Jira issue with PR details and a summary of addressed Copilot review feedback. The Jira issue key is extracted from the branch name.
 
-> **This is user-initiated and plan-only.** Jira is a shared system the user's team sees, so writes are gated to the plan agent (`CheckAtlassianAuthority`, `bus/atlassian_authority.go`) — the commit or edit agent running this will get `DENIED`. Creating a PR is **not** approval to comment on the ticket: the commit agent reports the PR URL to edit, edit asks the **user**, and only once the user says yes does edit relay a write request to plan. If you are not the plan agent acting on a relayed user request, stop here.
+> **This is user-initiated and plan-only.** Jira is a shared system the user's team sees, so writes are gated to the plan agent (`CheckAtlassianAuthority`, `bus/atlassian_authority.go`) — the commit or edit agent running this will get `DENIED`. Creating a PR is **not** approval to comment on the ticket: the commit agent reports the PR URL to edit, edit asks the **user**, and only once the user says yes does edit relay a write request to plan. A gate-approved graph dispatch (`daemon`, `Origin: graph run …`, e.g. `110-pr-merge`'s `tracker` node) is the same consent, verified by the bus at the send (MUX-181) — execute it without asking again. If you are not the plan agent acting on one of the three consent paths in `agents/planner.md` (typed into your pane, relayed from edit, or a gate-approved graph dispatch), stop here.
 
 **Companion skill**: `github-pr-comment` handles threaded replies to individual Copilot review comments on GitHub. Run that skill first (or in parallel) when Copilot feedback exists.
 

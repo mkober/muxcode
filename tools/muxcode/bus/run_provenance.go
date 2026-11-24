@@ -75,11 +75,19 @@ func stampMessageOrigin(session string, m *Message, humanPrompt bool) {
 //
 // Every other request says plainly that it carries no user request, so a
 // recipient cannot turn an agent's prompt into "on a user request".
+//
+// An executor dispatch also names its node (`Origin: graph run <id> · node
+// <id>`): plan's consent rule (MUX-165) reads that line to tell a tracker write
+// the bus verified against its gate (MUX-181) from any other daemon message.
 func formatMessageOrigin(m Message) string {
 	switch {
 	case m.OriginRun != "":
-		s := fmt.Sprintf("Origin: graph run %s · launched by: %s · run state at send: %s",
-			m.OriginRun, DescribeRunCreator(m.OriginCreatedBy), m.OriginRunState)
+		s := "Origin: graph run " + m.OriginRun
+		if m.GraphNode != "" {
+			s += " · node " + m.GraphNode
+		}
+		s += fmt.Sprintf(" · launched by: %s · run state at send: %s",
+			DescribeRunCreator(m.OriginCreatedBy), m.OriginRunState)
 		if m.OriginRunState == GraphRunCanceled || m.OriginRunState == GraphRunCanceling {
 			s += " — the run was cancelled; do not act on this"
 		}

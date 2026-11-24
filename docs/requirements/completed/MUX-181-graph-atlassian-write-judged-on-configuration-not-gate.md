@@ -37,7 +37,7 @@ margin was the commit agent's judgement.
 
 A wrong write here is a **tracker entry other people read** — externally visible, though not
 irreversible the way a pushed branch is. It is also one half of a pair with
-[MUX-165](../backlog/MUX-165-gated-jira-write-declined-by-requester-rule.md): that spec wants plan to *honour*
+[MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md): that spec wants plan to *honour*
 a gate-approved write, and its technical approach already names the mechanism — the executor attaches
 gate provenance to the dispatch and a bus-side `VerifyGateProvenance` checks it against `approvals/`
 — in service of **acceptance**. This spec is the **refusal** half of the same mechanism: a backstop
@@ -63,7 +63,7 @@ place.
 | Spec | Relationship |
 |------|--------------|
 | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) | **Parent.** Its Phase 1 step 3 recorded this finding; its Phase 4 closed the git half and step 5 now points here. Its reusable pieces are the starting point: `Message.GraphRun`/`GraphNode`, `dispatchMatchesNode`, `approvalDenial` |
-| [MUX-165](../backlog/MUX-165-gated-jira-write-declined-by-requester-rule.md) | **Co-scheduled (`⇄`), not a dependency in either direction.** MUX-165's fix already specifies provenance on the dispatch and `VerifyGateProvenance` at the bus so plan can *accept* a gate-approved write; this spec pins the *refusal* side of that same check — fail closed, keyed on the raw graph sender, logged — and the inversion of the two MUX-144 pins. Build the mechanism once; land both rules together |
+| [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md) | **Co-scheduled (`⇄`), not a dependency in either direction.** MUX-165's fix already specifies provenance on the dispatch and `VerifyGateProvenance` at the bus so plan can *accept* a gate-approved write; this spec pins the *refusal* side of that same check — fail closed, keyed on the raw graph sender, logged — and the inversion of the two MUX-144 pins. Build the mechanism once; land both rules together |
 | [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md) | Adjacent: guards whether an approval is *current*, not whether it is *human* — unchanged |
 | [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) | Same lesson: a role's definition is a behavioural boundary, and this spec is what a mechanical one would look like for one write path |
 
@@ -75,7 +75,7 @@ choice among three and unrecorded.
 | Question | Decision |
 |----------|----------|
 | The seam | **Seam (a) — at the send.** A verifier in `sendMessage`, beside `CheckCommitAuthorityForMessage`, keyed on the raw sender being `daemon` plus the gate approval that the message's `GraphRun`/`GraphNode` lead to |
-| One mechanism or two | **One verifier serves both this spec and [MUX-165](../backlog/MUX-165-gated-jira-write-declined-by-requester-rule.md)**; plan's rule loosens to accept gate-approved writes. The two ship together |
+| One mechanism or two | **One verifier serves both this spec and [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md)**; plan's rule loosens to accept gate-approved writes. The two ship together |
 
 **Division of the work.** This spec owns the **verifier** — the send-time check, its refusal row,
 the inverted MUX-144 pins and the integration script. MUX-165 owns the **rule change** — plan's
