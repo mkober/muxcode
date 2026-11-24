@@ -539,11 +539,48 @@ or a forged marker is refused and logged `commit-authority-refused`: the backsto
 Before Phase 4 this backstop was a no-op on the graph path — `From = "daemon"` normalized to an
 authorized role and the gate was the only control. An earlier version of this paragraph claimed the
 runtime backstop meant a graph "cannot be used to launder an action around the rules that govern
-it"; that was false as written from the day it was written until 2026-09-13 (flagged 2026-09-08). The
-Atlassian road is not yet judged the same way — a graph `jira-write` (and, likewise, `issue-write`) dispatches to plan, which holds
-that authority itself, so there is no sender to re-judge and the check would be new — tracked as
-[MUX-181](requirements/backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the
-refusal half of the provenance mechanism MUX-165 already names; the two ship together.
+it"; that was false as written from the day it was written until 2026-09-13 (flagged 2026-09-08). **The tracker-write road is judged the same way**
+([MUX-181](requirements/completed/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md)).
+A graph tracker write — `jira-write`, `confluence-write` or `issue-write`, the validator's
+`gatedTrackerWriteActions`, one list read by both the validator's gate rule and this check — whose
+**raw** sender is `daemon` is judged in `sendMessage`, beside the commit check, by
+`CheckTrackerWriteForMessage` (`bus/tracker_authority.go`). It is the same judgement as a graph
+commit, one shared function (`checkGraphGatedDispatch`, `bus/commit_authority.go`):
+
+| The dispatch must | Else refused with |
+|-------------------|-------------------|
+| Carry `GraphRun` and `GraphNode` | "it carries no graph provenance" |
+| Name a run that can be read, with a readable frozen graph | "its run … cannot be read" / "the frozen graph for run … cannot be read" |
+| Name a node the frozen graph holds | "node … is not in the frozen graph" |
+| Be exactly that node's dispatch — a send, same role, action and payload, the payload rebuilt as `graphSendMessage` builds it (including the verdict-token seed these dispatches carry) (`dispatchMatchesNode`) | The mismatch named: not a send, another role or action, or "payload is not what node … defines" |
+| Sit behind a `wait_human` gate whose approval is attributable, authorized and corroborated by its `graph-gate-approved` row (`approvalDenial`) | No gate released the node on an audited, authorized approval |
+
+It fails closed. A refused dispatch never reaches plan's inbox and writes one
+`tracker-write-refused` lifecycle row (`warn`, source `bus`):
+`run=<run> node=<node> daemon→<to>:<action> — <reason>`. An approval covers the
+nodes in its gate's territory, not the run — and each dispatch must still be exactly its own
+node's payload, so an approved gate does not release other work addressed to the same role. The
+template sentence "The user approved the tracker update" carries no
+weight — a `daemon` message holding only that sentence is refused.
+
+Not judged here: any sender other than `daemon` — edit relays the user, and another agent's request
+is plan's rule to decline — and reads (`jira-read`, `confluence-read`, `issue-read`).
+`CheckAtlassianAuthority` at the CLI is unchanged: it judges the role running the CLI, which is
+plan, so a graph never needed to bypass it and the control for a graph write is at the send. Before
+MUX-181 there was no such control: a graph `jira-write` dispatched to plan, which holds the write
+authority itself, and what stood between the template's sentence and the write was plan reading the
+payload.
+
+Plan's side is MUX-165's rule (`agents/planner.md`): three consent paths — typed into plan's pane,
+relayed from edit, or a `daemon` tracker write whose `Origin:` line names a graph run, which plan
+executes without asking again. A tracker write from any other agent, or a `daemon` one naming no
+graph run, is declined.
+
+As on the git road, this is **corroboration and a cost against a same-uid agent, not a boundary**:
+the forged marker alone is refused, but an agent that forges both the marker and its audit row
+defeats it. And the check runs in the sender's `sendMessage` — a message that never passes through
+it (a daemon still running an older build, or a line written straight into plan's inbox file) is not
+judged at all.
 
 **Dispatch-time node guards.** A `send` or `spawn` node may declare a `guard` — a predicate the
 executor evaluates in `dispatchNode()` *before* the message is sent, so a declined node never

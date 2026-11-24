@@ -318,6 +318,12 @@ func sendMessage(session string, m Message, autoCC, bypassDupGuard, humanPrompt 
 			LogLifecycle(session, "warn", "bus", "commit-authority-refused", m.From)
 			return fmt.Errorf("%s", deny)
 		}
+		if deny := CheckTrackerWriteForMessage(session, m); deny != "" {
+			fmt.Fprintf(os.Stderr, "  [send] REFUSED %s→%s:%s — %s\n", m.From, m.To, m.Action, deny)
+			LogLifecycle(session, "warn", "bus", "tracker-write-refused",
+				fmt.Sprintf("run=%s node=%s %s→%s:%s — %s", m.GraphRun, m.GraphNode, m.From, m.To, m.Action, deny))
+			return fmt.Errorf("%s", deny)
+		}
 	}
 
 	// Prompt requests are human-initiated for the same reason commits are

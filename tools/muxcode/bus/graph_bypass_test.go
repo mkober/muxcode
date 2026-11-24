@@ -31,9 +31,10 @@ import (
 // The structural gate rule is sound — see TestValidateGateRule in graph_test.go,
 // which rejects an ungated commit node and accepts a gated one.
 //
-// The two Atlassian tests below still record CURRENT behaviour: that path is
-// refused by configuration rather than by a control, and the graph does not need
-// to bypass it because it dispatches to plan, which holds the authority itself.
+// The Atlassian tests below record the CLI's shape, which MUX-181 leaves alone:
+// the graph does not need to bypass CheckAtlassianAuthority because it
+// dispatches to plan, which holds the authority itself. The control for a graph
+// tracker write is the send-time check — see tracker_authority_test.go.
 
 // pinCompiledAuthorities clears every authority override so a pin reads the
 // compiled-in defaults rather than whatever the session running the suite
@@ -319,16 +320,15 @@ func TestGraphCommitDispatchRefusesUnknownRun(t *testing.T) {
 	}
 }
 
-// TestGraphAtlassianWriteRefusedOnlyByConfiguration answers Phase 1's question
-// "does the commit bypass apply to CheckAtlassianAuthority too?" — it does not,
-// and the reason is a coincidence rather than a control.
+// TestGraphAtlassianWriteRefusedOnlyByConfiguration answers MUX-144 Phase 1's
+// question "does the commit bypass apply to CheckAtlassianAuthority too?" — it
+// does not, and the CLI's reason is a coincidence rather than a control.
 //
-// A graph-dispatched Atlassian write is refused today only because the
-// authority sits with plan while the graph sender normalizes to edit. Point the
-// authority back at edit — where it sat until recently — and the identical
-// dispatch passes. So the refusal must not be read as evidence that the
-// Atlassian path is defended: it is the commit bypass with a different role
-// name in the list.
+// At the CLI a graph sender is refused only because the authority sits with
+// plan while the graph sender normalizes to edit; point the authority at edit
+// and the identical sender passes. Both facts survive MUX-181: the control for
+// a graph tracker write is the send-time check (CheckTrackerWriteForMessage),
+// not this function, which judges only the role running the CLI.
 func TestGraphAtlassianWriteRefusedOnlyByConfiguration(t *testing.T) {
 	pinCompiledAuthorities(t)
 	sender := NormalizeBusRole(graphSender)
@@ -342,29 +342,13 @@ func TestGraphAtlassianWriteRefusedOnlyByConfiguration(t *testing.T) {
 	}
 }
 
-// TestGraphAtlassianWriteNeedsNoBypass pins the second half of the Phase 1
-// Atlassian finding, and the more important one: the graph never needs to
-// defeat CheckAtlassianAuthority, because that check does not sit on the bus
-// path at all. Send gates commit, prompt and graph-node authority; an Atlassian
-// write is gated where plan runs the CLI, as plan, which holds the authority.
-//
-// story-to-spec's jira-update node dispatches to plan carrying a
-// template-authored sentence asserting the user approved. The instruction is
-// simply handed to the role that may act on it, so the gate is again the only
-// control — and Defect A says any agent opens it.
+// TestGraphAtlassianWriteNeedsNoBypass is MUX-144's second Atlassian pin, with
+// the half that survives MUX-181: the graph never needs to defeat
+// CheckAtlassianAuthority — it dispatches to plan, which holds the authority.
+// The other half, a daemon jira-write with no gate provenance delivered to
+// plan, is inverted and lives on as TestGraphTrackerWriteRefusedWithoutProvenance.
 func TestGraphAtlassianWriteNeedsNoBypass(t *testing.T) {
 	pinCompiledAuthorities(t)
-	useTempBusDir(t)
-
-	m := NewMessage(graphSender, "plan", "request", "jira-write",
-		"The user approved the tracker update: sync the story to the spec", "")
-	if err := SendNoCC(runTestSession, m); err != nil {
-		t.Fatalf("SendNoCC to plan: %v", err)
-	}
-	msgs, _ := Peek(runTestSession, "plan")
-	if len(msgs) != 1 || msgs[0].Action != "jira-write" {
-		t.Fatalf("plan inbox = %+v, want the graph's jira-write request", msgs)
-	}
 	if deny := CheckAtlassianAuthority("plan", "jira", "update"); deny != "" {
 		t.Errorf("plan was refused its own Jira write (%q) — then the dispatch would need a bypass and this finding changes", deny)
 	}
