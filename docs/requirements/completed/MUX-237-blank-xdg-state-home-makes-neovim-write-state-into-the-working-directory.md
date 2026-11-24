@@ -296,7 +296,7 @@ Qualifications:
 
 - [MUX-208](../completed/MUX-208-durable-bus-state-in-tmp-deleted-by-macos-tmp-cleaner.md) — moved bus state under `XDG_STATE_HOME` and began exporting it to panes; the blank is from its follow-up commit
 - [MUX-223](../completed/MUX-223-project-memory-resolves-against-the-callers-cwd.md) — the same shape of defect in muxcode's own code: state resolved relative to the working directory
-- [MUX-236](../backlog/MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md) — the other open defect about files left in a checkout
+- [MUX-236](./MUX-236-test-all-leaves-stray-and-modified-files-in-the-checkout.md) — the other defect about files left in a checkout, closed 2026-11-24
 
 ## Status
 

@@ -11,8 +11,12 @@
 #   - The renderer-absence and arg-validation paths are ALWAYS asserted — they
 #     mock the renderer via a nonexistent DRAWIO_BIN/MMDC_BIN (PATH-shadow) and
 #     need no real binary.
-#   - Any image the test renders into docs/media/ is removed on exit (unless it
-#     was already present), so the test leaves no uncommitted churn.
+#   - It runs a copy of render-diagram.sh in a scratch tree ($WORK/repo, the
+#     fixtures under its docs/media/): the renderer resolves its default
+#     output dir from its own location, so the default-path rule is exercised
+#     there and nothing under the real docs/media/ is written. Rendering in
+#     place overwrote the tracked sample-aws.svg on every run, and a ship once
+#     committed it (MUX-236).
 #
 # Mocked (always run, no binary needed): renderer absence + install hint + no
 #   partial output, arg validation (unknown source type / no args).
@@ -25,7 +29,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-RENDER="$REPO_ROOT/scripts/render-diagram.sh"
 MEDIA="$REPO_ROOT/docs/media"
 
 DRAWIO_BIN="${DRAWIO_BIN:-drawio}"
@@ -38,18 +41,12 @@ pass() { PASS=$((PASS+1)); echo "  ${GREEN}✓${NC} $1"; }
 fail() { FAIL=$((FAIL+1)); echo "  ${RED}✗${NC} $1"; [ -n "${2:-}" ] && echo "    ${DIM}$2${NC}"; }
 skip() { SKIP=$((SKIP+1)); echo "  ${YELLOW}∼ skip${NC} $1"; }
 
-# Clean up any images the test creates (that were not already committed).
-CREATED=()
-cleanup() {
-  local f
-  for f in "${CREATED[@]:-}"; do [ -n "$f" ] && rm -f "$f"; done
-}
-trap cleanup EXIT
-
-# track_output <path> — remember an output file for cleanup iff it is new.
-# Must return 0: a bare call under `set -e` would otherwise abort the script
-# when the path already exists (e.g. tracking an output that a render just made).
-track_output() { [ ! -e "$1" ] && CREATED+=("$1"); return 0; }
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/plan-diagram-render.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+WMEDIA="$WORK/repo/docs/media"
+RENDER="$WORK/repo/scripts/render-diagram.sh"
+mkdir -p "$WMEDIA" "$WORK/repo/scripts"
+cp -p "$REPO_ROOT/scripts/render-diagram.sh" "$RENDER"
 
 # graphic_primitives <svg> — count icon/geometry elements in an SVG
 graphic_primitives() {
@@ -82,28 +79,27 @@ echo "  drawio: $([ $have_drawio -eq 1 ] && echo "$DRAWIO_BIN" || echo 'absent (
 echo "  mmdc:   $([ $have_mmdc -eq 1 ] && echo "$MMDC_BIN" || echo 'absent (render asserts skipped)')"
 
 # render_fixture <desc> <have?> <src-basename> <min-primitives|"">
-#   Renders MEDIA/<src> with the DEFAULT output path (docs/media/<base>.<ext>),
-#   asserts the emitted path exists, is non-empty, lives under docs/media/, and
-#   its basename matches the source. min-primitives>0 also asserts real icon
-#   geometry (AWS-stencil resolution — no missing-shape/empty placeholder).
+#   Renders the scratch tree's copy of MEDIA/<src> with the DEFAULT output
+#   path, asserts the emitted path exists, is non-empty, lives under that
+#   tree's docs/media/ (the renderer's default-path rule), and its basename
+#   matches the source.
+#   min-primitives>0 also asserts real icon geometry (AWS-stencil resolution —
+#   no missing-shape/empty placeholder).
 render_fixture() {
   local desc="$1" have="$2" src="$3" minprim="${4:-}"
-  local src_path="$MEDIA/$src" base out
+  local src_path="$WMEDIA/$src" base out
   if [ "$have" -ne 1 ]; then skip "$desc (renderer absent)"; return; fi
-  [ -s "$src_path" ] || { fail "$desc" "fixture missing: $src_path"; return; }
+  [ -s "$MEDIA/$src" ] || { fail "$desc" "fixture missing: $MEDIA/$src"; return; }
+  cp "$MEDIA/$src" "$src_path"
 
   base="${src%.*}"
-  # predict the default output for cleanup tracking (svg, or png on fallback)
-  track_output "$MEDIA/$base.svg"; track_output "$MEDIA/$base.png"
-
   if ! out="$("$RENDER" "$src_path" 2>/dev/null)"; then
     fail "$desc" "render-diagram.sh exited non-zero"; return
   fi
-  track_output "$out"
 
   if [ ! -s "$out" ]; then fail "$desc" "output missing/empty: $out"; return; fi
-  if [ "$(cd "$(dirname "$out")" && pwd)" != "$MEDIA" ]; then
-    fail "$desc" "output not under docs/media/: $out"; return; fi
+  if [ "$(cd "$(dirname "$out")" && pwd)" != "$(cd "$WMEDIA" && pwd)" ]; then
+    fail "$desc" "output not under the renderer's docs/media/ ($WMEDIA): $out"; return; fi
   if [ "$(basename "${out%.*}")" != "$base" ]; then
     fail "$desc" "basename mismatch: $(basename "$out") vs $base"; return; fi
 
@@ -145,7 +141,8 @@ printf '%s' "$mr_out" | grep -qF "brew install --cask drawio" \
   || fail "no partial output file after missing-renderer failure" "$missing_out exists"
 
 set +e
-mm_out="$(MMDC_BIN=mmdc-nonexistent-xyz "$RENDER" "$MEDIA/sample-shapes.mmd" 2>&1)"; mm_rc=$?
+cp "$MEDIA/sample-shapes.mmd" "$WMEDIA/missing-mmdc.mmd"
+mm_out="$(MMDC_BIN=mmdc-nonexistent-xyz "$RENDER" "$WMEDIA/missing-mmdc.mmd" 2>&1)"; mm_rc=$?
 set -e
 [ "$mm_rc" -ne 0 ] && pass "missing mmdc exits non-zero (rc=$mm_rc)" \
   || fail "missing mmdc exits non-zero" "rc=$mm_rc"
