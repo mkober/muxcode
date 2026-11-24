@@ -418,7 +418,7 @@ made.
       constraint now states the backstop is real for graph sends, what it judges on, that it fails
       closed, and that the normalization is untouched
 - [x] Judge a graph-dispatched **Atlassian** write on the gate the same way — **decided 2026-09-13: its
-      own spec, [MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md),
+      own spec, [MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md),
       co-scheduled with MUX-165 (`⇄`), whose fix already names the mechanism**; this step is the recorded
       decision, the work lives there. Phase 1 step 3 recorded
       that the Atlassian path shares the shape and that *"Phase 4's fix must judge both on the gate,
@@ -478,11 +478,11 @@ made.
 Complete — closed 2026-09-14 at 34/34 on the user's instruction, the last item (Phase 2 step 5) accepted
 as residual risk and answered inline; moved from `drafts/` to `completed/` the same day, cross-links
 repointed, the active-spec pointer cleared. The Atlassian road lives on as
-[MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md). The record
+[MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md). The record
 below is the history as it was written.
 
 **2026-09-13 14:45 — 33/34.** The user resolved Phase 4 step 5: the Atlassian road is its own spec,
-[MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), filed by plan
+[MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), filed by plan
 and placed beside MUX-165 in the defects table as its co-scheduled refusal half (`⇄` — MUX-165's fix
 already names the provenance mechanism, so the pair builds it once); the step is ticked as a recorded
 decision. **One item remains — Phase 2 step 5, a written answer to caveat 3** (the seal's inputs are
@@ -657,7 +657,7 @@ Open questions for the user:
 - **Scope to git, or all gated actions?** Atlassian writes travel the same normalization path. The
   evidence here is git-only; extending the claim to Atlassian needs the check in Phase 1 first.
   **Answered 2026-09-13:** git here; the Atlassian road is
-  [MUX-181](../backlog/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the refusal
+  [MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), the refusal
   half of the mechanism MUX-165 already carries.
 - **Retry below a never-approved gate** (raised by Phase 4, 2026-09-13): `graph retry --from <commit-node>`
   targets a node below a gate nobody approved; MUX-132 guards *is this approval current?* and nothing

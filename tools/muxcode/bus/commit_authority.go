@@ -142,13 +142,14 @@ func CheckCommitAuthorityForMessage(session string, m Message) string {
 		return ""
 	}
 	if isGraphDispatch(m.From) {
-		return checkGraphCommitDispatch(session, m)
+		return checkGraphGatedDispatch(session, m, denyGraphDispatch)
 	}
 	return CheckCommitAuthority(m.From, m.To, m.Action)
 }
 
-// checkGraphCommitDispatch judges a graph-dispatched git mutation on the
-// wait_human gate that released its node.
+// checkGraphGatedDispatch judges a graph dispatch of gated work — a git
+// mutation, or a tracker write (CheckTrackerWriteForMessage) — on the
+// wait_human gate that released its node; deny words the refusal for its road.
 //
 // Two questions, and both must hold. First: is this message actually the work
 // the frozen graph defines for the node it names — same kind, same target, same
@@ -163,17 +164,17 @@ func CheckCommitAuthorityForMessage(session string, m Message) string {
 // Anything else is refused, including a dispatch with no provenance and a run
 // that cannot be read. This is the backstop, so it fails closed: absence of
 // evidence that a human approved is not evidence of approval.
-func checkGraphCommitDispatch(session string, m Message) string {
+func checkGraphGatedDispatch(session string, m Message, deny func(string) string) string {
 	if m.GraphRun == "" || m.GraphNode == "" {
-		return denyGraphDispatch("it carries no graph provenance")
+		return deny("it carries no graph provenance")
 	}
 	run, err := ReadGraphRun(session, m.GraphRun)
 	if err != nil {
-		return denyGraphDispatch(fmt.Sprintf("its run %q cannot be read", m.GraphRun))
+		return deny(fmt.Sprintf("its run %q cannot be read", m.GraphRun))
 	}
 	g, err := ReadGraphRunGraph(session, m.GraphRun)
 	if err != nil {
-		return denyGraphDispatch(fmt.Sprintf("the frozen graph for run %q cannot be read", m.GraphRun))
+		return deny(fmt.Sprintf("the frozen graph for run %q cannot be read", m.GraphRun))
 	}
 	byID := make(map[string]*Node, len(g.Nodes))
 	for i := range g.Nodes {
@@ -181,10 +182,10 @@ func checkGraphCommitDispatch(session string, m Message) string {
 	}
 	n, ok := byID[m.GraphNode]
 	if !ok {
-		return denyGraphDispatch(fmt.Sprintf("node %q is not in the frozen graph for run %s", m.GraphNode, m.GraphRun))
+		return deny(fmt.Sprintf("node %q is not in the frozen graph for run %s", m.GraphNode, m.GraphRun))
 	}
 	if why := dispatchMatchesNode(session, run, n, m); why != "" {
-		return denyGraphDispatch(why)
+		return deny(why)
 	}
 	for i := range g.Nodes {
 		gate := &g.Nodes[i]
@@ -195,16 +196,17 @@ func checkGraphCommitDispatch(session string, m Message) string {
 			return ""
 		}
 	}
-	return denyGraphDispatch(fmt.Sprintf(
+	return deny(fmt.Sprintf(
 		"no wait_human gate released node %q on an audited, authorized approval", n.ID))
 }
 
 // dispatchMatchesNode reports why a message is not the work its named node
 // defines, or "" when it matches.
 //
-// The payload is re-interpolated exactly as dispatchNode built it, with an empty
-// item: validateGates refuses a commit-role map or spawn node, so a git mutation
-// only ever reaches the bus from a plain send.
+// The payload is rebuilt exactly as the executor builds it (graphSendMessage):
+// interpolated with an empty item, plus the verdict-token seed that tracker
+// writes such as jira-write carry. Gated work only ever reaches the bus from a
+// plain send — a map or spawn node's workers are agents, not daemon messages.
 func dispatchMatchesNode(session string, run *GraphRun, n *Node, m Message) string {
 	if n.Type != NodeSend {
 		return fmt.Sprintf("node %q is a %s node, not a send", n.ID, n.Type)
@@ -215,7 +217,7 @@ func dispatchMatchesNode(session string, run *GraphRun, n *Node, m Message) stri
 	if n.Action != m.Action {
 		return fmt.Sprintf("node %q dispatches action %q, not %q", n.ID, n.Action, m.Action)
 	}
-	if interpolateGraphMessage(session, run, n.Message, "") != m.Payload {
+	if graphSendMessage(session, run, n).Payload != m.Payload {
 		return fmt.Sprintf("the payload is not what node %q defines", n.ID)
 	}
 	return ""

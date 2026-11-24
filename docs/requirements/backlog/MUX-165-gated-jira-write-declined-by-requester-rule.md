@@ -69,7 +69,7 @@ the ADF payloads, or making commit's GitHub writes stricter.
 ## Decisions (user, 2026-11-24)
 
 The user's decision, relayed by edit. This spec was parked because it ships together with
-[MUX-181](./MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), whose seam was
+[MUX-181](../completed/MUX-181-graph-atlassian-write-judged-on-configuration-not-gate.md), whose seam was
 undecided.
 
 | Question | Decision |
@@ -201,6 +201,15 @@ touches the tracker, which is the cost this spec exists to remove.
 ## Status
 
 **Backlog** — unparked 2026-11-24 on the user's decision (seam (a); one verifier, owned by MUX-181;
-this spec owns plan's rule change). Not started. Ships together with MUX-181. Filed 2026-09-09
+this spec owns plan's rule change). Ships together with MUX-181.
+
+**2026-11-24 — part of this spec is already in the tree, and nothing here is ticked for it.**
+MUX-181 closed out the same day, and its Phase 3 carried this spec's rule change: `agents/planner.md`
+and `CLAUDE.md` now name the three consent paths (uncommitted when this note was written; it ships
+with MUX-181). So most of Phase 2 here, and part of Phase 3, describe work that exists. Whoever
+activates this spec verifies those steps against the tree rather than building them again. Not done
+anywhere: Phase 1 (what plan is shown — the origin-line test) and Phase 4 (this spec's integration
+script). Open with the user from MUX-181's verification: whether the rule should keep plan's
+`muxcode graph status` re-check, and the "typed into your pane" consent path. Filed 2026-09-09
 11:12. The Mechanism and Key files sections are as filed; the Decisions section carries what was
 re-read on 2026-11-24.

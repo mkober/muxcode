@@ -2255,9 +2255,25 @@ Two further edge fields act when the edge fires:
 | `resets_iterations` | Edge keys (`"from->to"`, or `"from->to:outcome"`) | Zeroes the named edges' fire counts, scoping an inner cap to one pass of an outer loop (`graph-loop-budget-reset`) | The resetting edge must itself be capped, and may name neither itself nor an edge that resets others |
 | `clears_outputs` | Node ids | Erases the named nodes' recorded reports, so `${output:<id>}` reads "no report recorded" until the node runs again — a node not re-run this pass cannot leak its last report into the next | Every id must name a node in the graph |
 
-A node that commits or writes to Jira/Confluence is rejected unless it sits
-downstream of a `wait_human` gate — for the `commit` role every action but `pr-read` counts as a
-commit (`nodeRequiresGate`, `bus/graph.go`). That one read-shaped action is what lets
+A node that commits or writes to a tracker — `jira-write`, `confluence-write` or `issue-write` — is
+rejected unless it sits downstream of a `wait_human` gate — for the `commit` role every action but
+`pr-read` counts as a commit (`nodeRequiresGate`, `bus/graph.go`). That is the rule's first half, at
+validate time. The second half is at run time: such a node's dispatch is **delivered only when that
+gate's approval holds** — attributable, authorized and matched by its `graph-gate-approved` row —
+and the message is exactly that node's work. An approved gate is sufficient consent for the tracker
+write behind it; nothing else is.
+
+| Refused dispatch | Lifecycle row | Detail |
+|------------------|---------------|--------|
+| A graph commit | `commit-authority-refused` (`warn`, source `bus`) | The sender only — the reason is printed on the sender's stderr (`[send] REFUSED …`), not in the row |
+| A graph tracker write | `tracker-write-refused` (`warn`, source `bus`) | `run=<run> node=<node> daemon→<to>:<action> — <reason>` |
+
+Reasons, the same on both roads: no graph provenance; the run or its frozen graph cannot be read; the node is not
+in the frozen graph; the node is not a send, or dispatches to another role or action, or its payload
+is not what the node defines; no `wait_human` gate released the node on an audited, authorized
+approval. Find them with `muxcode lifecycle show --event tracker-write-refused`. A request from
+`edit`, and a graph read (`jira-read`, `confluence-read`, `issue-read`), are never judged by this
+check. That one read-shaped action is what lets
 `80-pr-review-fix` open with two read-only nodes, `find-pr` and `read-comments`, and end without ever
 reaching a gate when there is no PR or no actionable comment — the pattern `commit-pr-review-loop`'s
 `pr-precheck` introduced on 2026-09-16, before that template was removed (2026-09-24); the design is under
