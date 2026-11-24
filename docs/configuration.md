@@ -77,7 +77,7 @@ The pane is created **last** on each window so panes 0 and 1 keep their indices 
 | `BUS_SESSION` | (auto-detected) | Session name for the bus directory |
 | `MUXCODE_BUS_DIR` | (exported by muxcode) | The session's resolved bus directory (`bus.BusDirEnv`). **Set by muxcode, not by you**: exported by `LaunchSession` (process env and `tmux set-environment`), the control pane, the daemon on start (process env **and** the tmux session env, so `upgrade-daemons` re-exports it into a session launched before the install) and every `muxcode agent launch` (always overwritten, so a pane shell older than the install gets the right value on the agent's next relaunch). Scripts and agent definitions read it, falling back to `muxcode bus-dir` — `${MUXCODE_BUS_DIR:-$(muxcode bus-dir)}` — and never compute the path. See [Bus directory](#bus-directory-per-session) |
 | `MUXCODE_BUS_BASE` | (unset) | Absolute directory that holds the `muxcode-bus-{session}` directories, overriding the default base `$XDG_STATE_HOME/muxcode/bus`. A non-absolute value is ignored. Spawn worktrees then sit beside the bus as `muxcode-spawn-{session}`. No legacy `/tmp` migration runs on an overridden base |
-| `XDG_STATE_HOME` | `~/.local/state` | When absolute, muxcode's state directory is `$XDG_STATE_HOME/muxcode` (`bus.StateDir`): the bus under `bus/`, spawn worktrees under `spawn/`. A home that cannot be resolved panics — there is no `/tmp` fallback |
+| `XDG_STATE_HOME` | `~/.local/state` | When absolute, muxcode's state directory is `$XDG_STATE_HOME/muxcode` (`bus.StateDir`): the bus under `bus/`, spawn worktrees under `spawn/`. A home that cannot be resolved panics — there is no `/tmp` fallback. **Panes muxcode creates always receive an absolute value, never an empty one** (MUX-237): the launcher's own when absolute, else `$HOME/.local/state` — see [What panes receive](#what-panes-receive) |
 | `AGENT_ROLE` | (auto-detected) | Current agent's role name |
 | `BUS_MEMORY_DIR` | (exported at launch — `<main checkout root>/.muxcode/memory`) | Absolute directory holding project memory (`bus.ProjectMemoryDir`, MUX-223). Resolution, in order: (1) an **absolute** `BUS_MEMORY_DIR` — `LaunchSession` exports one into the session, as it does `MUXCODE_BUS_DIR` (`LaunchMemoryDir`: a value already set, else the main checkout's root around the project directory, else the project directory itself for a project outside git; a value inherited inside another muxcode pane is that session's and is ignored); (2) else `.muxcode/memory` at the **main checkout's** root, the parent of `git rev-parse --git-common-dir`, so a spawn worker in a worktree shares its session's memory; (3) else an error — `memory write` and `session compact` fail naming `BUS_MEMORY_DIR`, and reads return global memory only. A **relative** value is refused, at launch too: resolved per caller it would split memory again. Never relative to the working directory — before MUX-223 the default was the relative `.muxcode/memory`, so a command run from a subdirectory wrote a second memory tree there that restore never read. Under `MUXCODE_CODEX_SANDBOX=workspace-write` the directory is a writable root (`muxcodeStateRoots`) — it alone, never the checkout around it |
 | `BUS_GLOBAL_MEMORY_DIR` | (unset — `~/.config/muxcode/memory`) | Absolute directory replacing the global memory location (`bus.GlobalMemoryDir`). A relative value is ignored, never resolved against the working directory. It exists so each package `TestMain` can pin it — before MUX-224 every `go test` run created or read the developer's real global memory — and production normally leaves it unset. The Codex sandbox writable root (`muxcodeStateRoots`) follows `GlobalMemoryDir()`, so it grants the directory memory actually lives in: the real one when unset |
@@ -536,10 +536,55 @@ afterwards goes — a graph run parked on a `wait_human` gate lost its `graph.js
 rather than fall back to `/tmp`.
 
 `MUXCODE_BUS_DIR` alone does not make a later process agree: muxcode recomputes the directory from
-its inputs. So the launcher and the daemon also copy `MUXCODE_BUS_BASE` and `XDG_STATE_HOME` into
-the tmux session environment, each only when set to an absolute path in the launching process
-(`ExportBusBaseEnv`, `bus/config.go`). A pane created later then resolves the same bus directory as
-the process that launched the session.
+its inputs. So the launcher and the daemon also write `MUXCODE_BUS_BASE` and `XDG_STATE_HOME` into
+the tmux session environment (`ExportBusBaseEnv`, `bus/config.go`). A pane created later then
+resolves the same bus directory as the process that launched the session.
+
+#### What panes receive
+
+([MUX-237](requirements/completed/MUX-237-blank-xdg-state-home-makes-neovim-write-state-into-the-working-directory.md).)
+Each key is always written, never removed: a stale value already in the session would otherwise
+override the launcher's resolution, removing a session key exposes the tmux server's global value,
+and `new-session -e` cannot remove a key at all.
+
+| Key | Launching process has an absolute value | Unset, empty or relative |
+|-----|-----------------------------------------|--------------------------|
+| `MUXCODE_BUS_BASE` | That value | Set to empty. Only muxcode reads it, and it ignores a non-absolute value |
+| `XDG_STATE_HOME` | That value, unchanged | The resolved state base, `$HOME/.local/state` (`stateBase`) — **never empty**. Left out only when no home resolves, where resolving the state directory panics anyway |
+
+`XDG_STATE_HOME` is never set to empty because other programs read it. Neovim treats an empty value
+as a relative path: `stdpath("state")` becomes `nvim` — or `muxcode` for the managed editor
+(`NVIM_APPNAME=muxcode`) — so its shada file, `nvim.log`, swap files and persistent undo files
+(`config/nvim/init.lua` sets `undofile`) were written under whatever directory the pane was in.
+
+| Road | When | Reaches |
+|------|------|---------|
+| `tmux new-session -e` (`busBaseEnvArgs`) | Session creation | The first window |
+| `tmux set-environment` (`ExportBusBaseEnv`) | Session launch | Every later window, split and spawn worker pane |
+| `ExportSessionBusEnv` | Every daemon start | A running session: `MUXCODE_BUS_DIR` and both keys are rewritten, so an install corrects them |
+
+**A pane keeps the environment it started with.** An install reaches new panes once the session's
+daemon restarts on the new binary — `muxcode upgrade-daemons`, which `./build.sh` runs and which
+attaching to a running session runs for that session. Panes already open keep the old value until
+they are relaunched (or the session is). To check a pane:
+
+```bash
+printf '[%s]\n' "${XDG_STATE_HOME-unset}"   # [] = set and empty: this pane is affected
+```
+
+**If you ran a muxcode older than this fix** with `XDG_STATE_HOME` unset in your shell — the default
+on macOS and most Linux setups — Neovim state was written into the repositories your panes worked
+in:
+
+| Step | What to do |
+|------|------------|
+| Find it | Untracked `nvim/` and `muxcode/` directories at the root of any repository opened in a muxcode pane, holding `shada/`, `undo/`, `swap/`, `lazy/` or `nvim.log`. `git status --ignored` and `git clean -n` list them |
+| Inspect before deleting | An undo file can hold the text of the file it belongs to, and is named for that file's full path — `undo/%Users%<user>%.aws%credentials` is an undo file for your AWS credentials. Never commit these directories |
+| Delete | Remove the directories by hand. muxcode does not delete them for you |
+| Tidy | Remove any `/muxcode/` or `/nvim/` line you added to `.git/info/exclude` to hide them |
+
+On a binary without the fix, `export XDG_STATE_HOME="$HOME/.local/state"` in your shell profile,
+before launching muxcode, avoids it.
 
 **Migration from `/tmp`.** A session whose state is still in `/tmp/muxcode-bus-{session}` is moved,
 not abandoned (`MigrateLegacyBusDir`, `bus/busdir_migrate.go`):

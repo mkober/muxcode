@@ -244,28 +244,36 @@ const BusDirBaseEnv = "MUXCODE_BUS_BASE"
 // creates, beside BUS_SESSION, so scripts read it instead of computing it.
 const BusDirEnv = "MUXCODE_BUS_DIR"
 
-// busBaseEnvPairs returns the environment variables, set to an absolute value
-// in this process, that BusDir resolves from. BusDirEnv alone does not carry
-// them: muxcode recomputes the directory from these, so a process started later
-// in tmux without them resolves a different bus.
+// busBaseEnvPairs returns the bus-base inputs exported with a value — the
+// variables BusDir resolves from. BusDirEnv alone does not carry them: muxcode
+// recomputes the directory from these, so a process started later in tmux
+// without them resolves a different bus.
 func busBaseEnvPairs() [][2]string {
 	pairs, _ := busBaseEnvPlan()
 	return pairs
 }
 
-// busBaseEnvPlan splits the bus-base inputs into those to set (absolute here)
-// and those to blank: a stale value already in the tmux environment would
-// otherwise override this process's own resolution. A blank is set as an empty
-// value, never unset — removing a session key exposes the server's global
-// environment, and `new-session -e` cannot remove at all. Empty reads as unset
-// to BusDir (absolute values only) and, per the XDG spec, to XDG_STATE_HOME.
+// busBaseEnvPlan splits the bus-base inputs into values to set and keys to
+// blank, so a stale value already in the tmux environment can never override
+// this process's own resolution. No key is unset: removing a session key
+// exposes the server's global environment, and `new-session -e` cannot remove
+// one at all.
+//
+// MUXCODE_BUS_BASE is set when absolute here, else blanked — only muxcode
+// reads it, and BusDir ignores an empty value. XDG_STATE_HOME is never blanked
+// (MUX-237): Neovim reads an empty value as a relative path, so every nvim
+// opened in a pane wrote its shada, logs and undo files — one for
+// ~/.aws/credentials among them — under its working directory. It is set to
+// the state base this process resolved (stateBase), and left out only when no
+// home resolves, where StateDir refuses too.
 func busBaseEnvPlan() (set [][2]string, blank []string) {
-	for _, key := range []string{BusDirBaseEnv, "XDG_STATE_HOME"} {
-		if v := os.Getenv(key); filepath.IsAbs(v) {
-			set = append(set, [2]string{key, v})
-		} else {
-			blank = append(blank, key)
-		}
+	if v := os.Getenv(BusDirBaseEnv); filepath.IsAbs(v) {
+		set = append(set, [2]string{BusDirBaseEnv, v})
+	} else {
+		blank = append(blank, BusDirBaseEnv)
+	}
+	if base, err := stateBase(); err == nil {
+		set = append(set, [2]string{"XDG_STATE_HOME", base})
 	}
 	return set, blank
 }
@@ -281,6 +289,18 @@ func ExportBusBaseEnv(session string) {
 	for _, key := range blank {
 		_ = TmuxSetEnv(session, key, "")
 	}
+}
+
+// ExportSessionBusEnv is the daemon's start-time export of BusDirEnv and the
+// bus-base inputs into the tmux session. It is how an install reaches a
+// running session: one launched before MUX-208 lacks BusDirEnv, and one
+// launched before MUX-237 holds an empty XDG_STATE_HOME — every pane created
+// after the daemon restarts on the new binary gets the corrected values,
+// while panes already open keep the environment they started with. Before
+// the launcher has created the session the tmux calls fail harmlessly.
+func ExportSessionBusEnv(session string) {
+	_ = TmuxSetEnv(session, BusDirEnv, BusDir(session))
+	ExportBusBaseEnv(session)
 }
 
 // busBaseEnvArgs is the `KEY=VAL` form of BusDirEnv and every bus-base input,
@@ -315,14 +335,25 @@ func StateDir() string {
 }
 
 func stateDir() (string, error) {
+	base, err := stateBase()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "muxcode"), nil
+}
+
+// stateBase is the XDG state base StateDir sits beneath: an absolute
+// $XDG_STATE_HOME as given, else the specification's default
+// $HOME/.local/state. Empty and relative values are ignored.
+func stateBase() (string, error) {
 	if x := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(x) {
-		return filepath.Join(x, "muxcode"), nil
+		return x, nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || !filepath.IsAbs(home) {
 		return "", fmt.Errorf("muxcode: cannot resolve the state directory (set HOME or an absolute XDG_STATE_HOME): %v", err)
 	}
-	return filepath.Join(home, ".local", "state", "muxcode"), nil
+	return filepath.Join(home, ".local", "state"), nil
 }
 
 // busDirBaseOverridden reports whether a test override or MUXCODE_BUS_BASE

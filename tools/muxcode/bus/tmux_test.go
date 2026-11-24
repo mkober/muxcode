@@ -2,6 +2,7 @@ package bus
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,36 +72,80 @@ func TestTmuxNewSession_EnvAtCreation(t *testing.T) {
 	}
 }
 
-// TestExportBusBaseEnv_UnsetsWhatTheLauncherLacks: an input this process has no
-// absolute value for is removed from the tmux session, so a stale value there
-// cannot send later panes to another bus; a set input is exported, not unset.
-func TestExportBusBaseEnv_UnsetsWhatTheLauncherLacks(t *testing.T) {
-	cap := setupTmuxCapture(t)
-	xdg := t.TempDir()
+// TestExportBusBaseEnv_OverridesStaleSessionValues: every bus-base input is
+// written to the tmux session, never unset (-u would expose the server's
+// global value) — MUXCODE_BUS_BASE blanked when the launcher lacks it,
+// XDG_STATE_HOME always an absolute value, never empty (MUX-237).
+func TestExportBusBaseEnv_OverridesStaleSessionValues(t *testing.T) {
+	home, xdg := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv(BusDirBaseEnv, "")
-	t.Setenv("XDG_STATE_HOME", xdg)
-	ExportBusBaseEnv("s")
+	for _, tc := range []struct{ name, xdg, want string }{
+		{"absolute", xdg, xdg},
+		{"unset", "", filepath.Join(home, ".local", "state")},
+	} {
+		cap := setupTmuxCapture(t)
+		t.Setenv("XDG_STATE_HOME", tc.xdg)
+		if tc.xdg == "" {
+			os.Unsetenv("XDG_STATE_HOME")
+		}
+		ExportBusBaseEnv("s")
+		var got []string
+		for _, c := range cap.calls {
+			got = append(got, strings.Join(c, " "))
+		}
+		want := []string{"set-environment -t s XDG_STATE_HOME " + tc.want, "set-environment -t s " + BusDirBaseEnv + " "}
+		if strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("%s: tmux calls = %v, want %v", tc.name, got, want)
+		}
+	}
+}
+
+// TestExportSessionBusEnv_CorrectsEmptyXDGStateHome: the daemon's start-time
+// export is what fixes a session launched before MUX-237, whose environment
+// holds XDG_STATE_HOME= — with the daemon's own variable unset it writes the
+// bus dir, the bus-base blank and an absolute XDG_STATE_HOME, never an empty one.
+func TestExportSessionBusEnv_CorrectsEmptyXDGStateHome(t *testing.T) {
+	base, home := t.TempDir(), t.TempDir()
+	saved := busDirOverride
+	ResetBusDirBase()
+	t.Cleanup(func() { busDirOverride = saved })
+	t.Setenv("HOME", home)
+	t.Setenv(BusDirBaseEnv, base)
+	t.Setenv("XDG_STATE_HOME", "")
+	os.Unsetenv("XDG_STATE_HOME")
+	cap := setupTmuxCapture(t)
+	ExportSessionBusEnv("s")
 	var got []string
 	for _, c := range cap.calls {
 		got = append(got, strings.Join(c, " "))
 	}
-	// Blanked, never unset: -u would expose the server's global value.
-	want := []string{"set-environment -t s XDG_STATE_HOME " + xdg, "set-environment -t s " + BusDirBaseEnv + " "}
+	want := []string{
+		"set-environment -t s " + BusDirEnv + " " + filepath.Join(base, "muxcode-bus-s"),
+		"set-environment -t s " + BusDirBaseEnv + " " + base,
+		"set-environment -t s XDG_STATE_HOME " + filepath.Join(home, ".local", "state"),
+	}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("tmux calls = %v, want %v", got, want)
 	}
 }
 
-// TestBusBaseEnvArgs: the first window gets the bus inputs at session creation.
+// TestBusBaseEnvArgs: the first window gets the bus inputs at session creation,
+// XDG_STATE_HOME as the resolved state base when the launcher's is empty.
 func TestBusBaseEnvArgs(t *testing.T) {
-	base := t.TempDir()
+	base, home := t.TempDir(), t.TempDir()
 	saved := busDirOverride
 	ResetBusDirBase()
 	t.Cleanup(func() { busDirOverride = saved })
+	t.Setenv("HOME", home)
 	t.Setenv(BusDirBaseEnv, base)
 	t.Setenv("XDG_STATE_HOME", "")
 	args := busBaseEnvArgs("argsess")
-	want := []string{BusDirEnv + "=" + filepath.Join(base, "muxcode-bus-argsess"), BusDirBaseEnv + "=" + base, "XDG_STATE_HOME="}
+	want := []string{
+		BusDirEnv + "=" + filepath.Join(base, "muxcode-bus-argsess"),
+		BusDirBaseEnv + "=" + base,
+		"XDG_STATE_HOME=" + filepath.Join(home, ".local", "state"),
+	}
 	if strings.Join(args, "|") != strings.Join(want, "|") {
 		t.Errorf("busBaseEnvArgs = %v, want %v", args, want)
 	}

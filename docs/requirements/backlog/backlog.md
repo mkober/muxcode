@@ -395,6 +395,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-233`](../completed/MUX-233-hermetic-test-scripts-run-on-the-users-real-tmux-server.md) | Hermetic Test Scripts Create Their Sessions on the User's Real tmux Server |
 | [`MUX-234`](../completed/MUX-234-three-integration-scripts-fail-under-the-consumer-guard.md) | Three Integration Scripts Fail — Their Fixtures Send to Roles the Consumer Guard Refuses |
 | [`MUX-235`](../completed/MUX-235-kill-server-alias-leaves-test-tmux-servers-running.md) | `tmux kill-server` Is Aliased to a Confirm Prompt, so Test Scripts Leave Their Private tmux Servers Running |
+| [`MUX-237`](../completed/MUX-237-blank-xdg-state-home-makes-neovim-write-state-into-the-working-directory.md) | muxcode Blanks `XDG_STATE_HOME` in Every Pane, so Neovim Writes Its State Into the Working Directory |
 
 ## Ideas without specs
 
