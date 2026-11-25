@@ -60,7 +60,7 @@ admission test (`exceptApplies`) refuses all of them (see [Hooks](../../hooks.md
 The guard was designed as a **delegation nudge**, not a security boundary: it stops an agent that
 reaches for the wrong command by habit. It does not stop one that works around it. The spec should
 keep that scope explicit rather than promise a boundary static matching cannot deliver (compare
-[MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md)).
+[MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)).
 
 ### Why the PR #99 approach failed
 
@@ -183,7 +183,7 @@ The options as weighed (D and B chosen):
 
 ## Related
 
-- [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — a role boundary an agent can ignore
+- [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — a role boundary an agent can ignore
   is not a boundary; the same class, for authoring
 - [Hooks — hook guard](../../hooks.md#hook-guard-edit-guard) — the matcher, the carve-out and the
   Known-gaps note

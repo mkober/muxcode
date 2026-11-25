@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#258](https://github.com/mkober/muxcode/issues/258)
 
-**Split from:** [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — its certification
+**Split from:** [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — its certification
 criterion and the certification half of its Phase 4, moved here on the user's decision of
 2026-11-24 relayed by edit.
 
@@ -14,7 +14,7 @@ the worker's verdict down by hand, four times.
 
 ### Observed (2026-09-08, session `muxcode`)
 
-From [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md)'s account, which marks this row
+From [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)'s account, which marks this row
 **reported** (edit's statement; the bus log of that session was cleared at relaunch):
 
 > `EXIT=0` from the role that authored the change, against review's `EXIT=1`. Nothing consumed the
@@ -30,7 +30,7 @@ Read by plan on 2026-11-24 from `CLAUDE.md`; none of it re-read in code for this
 | Review's `EXIT=` sentinel is mandatory, and the daemon's `verify-spec` fires only on this review's own verdict ([MUX-172](../completed/MUX-172-plan-verify-gate-hardcodes-success.md)) | A failing review no longer sends plan to tick boxes | Says nothing about a second verdict from another role |
 | A graph node's outcome is its history row attributed by role; a contradicting `EXIT=0` holds the node as `graph-outcome-conflict` ([MUX-218](../completed/MUX-218-build-agent-vet-failure-row-rejected-as-build-evidence.md)) | A build or test agent's claim cannot overrule its own failing command | The claim and the command are the same role's; the author-versus-reviewer case is different |
 | In the builtin graphs, `review` is its own node and a `fix` follows a failing one | Within a run, the author's verdict is never asked for in review's place | Outside a run — the chain, or edit reading two replies — nothing orders them |
-| [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md)'s source-write guard, once built | build, test and review cannot author through the guarded roads, so "a verifier certifying its own change" gets rarer | A spawn worker and edit author by design and also report `EXIT=0` |
+| [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)'s source-write guard, once built | build, test and review cannot author through the guarded roads, so "a verifier certifying its own change" gets rarer | A spawn worker and edit author by design and also report `EXIT=0` |
 
 So the gap today is narrower than on 2026-09-08 and is mostly a missing **rule**: no document says
 that the author of a change does not certify it.

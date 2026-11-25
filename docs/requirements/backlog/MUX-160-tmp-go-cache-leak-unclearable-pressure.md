@@ -28,7 +28,7 @@ the motor that invokes it was not.
 
 The 24 suffixed directories are a `mktemp -d` per `go test` invocation, and their window is the test
 agent's source-authoring episode recorded in
-[MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — each run of the suite it should not
+[MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — each run of the suite it should not
 have been running left a fresh 149 MB behind.
 
 ### Mechanism — verified in code
@@ -79,7 +79,7 @@ rare again.
 |---------------|--------------|
 | [`MUX-002`](../completed/MUX-002-disk-pressure-wrong-filesystem.md) | The signal redesign — pressure from free headroom and muxcode's own footprint instead of percent-used. This is its ladder missing the dominant consumer of that footprint; its own test header describes the exact symptom ("ran cleanup every 60 seconds forever, freed 0 B every time") returning by another road |
 | [`MUX-153`](../completed/MUX-153-codex-test-agent-cannot-run-the-suite.md) | The sandbox limitation the caches work around; Phase 2's cache grant is the next step that spec needs anyway |
-| [`MUX-157`](./MUX-157-role-boundary-an-agent-can-ignore.md) | The 24-directory burst is that incident's footprint on disk |
+| [`MUX-157`](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) | The 24-directory burst is that incident's footprint on disk |
 | [`MUX-147`](../completed/MUX-147-process-leak-and-memory-footprint.md) | Same family — a resource the daemon can count but not reap |
 | `dba6f93` | Fixed the sweep's identity guard; this spec fixes the pressure that invokes the sweep |
 

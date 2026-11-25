@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#256](https://github.com/mkober/muxcode/issues/256)
 
-**Split from:** [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — its "a halt that halts"
+**Split from:** [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — its "a halt that halts"
 criterion and Phase 3, moved here on the user's decision of 2026-11-24 relayed by edit.
 
 There is no halt. An agent told to stop is sent an ordinary bus request whose action happens to be
@@ -14,7 +14,7 @@ agent wrote a fourth attempt. Two containment steps, neither of which is a mecha
 
 ### Observed (2026-09-08, session `muxcode`)
 
-From [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md)'s timeline; the lifecycle rows were
+From [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)'s timeline; the lifecycle rows were
 verified there, the message-level account is edit's.
 
 | When | What |

@@ -521,7 +521,7 @@ authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `Sea
 the list at daemon startup (`gate-authority-sealed`; live edits may narrow, never widen) and
 `gateApprovalHolds` re-decides every release on the marker's `approved_by`, with `approvalHasAudit`
 requiring a matching `graph-gate-approved` lifecycle row. It landed unverified and authored out of
-role ([MUX-157](requirements/backlog/MUX-157-role-boundary-an-agent-can-ignore.md)); `77f32b8` then
+role ([MUX-157](requirements/completed/MUX-157-role-boundary-an-agent-can-ignore.md)); `77f32b8` then
 made audit rows survive log rotation and the full suite ran green on it, and PR #73 carried it through
 review — but its inputs are still the agent-writable config files, and a routine `./build.sh`
 restarts the daemon and re-seals from them. That step stays open.

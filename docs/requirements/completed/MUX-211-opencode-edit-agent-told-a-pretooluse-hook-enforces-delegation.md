@@ -194,7 +194,7 @@ Verified once all three had run after the last code edit (16:46:47): `./build.sh
   close-out that excluded this script
 - [MUX-201](../backlog/MUX-201-non-hook-prompt-and-generated-body-drift.md) — the general drift between
   definitions and generated bodies
-- [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) — role boundaries that rest on
+- [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — role boundaries that rest on
   instructions alone
 
 ### Findings at activation (2026-11-17)

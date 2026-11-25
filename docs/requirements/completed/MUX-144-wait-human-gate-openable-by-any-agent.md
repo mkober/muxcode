@@ -338,7 +338,7 @@ made.
       (same actor, detail and second) or it is refused and purged. **Why it is not ticked:** (1) the
       commit has not been built, tested or reviewed — `approvalHasAudit` was authored by the **test
       agent**, in breach of its role, after a halt and a reload, and the suite never ran on it
-      ([MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md)); (2) `approvalHasAudit`
+      ([MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)); (2) `approvalHasAudit`
       moves the forgery target from the marker to the lifecycle JSONL
       (`~/.config/muxcode/logs/<session>.log`), which every agent can append to, and which
       **every append rotates** to the caller's `MUXCODE_LIFECYCLE_LOG_MAX` (default 5000,
@@ -559,7 +559,7 @@ was lost in the 2026-09-08 13:44 relaunch and re-set by the user.
 **Updated 2026-09-08 19:30.** `c4997ed` (19:11) landed the daemon-side half of P1 — `SealGateAuthority`
 at daemon startup, `gateApprovalHolds` re-deciding each release, `approvalHasAudit` requiring a matching
 lifecycle row — **unverified**: not built, tested or reviewed, and authored by the test agent in breach
-of its role ([MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md), filed from it). The
+of its role ([MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md), filed from it). The
 step stays open on four caveats recorded inline (unverified; forgery moved to the agent-writable,
 append-rotated lifecycle log; the seal's inputs are still the agent-writable files and a routine
 `build.sh` restarts the daemon; the forged-hold quartet lost its positive control). Phase 2 still 4/5,

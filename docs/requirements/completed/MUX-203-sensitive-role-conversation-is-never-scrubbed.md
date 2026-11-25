@@ -353,7 +353,7 @@ the floor beneath all of them.
 |------|--------------|
 | [MUX-179](../completed/MUX-179-pii-scrub-role-gate-has-no-call-site-on-the-bus-road.md) | Parent — the history half, done; criterion 2's conversation half deferred here |
 | [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) | Where the original leak and the narrow `ps eww -p … \| grep` idiom are recorded |
-| [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) | The same shape one road up — a rule with no enforcement |
+| [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) | The same shape one road up — a rule with no enforcement |
 
 ## Time Tracking
 

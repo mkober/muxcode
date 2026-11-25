@@ -293,15 +293,21 @@ func TestTranslateToolProfile_EditDenyRules(t *testing.T) {
 	}
 }
 
-func TestTranslateToolProfile_NoDenyForBuild(t *testing.T) {
+// Build's only denies are the never-author write patterns (MUX-157) — none of
+// edit's delegation denies, which would refuse build its own work.
+func TestTranslateToolProfile_BuildDeniesOnlySourceWrites(t *testing.T) {
 	SetConfig(DefaultConfig())
 	defer SetConfig(nil)
 
 	result := translateToolProfile("build")
-
-	// Build role should not have deny entries (no DenyTools configured)
-	if strings.Contains(result, ": deny") {
-		t.Error("build role should not have deny entries")
+	want := map[string]bool{}
+	for _, p := range sourceWriteDenyTools {
+		want[fmt.Sprintf("%q: deny", p)] = true
+	}
+	for _, line := range strings.Split(result, "\n") {
+		if l := strings.TrimSpace(line); strings.HasSuffix(l, ": deny") && l != `"*": deny` && !want[l] {
+			t.Errorf("build carries a deny beyond the source-write patterns: %s", l)
+		}
 	}
 }
 

@@ -214,7 +214,7 @@ scrubber should have caught it and found the gate unwired. Recorded that way bec
 control, not a fix.
 
 **Related:** [MUX-156](./MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (where the leak is
-recorded); [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) (a rule with no enforcement — the
+recorded); [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) (a rule with no enforcement — the
 same shape, one road up).
 
 ## Decisions
