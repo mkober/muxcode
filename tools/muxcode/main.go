@@ -28,6 +28,7 @@ var knownSubcommands = map[string]bool{
 	"resize": true, "deliver": true, "delivery-ack": true, "upgrade-daemons": true, "upgrade": true, "upgrade-ui": true,
 	"branch-time": true, "clear": true, "graph": true, "pane": true,
 	"version": true, "approve": true, "resume": true, "bus-dir": true,
+	"sync-main": true,
 }
 
 // route is where argv goes. The order routeFor checks them in is pinned by
@@ -230,6 +231,7 @@ Commands:
   graph         Graph-agent orchestrator (run, validate, list, status, cancel, retry, approve)
   version       Print the binary's version (--json, --at-least vX.Y.Z); also --version / -v
   bus-dir       Print a session's bus directory (default $BUS_SESSION) for scripts
+  sync-main     Rebase the current branch onto a fetched origin/main (aborts on conflict, keeps any conflicting autostash); on main, fast-forward carrying uncommitted work
 `
 
 func main() {
@@ -410,6 +412,8 @@ func main() {
 		cmd.Version(args)
 	case "bus-dir":
 		cmd.BusDir(args)
+	case "sync-main":
+		cmd.SyncMain(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", subcmd)
 		fmt.Fprint(os.Stderr, usage)

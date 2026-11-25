@@ -38,12 +38,22 @@ func fixLoopFixture(t *testing.T, phases int) *Graph {
 		},
 		Edges: []Edge{{From: "review", To: "loop-check"}}}
 	for _, e := range tmpl.Edges {
+		if e.To == "refresh" {
+			e.To = "implement" // the fixture has no freshness check; the loop re-enters implement
+		}
 		if g.node(e.From) == nil || g.node(e.To) == nil {
 			continue
 		}
 		if e.MaxIterationsFromSpec {
 			e.MaxIterations, e.MaxIterationsFromSpec = phases, false
 		}
+		var resets []string
+		for _, r := range e.ResetsIterations {
+			if ends := strings.SplitN(r, "->", 2); len(ends) == 2 && g.node(ends[0]) != nil && g.node(strings.SplitN(ends[1], ":", 2)[0]) != nil {
+				resets = append(resets, r)
+			}
+		}
+		e.ResetsIterations = resets
 		g.Edges = append(g.Edges, e)
 	}
 	return g
@@ -242,6 +252,14 @@ func TestValidateResetsIterations(t *testing.T) {
 	ok.Edges[2].ResetsIterations = []string{"b->a"}
 	if v := ok.Validate(); !v.OK() {
 		t.Errorf("a capped edge resetting another's budget must validate: %v", v.Errors)
+	}
+
+	chain := base()
+	chain.Nodes = append(chain.Nodes, Node{ID: "c", Type: NodeSend, Role: "review", Action: "review", Message: "go"})
+	chain.Edges = append(chain.Edges, Edge{From: "b", To: "c"}, Edge{From: "c", To: "c", MaxIterations: 2, ResetsIterations: []string{"b->b"}})
+	chain.Edges[2].ResetsIterations = []string{"b->a"}
+	if v := chain.Validate(); !v.OK() {
+		t.Errorf("negative control: an acyclic chain (c->c resets b->b, which resets b->a) is bounded and must validate: %v", v.Errors)
 	}
 	tmpl, err := ParseGraph([]byte(builtinGraphJSON["50-spec-to-pr"]))
 	if err != nil {

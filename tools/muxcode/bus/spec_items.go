@@ -180,13 +180,18 @@ func SpecCurrentPhase(path string) (SpecPhase, error) {
 	if err != nil {
 		return SpecPhase{}, err
 	}
+	return currentSpecPhase(phases), nil
+}
+
+// currentSpecPhase is SpecCurrentPhase over phases already parsed.
+func currentSpecPhase(phases []SpecPhase) SpecPhase {
 	best := SpecPhase{}
 	for _, p := range phases {
 		if len(p.Items) > 0 && (best.Number == 0 || p.Number < best.Number) {
 			best = p
 		}
 	}
-	return best, nil
+	return best
 }
 
 // UnscopedPhaseGuardWarning reports why a run's phase-complete guard will

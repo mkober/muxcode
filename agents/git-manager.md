@@ -24,6 +24,18 @@ Bus requests ARE the user's approval. Do NOT say things like "Should I proceed?"
 - Clean up merged branches: `git branch --merged main | grep -v main | xargs git branch -d`
 - List and compare branches
 
+### Syncing a branch onto main (rebase action)
+
+A `rebase` request — a graph's `sync` or `pr-sync` node (`50-spec-to-pr`, `55-defect-backlog-loop`, `60-integration-suite`, `80-pr-review-fix`, `90-ci-fix`), sent after a person approved its sync gate because the checkout fell behind `origin/main` (MUX-166) — is one command: run `muxcode sync-main` on its own in the repository and reply with its output verbatim, which ends with the `EXIT=<n>` the node routes on. It:
+
+1. refuses a tree that already has unmerged paths or a rebase under way, changing nothing
+2. fetches `origin main`; **on `main` itself** (`55-defect-backlog-loop`, which works uncommitted on main) it never rebases: it fast-forwards with `git merge --ff-only origin/main`, carrying the uncommitted work, and refuses changing nothing — `EXIT=1` — when main holds commits `origin/main` lacks or an uncommitted or untracked file is one the upstream changes touch, listing those files. On any other branch it runs `git rebase --autostash origin/main`, and:
+3. on a rebase conflict, runs `git rebase --abort` so no rebase is left in progress, and lists the conflicting files — `EXIT=1`
+4. when the rebase replays cleanly but restoring the uncommitted changes conflicts — no rebase is left to abort — lists the unmerged files and names the stash that still holds the changes — `EXIT=1`
+5. otherwise reports the new ahead/behind against `origin/main` — `EXIT=0`
+
+Do not hand-run the sequence instead. Never resolve conflicts, drop a stash, push, force-push or commit as part of a sync: a conflict is a re-home the person decides, and the run parks at `sync-conflict` until they do.
+
 ### Commit Management
 
 - Stage specific files (prefer explicit file names over `git add .`)

@@ -97,7 +97,9 @@ var knownNodeGuards = map[string]bool{
 // loop: 50-spec-to-pr's phase loop-back resets fix->build, so each phase
 // gets the full fix budget rather than sharing one across the run (MUX-193).
 // Validation keeps every reset bounded: the resetting edge must itself be
-// capped, and may name neither itself nor an edge that resets others.
+// capped, and may name neither itself nor an edge whose own resets lead back
+// to it. A chain is allowed: 55-defect-backlog-loop's merge->select resets
+// phases-left->refresh, which resets the sync loops for each phase.
 //
 // ClearsOutputs names nodes whose recorded report is erased when this edge
 // fires. A node's output survives until the node runs again, so a loop that
@@ -341,6 +343,7 @@ func (g *Graph) Validate() *GraphValidation {
 	g.validateJoins(v)
 	g.validateGates(byID, v)
 	g.validateGateText(byID, v)
+	g.validateFreshness(v)
 	return v
 }
 
@@ -500,11 +503,37 @@ func (g *Graph) validateResets(e Edge, v *GraphValidation) {
 			switch {
 			case EdgeFireKey(t) == EdgeFireKey(e):
 				v.errf("edge %s->%s resets its own iterations", e.From, e.To)
-			case len(t.ResetsIterations) > 0:
-				v.errf("edge %s->%s resets %q, which itself resets iterations — chained resets are unbounded", e.From, e.To, ref)
+			case g.resetsReach(t, EdgeFireKey(e)):
+				v.errf("edge %s->%s resets %q, whose own resets lead back to it — chained resets around a cycle are unbounded", e.From, e.To, ref)
 			}
 		}
 	}
+}
+
+// resetsReach reports whether following resets_iterations from edge from
+// reaches the edge keyed target. A reset chain of capped edges is bounded —
+// each count is capped by those above it — so only a cycle is refused.
+func (g *Graph) resetsReach(from Edge, target string) bool {
+	seen := map[string]bool{}
+	queue := []Edge{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		key := EdgeFireKey(cur)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, ref := range cur.ResetsIterations {
+			for _, t := range g.resetTargets(ref) {
+				if EdgeFireKey(t) == target {
+					return true
+				}
+				queue = append(queue, t)
+			}
+		}
+	}
+	return false
 }
 
 // edgeOutcome resolves the effective outcome of an edge (empty = success).

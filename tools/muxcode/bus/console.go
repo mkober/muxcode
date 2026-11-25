@@ -1266,16 +1266,9 @@ func renderGitStatus() string {
 	if branch != "" {
 		b.WriteString(fmt.Sprintf("%s%sbranch%s  %s\n", Pad, ColorCyan, ColorReset, branch))
 
-		upstream := gitCmd("rev-parse", "--abbrev-ref", "@{upstream}")
-		if upstream != "" {
-			ahead := gitCmd("rev-list", "--count", "@{upstream}..HEAD")
-			behind := gitCmd("rev-list", "--count", "HEAD..@{upstream}")
-			aheadN, _ := strconv.Atoi(ahead)
-			behindN, _ := strconv.Atoi(behind)
-			if aheadN > 0 || behindN > 0 {
-				b.WriteString(fmt.Sprintf("%s%sremote%s  ↑%d ↓%d (%s)\n",
-					Pad, ColorCyan, ColorReset, aheadN, behindN, upstream))
-			}
+		if aheadN, behindN, _, err := BranchDivergence(""); err == nil && (aheadN > 0 || behindN > 0) {
+			b.WriteString(fmt.Sprintf("%s%sremote%s  ↑%d ↓%d (%s)\n",
+				Pad, ColorCyan, ColorReset, aheadN, behindN, FreshnessBase))
 		}
 		b.WriteString("\n")
 	}

@@ -1277,7 +1277,7 @@ var editGuardRules = []guardRule{
 		reason:   `BLOCKED: gh commands are prohibited in the edit window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the operation>" --wait`,
 	},
 	{
-		prefixes: []string{"git "},
+		prefixes: []string{"git ", "muxcode sync-main"},
 		reason:   `BLOCKED: All git commands are prohibited in the edit window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the git operation>" --wait`,
 	},
 	{
@@ -1342,7 +1342,7 @@ var planGuardRules = []guardRule{
 			"git branch", "git merge", "git stash", "git tag",
 			"git reset", "git clean", "git revert", "git cherry-pick",
 			"git am", "git apply", "git mv", "git rm",
-			"git add",
+			"git add", "muxcode sync-main",
 		},
 		reason: `BLOCKED: Git mutations are prohibited in the plan window. Delegate to the commit agent. Run: muxcode send commit commit "<describe the git operation>" --force --wait`,
 	},

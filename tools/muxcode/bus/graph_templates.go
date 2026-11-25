@@ -37,6 +37,10 @@ var builtinGraphJSON = map[string]string{
     {"id": "branch-check", "type": "condition", "conditions": {"spec_branch": true}},
     {"id": "branch-gate", "type": "wait_human", "message": "The current branch is not the active spec's branch (${spec}) — phase commits would land on it. Approve creating and switching to the spec's <id>-<slug> branch, carrying the working tree, or cancel the run"},
     {"id": "create-branch", "type": "send", "role": "commit", "action": "checkout", "message": "Create and switch to the branch for the active spec ${spec}: name it after the spec's filename without .md (its <id>-<slug>), branched from the current HEAD and carrying every uncommitted change (git switch -c <name>); if that branch already exists, switch to it instead. Do not commit or push. Report the branch name"},
+    {"id": "refresh", "type": "condition", "conditions": {"branch_behind": {}, "upstream_touches_spec_files": false}},
+    {"id": "sync-gate", "type": "wait_human", "message": "The branch is stale against origin/main — ${output:refresh}. Approve syncing: the commit agent fetches origin and rebases onto origin/main (a conflict aborts the rebase and parks the run with the conflict list), then freshness is measured again. Or cancel the run"},
+    {"id": "sync", "type": "send", "role": "commit", "action": "rebase", "message": "Sync this branch with main: run muxcode sync-main as one standalone command in the repository and reply with its output verbatim — it fetches origin, rebases with --autostash onto origin/main, aborts a conflicting rebase, keeps uncommitted changes whose restore conflicted in the stash it names, and ends with the EXIT=<n> this node routes on. Do not resolve conflicts, drop a stash, commit or push"},
+    {"id": "sync-conflict", "type": "wait_human", "message": "The sync onto origin/main did not complete — ${output:sync}. Resolve it by hand: fix the conflicting files, leave no rebase in progress and no unmerged paths, and restore and drop any stash the report names. Then approve to measure freshness again, or cancel the run"},
     {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement the active requirements spec's ${current_phase} (run: ${spec}). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
@@ -58,10 +62,16 @@ var builtinGraphJSON = map[string]string{
     {"id": "push-pr", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the spec close-out (the move to docs/requirements/completed/ and the backlog.md update) together with any uncommitted work the close-out's acceptance worker left, then push the branch and create a PR titled exactly \"${spec_title}\" covering every phase of the spec. If the closed-out spec has a **Tracking:** line naming a GitHub issue, put Closes #<that issue number> on its own line in the PR body so the issue links to the PR and closes on merge"}
   ],
   "edges": [
-    {"from": "branch-check", "to": "implement"},
+    {"from": "branch-check", "to": "refresh"},
     {"from": "branch-check", "to": "branch-gate", "outcome": "failure"},
     {"from": "branch-gate", "to": "create-branch"},
-    {"from": "create-branch", "to": "implement"},
+    {"from": "create-branch", "to": "refresh"},
+    {"from": "refresh", "to": "implement"},
+    {"from": "refresh", "to": "sync-gate", "outcome": "failure"},
+    {"from": "sync-gate", "to": "sync"},
+    {"from": "sync", "to": "refresh", "max_iterations": 3},
+    {"from": "sync", "to": "sync-conflict", "outcome": "failure"},
+    {"from": "sync-conflict", "to": "refresh", "max_iterations": 3},
     {"from": "implement", "to": "build"},
     {"from": "build", "to": "test"},
     {"from": "build", "to": "fix", "outcome": "failure"},
@@ -76,8 +86,8 @@ var builtinGraphJSON = map[string]string{
     {"from": "phase-gate", "to": "commit"},
     {"from": "commit", "to": "loop-check"},
     {"from": "commit", "to": "stuck-gate", "outcome": "failure"},
-    {"from": "stuck-gate", "to": "implement", "max_iterations_from_spec": true, "resets_iterations": ["fix->build"]},
-    {"from": "loop-check", "to": "implement", "max_iterations_from_spec": true, "resets_iterations": ["fix->build"]},
+    {"from": "stuck-gate", "to": "refresh", "max_iterations_from_spec": true, "resets_iterations": ["fix->build", "sync->refresh", "sync-conflict->refresh"]},
+    {"from": "loop-check", "to": "refresh", "max_iterations_from_spec": true, "resets_iterations": ["fix->build", "sync->refresh", "sync-conflict->refresh"]},
     {"from": "loop-check", "to": "close-spec", "outcome": "failure"},
     {"from": "close-spec", "to": "final-gate"},
     {"from": "close-spec", "to": "criteria", "outcome": "failure", "max_iterations": 2},
@@ -106,6 +116,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "to-main", "type": "send", "role": "commit", "action": "checkout", "message": "Switch to main (git switch main), then pull it (git pull --rebase origin main), as separate commands. If uncommitted changes block the switch, change nothing, report them and exit non-zero. Report the branch and HEAD sha"},
     {"id": "select", "type": "send", "role": "plan", "action": "defect-select", "message": "Choose the next defect for this loop and make it the active spec. Resume first: if a spec from the 'Defects — prioritized' table of docs/requirements/backlog/backlog.md is in docs/requirements/drafts/ with status In Progress, set it active (muxcode spec set <path>) and pick nothing else. Otherwise take the best-ranked row (#1 first) whose spec file is in docs/requirements/backlog/, is not listed under Parked, and whose 'Depends on' entries are all done (a link into ../completed/, or —; ⇄ marks a peer, not a blocker). Move that spec to docs/requirements/drafts/ (a plain file move, not git mv — the ship step stages it), set its Status to In Progress, list it in backlog.md's In progress table, and set it active with muxcode spec set <new path>. Commit nothing. Then reply with the literal token DEFECT-ACTIVATED followed by its id, title and path. If no row qualifies, clear the active spec (muxcode spec clear) and reply with the literal token NO-DEFECTS-REMAINING, naming why each remaining row was skipped. A completed selection exits zero either way"},
     {"id": "activated", "type": "condition", "conditions": {"output_contains": "DEFECT-ACTIVATED"}},
+    ` + freshnessCheckNodes("", "main") + `,
     {"id": "finish", "type": "send", "role": "plan", "action": "defect-loop-done", "message": "The defect loop's selection started no defect. Its report: ${output:select}. If that report carries NO-DEFECTS-REMAINING the backlog is worked through: confirm it and exit zero, which completes the run. If it does not, the selection broke rather than ran dry: say what it reported and exit non-zero, so the run fails instead of reading as finished. Change nothing"},
     {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement ${current_phase} of the active requirements spec — the defect this loop is working (muxcode spec get names it). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Work on the current branch and commit nothing: the graph branches, commits and ships once every phase is done. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
@@ -122,11 +133,12 @@ var builtinGraphJSON = map[string]string{
     ` + ciWatchNodeJSON + `,
     {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
     ` + prReviewReadNodesJSON + `,
+    ` + freshnessCheckNodes("pr-", "This defect's PR branch") + `,
     {"id": "pr-fix", "type": "spawn", "role": "edit", "message": "Fix this defect's PR. The latest CI watch reported: ${output:ci-watch}. If that report lacks CI-GREEN, fix the failing checks it names. If it carries CI-GREEN, CI passed and you are here for review comments — address each one the latest review read listed: ${output:read-comments} — fixing it in the code or declining it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it, carrying earlier iterations forward, since the reply step reads only your latest report"},
     {"id": "pr-build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "pr-test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
     {"id": "pr-review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's failing CI checks or review comments"},
-    {"id": "pr-push", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR fixes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
+    {"id": "pr-push", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR fixes, push them to the PR branch — with --force-with-lease if a sync rebased it — and report the commit sha (nothing changed = reply nothing to do)"},
     {"id": "pr-reply", "type": "send", "role": "commit", "action": "comment", "message": "Reply to each PR review comment the fix addressed: cite the commit sha for every fix that was pushed, or give the reason for every comment declined. If the fix addressed only failing CI checks, reply nothing to do. The push node reported: ${output:pr-push}. The fix worker reported, per comment: ${output:pr-fix}"},
     {"id": "merge", "type": "send", "role": "commit", "action": "commit", "message": "Merge this branch's PR with the repo's usual merge method (gh pr merge), delete the PR branch, then switch to main and pull it. Report the merge commit sha"}
   ],
@@ -137,8 +149,9 @@ var builtinGraphJSON = map[string]string{
     {"from": "main-gate", "to": "to-main"},
     {"from": "to-main", "to": "select"},
     {"from": "select", "to": "activated"},
-    {"from": "activated", "to": "implement"},
+    {"from": "activated", "to": "refresh"},
     {"from": "activated", "to": "finish", "outcome": "failure"},
+    ` + freshnessCheckEdges("", "implement") + `,
     {"from": "implement", "to": "build"},
     {"from": "build", "to": "test"},
     {"from": "build", "to": "fix", "outcome": "failure"},
@@ -150,7 +163,7 @@ var builtinGraphJSON = map[string]string{
     {"from": "update-spec", "to": "phases-left"},
     {"from": "update-spec", "to": "phases-left", "outcome": "failure"},
     {"from": "update-spec", "to": "phases-left", "outcome": "unknown"},
-    {"from": "phases-left", "to": "implement", "max_iterations_from_active_spec": true},
+    {"from": "phases-left", "to": "refresh", "max_iterations_from_active_spec": true, "resets_iterations": ["sync->refresh", "sync-conflict->refresh"]},
     {"from": "phases-left", "to": "close-spec", "outcome": "failure"},
     {"from": "close-spec", "to": "ship-gate"},
     {"from": "close-spec", "to": "criteria", "outcome": "failure", "max_iterations": 2},
@@ -161,10 +174,11 @@ var builtinGraphJSON = map[string]string{
     {"from": "ship-stuck-gate", "to": "ship", "max_iterations": 2},
     {"from": "ci-watch", "to": "ci-green"},
     {"from": "ci-green", "to": "read-comments"},
-    {"from": "ci-green", "to": "pr-fix", "outcome": "failure"},
+    {"from": "ci-green", "to": "pr-refresh", "outcome": "failure"},
     {"from": "read-comments", "to": "no-comments"},
     {"from": "no-comments", "to": "merge"},
-    {"from": "no-comments", "to": "pr-fix", "outcome": "failure"},
+    {"from": "no-comments", "to": "pr-refresh", "outcome": "failure"},
+    ` + freshnessCheckEdges("pr-", "pr-fix") + `,
     {"from": "pr-fix", "to": "pr-build", "max_iterations": 4},
     {"from": "pr-build", "to": "pr-test"},
     {"from": "pr-build", "to": "pr-fix", "outcome": "failure"},
@@ -174,7 +188,7 @@ var builtinGraphJSON = map[string]string{
     {"from": "pr-review", "to": "pr-fix", "outcome": "failure"},
     {"from": "pr-push", "to": "pr-reply"},
     {"from": "pr-reply", "to": "ci-watch", "max_iterations": 3},
-    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->implement", "close-spec->criteria", "ship-stuck-gate->ship", "pr-fix->pr-build", "pr-reply->ci-watch"], "clears_outputs": ["criteria"]}
+    {"from": "merge", "to": "select", "max_iterations_from_backlog": true, "resets_iterations": ["fix->build", "phases-left->refresh", "sync->refresh", "sync-conflict->refresh", "close-spec->criteria", "ship-stuck-gate->ship", "pr-sync->pr-refresh", "pr-sync-conflict->pr-refresh", "pr-fix->pr-build", "pr-reply->ci-watch"], "clears_outputs": ["criteria"]}
   ]
 }`,
 
@@ -230,11 +244,12 @@ var builtinGraphJSON = map[string]string{
     {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
     ` + prReviewReadNodesJSON + `,
     {"id": "fix-gate", "type": "wait_human", "message": "The PR has review comments to address — approve fixing them, committing and pushing the fixes to the PR branch, and replying to each comment"},
+    ` + freshnessCheckNodes("", "This PR's branch") + `,
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Address the review comments on this branch's PR, listed by the PR read: ${output:read-comments}. For each comment either fix it in the code or decline it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it — carry earlier iterations forward, since the reply step reads only your latest report"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's review comments"},
-    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR review-feedback changes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"},
+    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the PR review-feedback changes, push them to the PR branch — with --force-with-lease if a sync rebased it — and report the commit sha (nothing changed = reply nothing to do)"},
     {"id": "reply", "type": "send", "role": "commit", "action": "comment", "message": "Reply to each PR review comment: cite the commit sha for every fix that was pushed, or give the reason for every comment declined. The push node reported: ${output:push-fixes}. The fix worker reported, per comment: ${output:fix}"}
   ],
   "edges": [
@@ -242,7 +257,8 @@ var builtinGraphJSON = map[string]string{
     {"from": "pr-exists", "to": "read-comments"},
     {"from": "read-comments", "to": "no-comments"},
     {"from": "no-comments", "to": "fix-gate", "outcome": "failure"},
-    {"from": "fix-gate", "to": "fix"},
+    {"from": "fix-gate", "to": "refresh"},
+    ` + freshnessCheckEdges("", "fix") + `,
     {"from": "fix", "to": "build", "max_iterations": 3},
     {"from": "build", "to": "test"},
     {"from": "build", "to": "fix", "outcome": "failure"},
@@ -331,12 +347,14 @@ var builtinGraphJSON = map[string]string{
   "nodes": [
     {"id": "suite", "type": "send", "role": "run", "action": "run", "timeout_secs": 5400, "message": "Run exactly this one command and report its summary: bash scripts/test-all.sh — it runs every scripts/test-*.sh one at a time and exits non-zero if any fail. If the repo has no scripts/test-all.sh, run each scripts/test-*.sh one at a time as separate commands instead. Report each script's pass and fail counts. If any script failed, your reply MUST contain the literal token SUITE-FAILED and name every failing check; if every script passed it must not"},
     {"id": "suite-failed", "type": "condition", "conditions": {"output_contains": "SUITE-FAILED"}},
+    ` + freshnessCheckNodes("", "The current branch") + `,
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix what the integration suite reported failing. THE SUITE'S REPORT: ${output:suite}. If the rebuild after your last change failed, fix that too — ${failure_report}. Fix the code, not the test, unless the test itself is wrong — say which. Do not run the suite yourself: the graph rebuilds and re-runs it after you report"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"}
   ],
   "edges": [
     {"from": "suite", "to": "suite-failed", "outcome": "failure"},
-    {"from": "suite-failed", "to": "fix"},
+    {"from": "suite-failed", "to": "refresh"},
+    ` + freshnessCheckEdges("", "fix") + `,
     {"from": "fix", "to": "build", "max_iterations": 3},
     {"from": "build", "to": "suite"},
     {"from": "build", "to": "fix", "outcome": "failure"}
@@ -353,18 +371,20 @@ var builtinGraphJSON = map[string]string{
     {"id": "read-ci", "type": "send", "role": "commit", "action": "pr-read", "message": "Read the CI checks on this branch's PR WITHOUT changing anything. For each failing check give its name, the failing job and step, and the log excerpt that shows why (gh run view --log-failed). If every check passed your reply MUST contain the literal token CI-GREEN; if any failed it must not. A completed read exits zero either way. If checks are still running, reply CI-PENDING and exit non-zero — the run stops, to be re-run once CI finishes"},
     {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
     {"id": "fix-gate", "type": "wait_human", "message": "The PR's CI is failing — approve fixing it, then committing and pushing the fixes to the PR branch"},
+    ` + freshnessCheckNodes("", "This PR's branch") + `,
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the failing CI checks on this branch's PR, listed by the CI read: ${output:read-ci}. If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit or push: the graph does that after you report. Report what you changed for each failing check"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"},
     {"id": "test", "type": "send", "role": "test", "action": "test", "message": "Run the repository's full test suite as one standalone command, nothing chained: ./test.sh if it exists, else make test if the Makefile defines a test target, else the suite command the repo itself uses (pnpm test, pytest, go test ./...). Report results"},
     {"id": "review", "type": "send", "role": "review", "action": "review", "message": "Review the latest changes on this branch — the fixes made for the PR's failing CI checks"},
-    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the CI fixes, push them to the PR branch, and report the commit sha (nothing changed = reply nothing to do)"}
+    {"id": "push-fixes", "type": "send", "role": "commit", "action": "commit", "message": "Stage and commit the CI fixes, push them to the PR branch — with --force-with-lease if a sync rebased it — and report the commit sha (nothing changed = reply nothing to do)"}
   ],
   "edges": [
     {"from": "find-pr", "to": "pr-exists"},
     {"from": "pr-exists", "to": "read-ci"},
     {"from": "read-ci", "to": "ci-green"},
     {"from": "ci-green", "to": "fix-gate", "outcome": "failure"},
-    {"from": "fix-gate", "to": "fix"},
+    {"from": "fix-gate", "to": "refresh"},
+    ` + freshnessCheckEdges("", "fix") + `,
     {"from": "fix", "to": "build", "max_iterations": 3},
     {"from": "build", "to": "test"},
     {"from": "build", "to": "fix", "outcome": "failure"},
@@ -434,6 +454,30 @@ func prReviewReadNodes(readID, clearID string) string {
 // prReviewReadNodesJSON is the first review read of a template: read-comments
 // and its no-comments condition.
 var prReviewReadNodesJSON = prReviewReadNodes("read-comments", "no-comments")
+
+// freshnessCheckNodes returns MUX-166's freshness check for the templates
+// that widened it beyond 50-spec-to-pr (55, 60, 80, 90): a <p>refresh
+// condition measuring the checkout against origin/main, a <p>sync-gate a
+// stale result parks at, the commit agent's <p>sync and a <p>sync-conflict
+// hold for a sync that did not complete. subject names what is measured.
+// The caller wires refresh -> work, refresh -failure-> sync-gate -> sync,
+// sync -> refresh and sync -failure-> sync-conflict -> refresh (both capped).
+func freshnessCheckNodes(p, subject string) string {
+	return `{"id": "` + p + `refresh", "type": "condition", "conditions": {"branch_behind": {}, "upstream_touches_spec_files": false}},
+    {"id": "` + p + `sync-gate", "type": "wait_human", "message": "` + subject + ` is stale against origin/main — ${output:` + p + `refresh}. Approve syncing: the commit agent runs muxcode sync-main, then freshness is measured again. On main it fast-forwards to origin/main carrying the uncommitted work — or, if that work touches a file the upstream changed or main holds unpushed commits, changes nothing and parks the run listing the files. On a branch it rebases onto origin/main with --autostash (a pushed branch then needs a force-with-lease push): a replay that conflicts is aborted and changes nothing; but if the replay succeeds and restoring the uncommitted changes conflicts, the branch stays rebased, the tree is left with unmerged files and the changes are kept in a named stash, and the run parks for you to resolve them. Or cancel the run"},
+    {"id": "` + p + `sync", "type": "send", "role": "commit", "action": "rebase", "message": "Sync ` + subject + ` with origin/main: run muxcode sync-main as one standalone command in the repository and reply with its output verbatim — on main it fast-forwards to origin/main carrying the uncommitted work, refusing and changing nothing if that work touches a file the upstream changed; on a branch it rebases with --autostash onto origin/main and aborts a conflicting rebase. It ends with the EXIT=<n> this node routes on. Do not resolve conflicts, drop a stash, commit or push"},
+    {"id": "` + p + `sync-conflict", "type": "wait_human", "message": "The sync onto origin/main did not complete — ${output:` + p + `sync}. Resolve it by hand: fix or set aside the conflicting files, leave no rebase in progress and no unmerged paths, and restore and drop any stash the report names. Then approve to measure freshness again, or cancel the run"}`
+}
+
+// freshnessCheckEdges wires freshnessCheckNodes(p, …) to the work it guards.
+func freshnessCheckEdges(p, work string) string {
+	return `{"from": "` + p + `refresh", "to": "` + work + `"},
+    {"from": "` + p + `refresh", "to": "` + p + `sync-gate", "outcome": "failure"},
+    {"from": "` + p + `sync-gate", "to": "` + p + `sync"},
+    {"from": "` + p + `sync", "to": "` + p + `refresh", "max_iterations": 3},
+    {"from": "` + p + `sync", "to": "` + p + `sync-conflict", "outcome": "failure"},
+    {"from": "` + p + `sync-conflict", "to": "` + p + `refresh", "max_iterations": 3}`
+}
 
 // ciWatchNodeJSON is the one definition of waiting on a PR's CI, shared by
 // every template that merges (110-pr-merge, 55-defect-backlog-loop): green

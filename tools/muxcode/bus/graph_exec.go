@@ -1361,7 +1361,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 			outcome = OutcomeSuccess
 		}
 		// See finishCondition: a branch selection finishes done.
-		finishCondition(session, run, n, outcome)
+		finishCondition(session, run, n, outcome, ctx.freshnessOutput())
 
 	case NodeJoin:
 		// The barrier was satisfied at arming — a join completes immediately.
@@ -1662,10 +1662,16 @@ func unevaluatableCondition(results []ConditionResult) string {
 // always lands on GraphNodeDone — a condition is a branch selector, and
 // choosing the false branch is not a failure — while still recording the
 // outcome that edge matching keys on. Genuine evaluation errors go
-// through finishNode instead and keep the failed state (MUX-133).
-func finishCondition(session string, run *GraphRun, n *Node, outcome string) {
+// through finishNode instead and keep the failed state (MUX-133). output is
+// recorded only when non-empty — a freshness check's measurement, which
+// ${output:<id>} carries into its sync gate's text; other conditions record
+// none, so a downstream output_contains never matches a predicate's detail.
+func finishCondition(session string, run *GraphRun, n *Node, outcome, output string) {
 	_ = TransitionGraphNode(session, run.ID, n.ID, GraphNodeDone, func(s *GraphNodeStatus) {
 		s.Outcome = outcome
+		if output != "" {
+			s.Output = output
+		}
 	})
 	LogLifecycle(session, "info", "daemon", "graph-node-done",
 		fmt.Sprintf("%s: %s -> %s", run.ID, n.ID, outcome))
