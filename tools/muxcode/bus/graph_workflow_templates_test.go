@@ -89,7 +89,7 @@ func TestDefectToSpecTemplate(t *testing.T) {
 }
 
 // 50-spec-to-pr starts by checking the branch: on the spec's branch it goes
-// straight to implement; off it, a human approves creating the branch before
+// to the freshness check; off it, a human approves creating the branch before
 // anything is implemented or committed, so phase commits never land on main.
 func TestSpecToPRStartsOnSpecBranch(t *testing.T) {
 	g := mustTemplate(t, "50-spec-to-pr")
@@ -105,14 +105,171 @@ func TestSpecToPRStartsOnSpecBranch(t *testing.T) {
 	for _, from := range []string{"branch-check", "create-branch"} {
 		found := false
 		for _, e := range g.Edges {
-			if e.From == from && e.To == "implement" && edgeOutcome(e) == OutcomeSuccess {
+			if e.From == from && e.To == "refresh" && edgeOutcome(e) == OutcomeSuccess {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("%s must reach implement on success", from)
+			t.Errorf("%s must reach the refresh freshness check on success", from)
 		}
 	}
+}
+
+// MUX-166: implement is entered only through refresh — fresh goes on, stale
+// parks at sync-gate, whose approval releases a gated commit/rebase that loops
+// back to refresh; a failed sync parks at sync-conflict.
+func TestSpecToPRImplementsOnlyAfterFreshnessCheck(t *testing.T) {
+	g := mustTemplate(t, "50-spec-to-pr")
+	if r := g.node("refresh"); r == nil || !isFreshnessCheck(r) {
+		t.Fatalf("refresh must be a freshness condition, got %+v", r)
+	}
+	for _, e := range g.Edges {
+		if e.To == "implement" && e.From != "refresh" {
+			t.Errorf("implement is entered from %q — only refresh may enter it", e.From)
+		}
+	}
+	onlyReachedFrom(t, g, "sync-gate", "refresh", OutcomeFailure)
+	onlyReachedFrom(t, g, "sync", "sync-gate", OutcomeSuccess)
+	onlyReachedFrom(t, g, "sync-conflict", "sync", OutcomeFailure)
+	if s := g.node("sync"); s.Role != "commit" || s.Action != "rebase" || !NodeRequiresGate(s) ||
+		!strings.Contains(s.Message, "muxcode sync-main") {
+		t.Errorf("sync = %s/%s (gated %v), want a gated commit/rebase running muxcode sync-main", s.Role, s.Action, NodeRequiresGate(s))
+	}
+	if !strings.Contains(g.node("sync-gate").Message, "${output:refresh}") {
+		t.Error("sync-gate must carry the measurement through ${output:refresh}")
+	}
+	for _, from := range []string{"sync", "sync-conflict"} {
+		if !templateEdge(g, from, "refresh") {
+			t.Errorf("%s must loop back to refresh", from)
+		}
+	}
+}
+
+// MUX-166 widened: 55's implement and pr-fix, and the fix of 60, 80 and 90,
+// are each entered only through their own freshness check, wired as 50's:
+// stale parks at a gate carrying the numbers, whose gated sync runs
+// muxcode sync-main and loops back, a failed sync parking at its conflict
+// hold. A PR branch a sync rebased is pushed with --force-with-lease.
+func TestWidenedTemplatesWorkOnlyAfterFreshnessCheck(t *testing.T) {
+	for _, c := range []struct{ name, prefix, work, push string }{
+		{"55-defect-backlog-loop", "", "implement", ""},
+		{"55-defect-backlog-loop", "pr-", "pr-fix", "pr-push"},
+		{"60-integration-suite", "", "fix", ""},
+		{"80-pr-review-fix", "", "fix", "push-fixes"},
+		{"90-ci-fix", "", "fix", "push-fixes"},
+	} {
+		g := mustTemplate(t, c.name)
+		check, gate, sync, conflict := c.prefix+"refresh", c.prefix+"sync-gate", c.prefix+"sync", c.prefix+"sync-conflict"
+		if r := g.node(check); r == nil || !isFreshnessCheck(r) {
+			t.Fatalf("%s: %s must be a freshness condition, got %+v", c.name, check, r)
+		}
+		if !templateEdgeOn(g, check, c.work, OutcomeSuccess) {
+			t.Errorf("%s: %s must enter %s when fresh", c.name, check, c.work)
+		}
+		for _, e := range g.Edges {
+			if e.To == c.work && edgeOutcome(e) == OutcomeSuccess && e.From != check {
+				t.Errorf("%s: %s entered from %s on success — only %s may; failures inside its own lap may", c.name, c.work, e.From, check)
+			}
+		}
+		onlyReachedFrom(t, g, gate, check, OutcomeFailure)
+		onlyReachedFrom(t, g, sync, gate, OutcomeSuccess)
+		onlyReachedFrom(t, g, conflict, sync, OutcomeFailure)
+		if s := g.node(sync); s.Role != "commit" || s.Action != "rebase" || !NodeRequiresGate(s) ||
+			!strings.Contains(s.Message, "muxcode sync-main") {
+			t.Errorf("%s: %s = %s/%s, want a gated commit/rebase running muxcode sync-main", c.name, sync, s.Role, s.Action)
+		}
+		if !strings.Contains(g.node(gate).Message, "${output:"+check+"}") {
+			t.Errorf("%s: %s must carry the measurement through ${output:%s}", c.name, gate, check)
+		}
+		for _, from := range []string{sync, conflict} {
+			if !templateEdge(g, from, check) {
+				t.Errorf("%s: %s must loop back to %s", c.name, from, check)
+			}
+		}
+		if c.push != "" && !strings.Contains(g.node(c.push).Message, "--force-with-lease") {
+			t.Errorf("%s: %s must push a rebased branch with --force-with-lease", c.name, c.push)
+		}
+	}
+}
+
+// 55's sync loops are per phase, as 50's are: phases-left -> refresh clears
+// an exhausted sync budget for the next phase, while a fourth sync inside one
+// phase still exhausts. Routed by the executor with the real template; the
+// session repo is no checkout, so refresh parks at sync-gate and nothing else
+// moves the counts.
+func TestDefectLoopSyncBudgetIsPerPhase(t *testing.T) {
+	g := mustTemplate(t, "55-defect-backlog-loop")
+	key := func(from, to string) string {
+		for _, e := range g.Edges {
+			if e.From == from && e.To == to && edgeOutcome(e) == OutcomeSuccess {
+				return EdgeFireKey(e)
+			}
+		}
+		t.Fatalf("no %s->%s success edge", from, to)
+		return ""
+	}
+	syncKey, conflictKey := key("sync", "refresh"), key("sync-conflict", "refresh")
+	setup := func(t *testing.T, spent int) *GraphRun {
+		repo := t.TempDir()
+		t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
+		writeFile(t, filepath.Join(repo, BacklogIndexPath), "### Defects — prioritized\n\n| # | ID |\n|---|----|\n| 1 | MUX-001 |\n")
+		run := createTestRun(t, g)
+		spec := filepath.Join(repo, "MUX-001-x.md")
+		writeFile(t, spec, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+		if err := WriteActiveSpec(runTestSession, spec); err != nil {
+			t.Fatal(err)
+		}
+		r, err := ReadGraphRun(runTestSession, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.EdgeFires = map[string]int{syncKey: spent, conflictKey: spent}
+		if err := WriteGraphRun(runTestSession, r); err != nil {
+			t.Fatal(err)
+		}
+		return run
+	}
+	fires := func(t *testing.T, runID, k string) int {
+		r, err := ReadGraphRun(runTestSession, runID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.EdgeFires[k]
+	}
+
+	t.Run("a fourth sync in one phase exhausts", func(t *testing.T) {
+		run := setup(t, 3)
+		finish(t, run.ID, "sync", GraphNodeDone, OutcomeSuccess)
+		step(t, runTestSession, run.ID)
+		if n := fires(t, run.ID, syncKey); n != 3 {
+			t.Errorf("%s fired %d times, want the cap of 3 held", syncKey, n)
+		}
+		rows := cancelEvents(t, "graph-loop-exhausted", run.ID)
+		if len(rows) == 0 || !strings.Contains(rows[0].Detail, syncKey) {
+			t.Errorf("want a graph-loop-exhausted row naming %s, got %+v", syncKey, rows)
+		}
+	})
+
+	t.Run("the next phase starts with a full sync budget", func(t *testing.T) {
+		run := setup(t, 3)
+		finish(t, run.ID, "phases-left", GraphNodeDone, OutcomeSuccess)
+		step(t, runTestSession, run.ID)
+		if a, b := fires(t, run.ID, syncKey), fires(t, run.ID, conflictKey); a != 0 || b != 0 {
+			t.Fatalf("phase entry left %s=%d, %s=%d — want both cleared", syncKey, a, conflictKey, b)
+		}
+		resets := cancelEvents(t, "graph-loop-budget-reset", run.ID)
+		if len(resets) != 1 || !strings.Contains(resets[0].Detail, syncKey+" (was 3)") {
+			t.Errorf("want one reset row naming %s (was 3), got %+v", syncKey, resets)
+		}
+		finish(t, run.ID, "sync", GraphNodeDone, OutcomeSuccess)
+		step(t, runTestSession, run.ID)
+		if n := fires(t, run.ID, syncKey); n != 1 {
+			t.Errorf("the next phase's first sync fired %s %d times, want 1", syncKey, n)
+		}
+		if rows := cancelEvents(t, "graph-loop-exhausted", run.ID); len(rows) != 0 {
+			t.Errorf("the next phase's first sync must not exhaust: %+v", rows)
+		}
+	})
 }
 
 // No builtin request carries a verdict of its own (MUX-198): parseExitSentinel
@@ -304,8 +461,11 @@ func TestDefectBacklogLoopTemplate(t *testing.T) {
 	if outer == nil || !outer.MaxIterationsFromBacklog {
 		t.Fatal("merge->select must loop to the next defect, capped at the backlog's defect count")
 	}
+	if !templateEdgeOn(g, "phases-left", "refresh", OutcomeSuccess) {
+		t.Error("the phase loop must re-enter implement through the freshness check")
+	}
 	for _, e := range g.Edges {
-		if e.From == "phases-left" && e.To == "implement" && !e.MaxIterationsFromActiveSpec {
+		if e.From == "phases-left" && e.To == "refresh" && !e.MaxIterationsFromActiveSpec {
 			t.Error("the phase loop must be capped by the active spec when it fires — each defect's spec differs, so any fixed number truncates a longer one")
 		}
 	}
@@ -356,6 +516,7 @@ func TestDefectBacklogLoopEndsOnlyWhenTheBacklogRunsDry(t *testing.T) {
 			if err := os.WriteFile(backlog, []byte("### Defects — prioritized\n\n| # | ID |\n|---|----|\n| 1 | MUX-001 |\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
+			freshSessionCheckout(t, repo)
 			g, err := ParseGraph([]byte(builtinGraphJSON["55-defect-backlog-loop"]))
 			if err != nil {
 				t.Fatal(err)
@@ -363,7 +524,7 @@ func TestDefectBacklogLoopEndsOnlyWhenTheBacklogRunsDry(t *testing.T) {
 			run := createTestRun(t, g)
 			fakeLiveSpawns(t)
 			settle := func() {
-				for i := 0; i < 4; i++ {
+				for i := 0; i < 6; i++ {
 					step(t, runTestSession, run.ID)
 				}
 			}
@@ -407,7 +568,7 @@ func TestDefectBacklogLoopPhaseRoutingIgnoresTheVerdict(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g, run := driveDefectLoopToSpecCheck(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n", c.reply)
-			assertDefectLoopFired(t, g, run, "phases-left", "implement", OutcomeSuccess)
+			assertDefectLoopFired(t, g, run, "phases-left", "refresh", OutcomeSuccess)
 		})
 	}
 }
@@ -527,6 +688,7 @@ func driveDefectLoopToSpecCheck(t *testing.T, specBody, reply string) (*Graph, *
 	if err := os.WriteFile(backlog, []byte("### Defects — prioritized\n\n| # | ID |\n|---|----|\n| 1 | MUX-001 |\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	freshSessionCheckout(t, repo)
 	g, err := ParseGraph([]byte(builtinGraphJSON["55-defect-backlog-loop"]))
 	if err != nil {
 		t.Fatal(err)
@@ -541,7 +703,7 @@ func driveDefectLoopToSpecCheck(t *testing.T, specBody, reply string) (*Graph, *
 	}
 	fakeSpawns(t, runTestSession)
 	settle := func() {
-		for i := 0; i < 6; i++ {
+		for i := 0; i < 8; i++ {
 			step(t, runTestSession, run.ID)
 		}
 	}
@@ -603,6 +765,7 @@ func TestIntegrationSuiteTimeoutNeverReleasesFix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			freshSessionCheckout(t, "")
 			run := createTestRun(t, g)
 			fakeLiveSpawns(t)
 			step(t, runTestSession, run.ID)
@@ -617,7 +780,7 @@ func TestIntegrationSuiteTimeoutNeverReleasesFix(t *testing.T) {
 			} else {
 				completeSendNodeSentinel(t, runTestSession, run.ID, "suite", "2 scripts ran. SUITE-FAILED: test-x (check y)\nEXIT=1")
 			}
-			for i := 0; i < 3; i++ {
+			for i := 0; i < 5; i++ {
 				step(t, runTestSession, run.ID)
 			}
 
@@ -740,6 +903,7 @@ func TestReviewFixOutlivesTheSendCap(t *testing.T) {
 
 	t.Run("the 80-pr-review-fix worker completes on its reply", func(t *testing.T) {
 		pinActor(t, "")
+		freshSessionCheckout(t, "")
 		run := createTestRun(t, mustTemplate(t, "80-pr-review-fix"))
 		fakeLiveSpawns(t)
 		origAlive := spawnWorkerAliveFn
@@ -764,6 +928,7 @@ func TestReviewFixOutlivesTheSendCap(t *testing.T) {
 			t.Fatalf("approve: %v", err)
 		}
 		settle()
+		settle() // fix-gate -> refresh -> fix
 
 		st, _ := ReadNodeStatus(runTestSession, run.ID, "fix")
 		if st.State != GraphNodeRunning {

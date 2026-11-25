@@ -22,6 +22,7 @@ type ChainContext struct {
 	Output       string    // stdout/stderr from ToolEvent.ToolResult (for output_contains)
 	GraphRun     *GraphRun // set by the executor for condition nodes; nil on every other road
 	Graph        *Graph    // set with GraphRun; spec_phase_committable fails closed without both
+	freshness    *Freshness
 }
 
 // ConditionResult records per-condition evaluation details for --verbose output.
@@ -50,6 +51,9 @@ var knownConditionTypes = map[string]bool{
 	"spec_phase_committable": true,
 	"spec_branch":            true,
 	"swiftpm_query":          true,
+
+	CondBranchBehind:             true,
+	CondUpstreamTouchesSpecFiles: true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -125,6 +129,10 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalSpecBranch(value, ctx)
 	case "swiftpm_query":
 		return evalSwiftPMQuery(value, ctx)
+	case CondBranchBehind:
+		return evalBranchBehind(value, ctx)
+	case CondUpstreamTouchesSpecFiles:
+		return evalUpstreamTouchesSpecFiles(value, ctx)
 	default:
 		return ConditionResult{
 			Type:   condType,
@@ -814,5 +822,5 @@ func ValidateConditions(conditions map[string]any) []string {
 			warnings = append(warnings, fmt.Sprintf("unknown condition type: %q", key))
 		}
 	}
-	return warnings
+	return append(warnings, freshnessValueWarnings(conditions)...)
 }

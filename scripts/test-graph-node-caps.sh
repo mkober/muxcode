@@ -93,7 +93,12 @@ mkdir -p "$HOME/.config/muxcode"
 # Releasing fix-gate needs an authorized actor that did not create the run
 # (MUX-144); the daemon seals this list at startup.
 echo "MUXCODE_GATE_AUTHORITY_ROLES=test-approver" > "$HOME/.config/muxcode/config"
-git -C "$REPO" init -q
+git -C "$REPO" init -q -b main
+# A fresh origin/main, so the fix's freshness check (MUX-166) passes.
+git -C "$REPO" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q --allow-empty -m base
+git init -q --bare -b main "$WORK/origin.git"
+git -C "$REPO" remote add origin "$WORK/origin.git"
+git -C "$REPO" push -q -u origin main
 export MUXCODE_LIFECYCLE_LOG_DIR="$WORK/lifecycle"
 : > "$WORK/empty-config"
 export MUXCODE_CONFIG="$WORK/empty-config"

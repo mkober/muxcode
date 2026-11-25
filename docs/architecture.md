@@ -867,9 +867,14 @@ loop over the backlog's prioritized defects, `merge → select`, capped by
   `close-spec → criteria` (cap 2 per defect, reset by `merge → select`) sends the open items to the
   run's worker and re-enters the phase loop at `build`, so the items are worked and re-verified
   before `close-spec` is asked again; a refusal past the cap fails the run.
-- **Loop budgets are per defect, not per phase.** `merge → select` resets every inner loop edge. A
-  reset may not name an edge that itself resets others, so the inner loops reset nothing themselves —
-  the fix budget (10) spans all of one defect's phases, where `50-spec-to-pr` refreshes it per phase
+- **Loop budgets are per defect, not per phase.** `merge → select` resets every inner loop edge. Resets
+  may chain — an edge may reset one that resets others, since each count stays capped by the edges
+  above it — and `graph validate` refuses only a cycle in the reset relation (`resetsReach`,
+  `bus/graph.go`; before MUX-166 Phase 5 any chain was refused). One chain exists:
+  `phases-left → refresh` resets the freshness check's `sync → refresh` and
+  `sync-conflict → refresh` each phase, and `merge → select` resets it in turn. It does not reset
+  `fix → build`, so the fix budget (10) spans all of one defect's phases, where `50-spec-to-pr`
+  refreshes it per phase
   ([MUX-193](requirements/completed/MUX-193-spec-to-pr-fix-loop-cap-is-per-run-not-per-phase.md)).
 
 The phase loop itself (`phases-left → implement`) is capped by `max_iterations_from_active_spec`,
@@ -929,6 +934,28 @@ read as an empty one would credit every completed phase. "Complete" itself now m
 item and none open* (`SpecPhase.Complete()`), so a stub or narrative `### Phase N findings` heading
 is empty, not done, and boxes under a `####` subheading count for their phase. The guard, the
 `phase-check` condition and the `${completed_phase}` label all read the one predicate.
+
+**Branch freshness is a gate, not a note (MUX-166).** On 2026-09-09 run `1788966543`
+(is-advising-gateway, PROMGT-623) implemented two phases on a branch cut on July 10, eight
+squash-merges behind `main`, writing into `query_builder.py`, which `main` had deleted; build and
+test passed each lap on the stale base, and the first signal was a `cdk diff` with 28 destroys. Plan
+had written "8 behind" into the spec that morning — prose no instrument read. The graph now measures:
+
+| Piece | Behaviour |
+|-------|-----------|
+| `BranchFreshness(repo, spec)` (`bus/branch_freshness.go`) | `git fetch origin +refs/heads/main:refs/remotes/origin/main` (30 s timeout; the explicit forced refspec so a narrowed `remote.origin.fetch` cannot leave a cached ref read as fresh), ahead/behind from `merge-base HEAD origin/main` — never `@{upstream}`, which read 0 behind on that run — and the upstream changes from `diff --name-status --no-renames -z` (a moved file reads deleted; paths literal), intersected with `SpecNamedFiles`: the Key files table's first column plus the current phase's backticked paths. With **no active spec** (60, 80 and 90 hold none) the overlap is measured against the files the branch itself changes since the merge base — tracked files differing from the base, committed, staged or not, plus untracked files git does not ignore (`branchChangedFiles`) — so it neither gates every run as unmeasured nor passes an overlap it never measured; `Freshness.OverlapSource` (`spec` \| `branch`) records which, and the summary then reads "upstream touches files this branch changes" rather than "spec files" |
+| Verdict | Stale on any overlap, whatever the count; with none, stale at `MUXCODE_FRESHNESS_MAX_BEHIND` (5) behind |
+| Fails closed (`Freshness.Unmeasured`) | A failed fetch, no merge base, a diff that cannot be listed, an unreadable spec, a fetch older than `MUXCODE_FRESHNESS_MAX_FETCH_AGE`, unmerged paths or a rebase in progress — each reads stale, never fresh |
+| `50-spec-to-pr` | `branch-check`/`create-branch` → `refresh` (condition: `branch_behind {}`, `upstream_touches_spec_files false`) → `implement`, or → `sync-gate` (`wait_human`, text carrying `${output:refresh}`) → `sync` (commit `rebase`, running `muxcode sync-main`) → `refresh` (cap 3), or on a failed sync → `sync-conflict` (`wait_human`, `${output:sync}`) → `refresh` (cap 3). `loop-check` and `stuck-gate` re-enter through `refresh`, resetting `fix->build`, `sync->refresh` and `sync-conflict->refresh`, so a run that goes stale mid-way parks too. A re-entered `sync-gate` needs a fresh approval (MUX-132) |
+| Every other builtin that implements work (Phase 5, 2026-11-25) | The same four nodes, built once by `freshnessCheckNodes`/`freshnessCheckEdges` (`bus/graph_templates.go`) with an id prefix: `<p>refresh` (the same two conditions), `<p>sync-gate` (`wait_human`, `${output:<p>refresh}`), `<p>sync` (commit `rebase`, `muxcode sync-main`), `<p>sync-conflict` (`wait_human`, `${output:<p>sync}`); `sync → refresh` and `sync-conflict → refresh` capped at 3. **`55-defect-backlog-loop`** carries two: `activated` → `refresh` → `implement`, measuring `main` itself against `origin/main`, re-crossed on every phase (`phases-left` → `refresh`, capped by `max_iterations_from_active_spec`, resetting both sync loops) and on every new defect; and, on the PR side, `ci-green` and `no-comments` fail into `pr-refresh` → `pr-fix`, measuring the defect's PR branch. `merge` → `select` resets all four sync loops. **`60-integration-suite`**: `suite-failed` → `refresh` → `fix`, the current branch. **`80-pr-review-fix`** and **`90-ci-fix`**: `fix-gate` → `refresh` → `fix`, the PR branch; their push nodes (and 55's `pr-push`) push with `--force-with-lease` if a sync rebased the branch. No added node sets `timeout_secs` and none is a spawn — the sync sends run on the 600 s default, as 50's does |
+| Evidence | One `branch-freshness` lifecycle row per evaluation — info when fresh, warn when stale — naming the run and the numbers. A freshness condition records its summary as node output, which is how the gate text carries it; other conditions still record none |
+| `graph validate` (`validateFreshness`) | A node that implements work (`implementsWork`: a `spawn`, or a `send`/`map` to edit) reachable from `start` or from a loop re-entry without crossing a freshness check is an error naming the node. Held to it: every template carrying a **builtin's name** — a user or project template that shadows one included, since it runs in the builtin's place — and any `requires_spec` template; a user template with its own name and no `requires_spec` is not. Every edge is followed, failure edges included, so a worker released by a failing send (60's `suite` → `suite-failed` → `fix`) is held too. A loop re-entry is the target of a capped success edge whose source is not itself a worker: `fix` → `build` is inside the lap its worker already sat behind the check for. Until Phase 5 the rule covered `requires_spec` templates alone (`50-spec-to-pr`) |
+| `muxcode sync-main` (`bus.SyncOntoMain`) | Authority first — the commit agent or a verified person (`CheckSyncMainAuthority`, `BusActorVerified`), every other role refused before the fetch. Refuses an unsettled tree untouched; fetches and runs `git rebase --autostash origin/main`; aborts a conflicting rebase (HEAD where it was) and lists the files; when the rebase replays but restoring the autostash conflicts, reports `EXIT=1` naming the stash it kept, never dropping it. A clean sync is `EXIT=0` with the new ahead/behind. **On `main`** (the 55 road, `fastForwardMain`) it never rebases: after the fetch it runs `git merge --ff-only origin/main`, carrying the run's uncommitted work — modified tracked files, the untracked activated spec. It refuses with nothing changed and no stash made (`EXIT=1`) when `main` holds commits `origin/main` lacks, or when an uncommitted or untracked file is one the upstream changes touch, listing those files as the conflicts |
+
+The sync stays a gated commit-agent mutation, never an auto-rebase: the 2026-09-09 rebase was a
+re-home with conflicts, which no run should attempt unattended. The commit console's remote line
+reads the same measure — ↑/↓ against `origin/main` as last fetched (`BranchDivergence`, no fetch) —
+where it once read `@{upstream}`.
 
 **Findings route to fix; the run closes the spec out.** The `review` node's outcome is read from the
 first non-blank line of the reviewer's reply — `<n> must-fix, <n> should-fix, <n> nits`
@@ -1326,7 +1353,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 ### Hook Chain Guarantee
 
-The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (16 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `first_command_match` on that command's first shell statement alone (`firstStatement`) and `grep_files_match` on a grep's input-file operands — the watch chain's log-reader gate, which a `cd … &&` wildcard, a later `;` statement or a search pattern that merely says `.log` cannot reach (MUX-177; PR #177 review) — `swiftpm_query` — a boolean predicate, not a glob, true for a SwiftPM query such as `swift test --list-tests`, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check and `spec_branch` for the start-of-run branch check) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (18 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `first_command_match` on that command's first shell statement alone (`firstStatement`) and `grep_files_match` on a grep's input-file operands — the watch chain's log-reader gate, which a `cd … &&` wildcard, a later `;` statement or a search pattern that merely says `.log` cannot reach (MUX-177; PR #177 review) — `swiftpm_query` — a boolean predicate, not a glob, true for a SwiftPM query such as `swift test --list-tests`, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check `spec_branch` for the start-of-run branch check, and `branch_behind` and `upstream_touches_spec_files` for the branch-freshness gate) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ### Atlassian write authority
 

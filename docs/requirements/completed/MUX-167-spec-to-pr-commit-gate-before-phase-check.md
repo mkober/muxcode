@@ -162,7 +162,7 @@ phase, not to relabel a gate that should not be asked.
   `${completed_phase}` label this spec keeps); [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md)
   (single-use approvals — a wasted approval is also a spent one);
   [MUX-163](./MUX-163-prompt-inject-escape-eats-first-char.md) (the run that paid the cost);
-  [MUX-166](../backlog/MUX-166-run-builds-on-stale-base-no-freshness-gate.md) (the other missing
+  [MUX-166](./MUX-166-run-builds-on-stale-base-no-freshness-gate.md) (the other missing
   pre-gate check in the same template, filed today).
 
 ## Status

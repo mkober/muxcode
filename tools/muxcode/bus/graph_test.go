@@ -879,7 +879,9 @@ func TestPRReviewFixTemplate(t *testing.T) {
 		{"find-pr", "pr-exists", OutcomeSuccess},
 		{"pr-exists", "read-comments", OutcomeSuccess},
 		{"no-comments", "fix-gate", OutcomeFailure},
-		{"fix-gate", "fix", OutcomeSuccess},
+		{"fix-gate", "refresh", OutcomeSuccess},
+		{"refresh", "fix", OutcomeSuccess},
+		{"refresh", "sync-gate", OutcomeFailure},
 		{"review", "fix", OutcomeFailure},
 		{"review", "push-fixes", OutcomeSuccess},
 		{"push-fixes", "reply", OutcomeSuccess},
@@ -980,7 +982,7 @@ func TestReqCodePRMultiPhaseLoop(t *testing.T) {
 	if !strings.Contains(nodes["implement"].Message, "${current_phase}") {
 		t.Error("implement must target the derived ${current_phase}, not the frozen intent")
 	}
-	for _, loop := range [][2]string{{"loop-check", "implement"}, {"stuck-gate", "implement"}} {
+	for _, loop := range [][2]string{{"loop-check", "refresh"}, {"stuck-gate", "refresh"}} {
 		found := false
 		for _, e := range tpl.Edges {
 			if e.From == loop[0] && e.To == loop[1] && e.MaxIterationsFromSpec {

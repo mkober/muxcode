@@ -1918,12 +1918,44 @@ keyed by outcome. The daemon executes edges — no LLM decides node succession. 
 | `ui --gates [--render-once]` | Pending `wait_human` approval queue across all in-flight runs |
 
 **`50-spec-to-pr` head.** The run starts at `branch-check` (`{"spec_branch": true}`): on the spec's
-`<id>-<slug>` branch it goes straight to `implement`; off it — `main`, the previous spec's branch, no
+`<id>-<slug>` branch it goes on to the freshness check (`refresh`, below) and then `implement`; off it — `main`, the previous spec's branch, no
 active spec, detached HEAD — it parks at `branch-gate` (`wait_human`, the gate every commit-role node
 needs) and, once approved, `create-branch` asks the commit agent (`checkout`) to `git switch -c` the
 branch named for the spec's filename from the current HEAD, carrying every uncommitted change, or to
 switch to it if it already exists; then `implement`. Before this (2026-10-03) nothing checked the
 branch, and a run launched on `main` committed its phases there.
+
+**`50-spec-to-pr` freshness gate (MUX-166).** Since 2026-11-24 neither road reaches `implement`
+directly: `branch-check` and `create-branch` lead to `refresh`, a condition node carrying
+`{"branch_behind": {}, "upstream_touches_spec_files": false}` (see [Hooks](hooks.md) for both
+types). Fresh → `implement`. Stale or unmeasured → `sync-gate` (`wait_human`; its text carries the
+measurement as `${output:refresh}` — behind count, the spec-named files upstream touched, fetch age)
+→ `sync` (commit `rebase`: run [`muxcode sync-main`](#muxcode-sync-main) and reply with its output)
+→ `refresh` again (cap 3). A sync that does not complete goes to `sync-conflict` (`wait_human`,
+`${output:sync}`), which a person resolves by hand before approving the re-measure (cap 3).
+`loop-check` and `stuck-gate` re-enter the lap through `refresh`, so every phase is measured, and
+each evaluation writes a `branch-freshness` lifecycle row. `graph validate` rejects a template in
+which a `spawn`, or a `send`/`map` to edit, is reachable from `start` or a loop re-entry without
+crossing a freshness check — every template carrying a builtin's name (one that shadows a builtin
+included) and any `requires_spec` template, following failure edges too
+([Architecture](architecture.md#graph-orchestration-control-plane)).
+
+**The freshness gate in the other builtins (MUX-166 Phase 5, 2026-11-25).** Every builtin that
+implements work carries the same check — `refresh`, `sync-gate`, `sync`, `sync-conflict`, both
+re-measure edges capped at 3 — in front of its worker:
+
+| Template | Where | What is measured against `origin/main` |
+|----------|-------|----------------------------------------|
+| `55-defect-backlog-loop` | `activated` → `refresh` → `implement`; `phases-left` re-enters through `refresh`, so every phase and every new defect is measured | `main` itself; its `sync` fast-forwards rather than rebases (see [`muxcode sync-main`](#muxcode-sync-main)) |
+| `55-defect-backlog-loop`, PR side | `ci-green` and `no-comments` fail into `pr-refresh` → `pr-fix`, with `pr-sync-gate`, `pr-sync`, `pr-sync-conflict` | The defect's PR branch |
+| `60-integration-suite` | `suite-failed` → `refresh` → `fix` | The current branch |
+| `80-pr-review-fix`, `90-ci-fix` | `fix-gate` → `refresh` → `fix` | The PR branch |
+
+A sync that rebased a pushed branch needs a force push, so `push-fixes` (80, 90) and `pr-push` (55)
+push with `--force-with-lease` in that case. 60, 80 and 90 hold no active spec, so
+`upstream_touches_spec_files` measures the overlap against the files the branch itself changes
+since the merge base, and the gate text says "upstream touches files this branch changes". None of
+the added nodes sets `timeout_secs`; the sync sends run on the 600 s default.
 
 **`50-spec-to-pr` lap shape.** `implement` → `build` → `test` → `review` → `update-spec` →
 `phase-check` → `phase-gate` → `commit` → `loop-check`, with `fix` on any failure edge. `phase-check`
@@ -2153,7 +2185,8 @@ names the templates carried for part of that afternoon were never released and h
 **`80-pr-review-fix` shape** (2026-09-24). `find-pr` (commit, `pr-read`: `PR-CONFIRMED` or
 `NO-PR-FOUND`, a completed lookup is `EXIT=0` either way) → `pr-exists` → `read-comments` (every
 unresolved actionable review comment with id, `file:line` and the ask; `NO-ACTIONABLE-COMMENTS` ends
-the run) → `fix-gate` (`wait_human`) → `fix` (edit spawn, fed `${output:read-comments}` and
+the run) → `fix-gate` (`wait_human`) → `refresh` (the freshness check, since 2026-11-25; a stale PR
+branch parks at `sync-gate`) → `fix` (edit spawn, fed `${output:read-comments}` and
 `${failure_report}`; fixes or declines each comment with a reason, commits nothing) → `build` →
 `test` → `review` → `push-fixes` (commit and push, reports the sha) → `reply` (commit, `comment`: one
 reply per comment citing the sha or the decline reason, from `${output:push-fixes}` and
@@ -2176,9 +2209,11 @@ link; before it, the commit role filed the issue after the commit. `40-sync-main
 and rebases onto `origin/main` (a conflict is `rebase --abort` and `EXIT=1`, never self-resolved),
 build, test, and `push --force-with-lease`; any failure withholds the push. `60-integration-suite`
 — the run agent runs `bash scripts/test-all.sh` (a serial runner over `scripts/test-*.sh`; live-session
-scripts are skipped unless `MUXCODE_TEST_LIVE=1`), a failure goes to a fix spawn carrying
+scripts are skipped unless `MUXCODE_TEST_LIVE=1`), a failure goes through the freshness check
+(`refresh`, since 2026-11-25) to a fix spawn carrying
 `${failure_report}`, then build and the suite again, capped at 3. `90-ci-fix` — `find-pr`, then
-`read-ci` (`CI-GREEN` ends the run; `CI-PENDING` stops with `EXIT=1`), `fix-gate`, a fix spawn fed
+`read-ci` (`CI-GREEN` ends the run; `CI-PENDING` stops with `EXIT=1`), `fix-gate`, the freshness
+check (`refresh`, since 2026-11-25), a fix spawn fed
 `${output:read-ci}` and `${failure_report}`, the build/test/review loop capped at 3, then
 `push-fixes`. `110-pr-merge` — `find-pr` → `pr-exists` → `read-comments` → `no-comments` (the
 review read shared with `80-pr-review-fix`, below) **before** `ci-watch` (the watch role on
@@ -2252,7 +2287,7 @@ Two further edge fields act when the edge fires:
 
 | Edge field | Value | Effect | Validation |
 |------------|-------|--------|------------|
-| `resets_iterations` | Edge keys (`"from->to"`, or `"from->to:outcome"`) | Zeroes the named edges' fire counts, scoping an inner cap to one pass of an outer loop (`graph-loop-budget-reset`) | The resetting edge must itself be capped, and may name neither itself nor an edge that resets others |
+| `resets_iterations` | Edge keys (`"from->to"`, or `"from->to:outcome"`) | Zeroes the named edges' fire counts, scoping an inner cap to one pass of an outer loop (`graph-loop-budget-reset`) | The resetting edge must itself be capped, must name an existing edge and may not name itself. It may name an edge that resets others — a chain of capped edges is bounded — but not one whose own resets lead back to it: only a cycle in the reset relation is refused (`resetsReach`) |
 | `clears_outputs` | Node ids | Erases the named nodes' recorded reports, so `${output:<id>}` reads "no report recorded" until the node runs again — a node not re-run this pass cannot leak its last report into the next | Every id must name a node in the graph |
 
 A node that commits or writes to a tracker — `jira-write`, `confluence-write` or `issue-write` — is
@@ -2393,6 +2428,36 @@ Reads the delivery status file for the given message ID and prints its lifecycle
 Status values: `sent`, `delivered`, `responded`, `expired`.
 
 Core code: `cmd/track.go`, `bus/delivery.go`.
+
+### `muxcode sync-main`
+
+Bring the current checkout up to a freshly fetched `origin/main` — a rebase on a branch, a
+fast-forward on `main` itself. It is the one command behind every freshness check's `sync` node
+(MUX-166: `50-spec-to-pr`, and since 2026-11-25 templates 55, 60, 80 and 90), which a person has
+approved at its `sync-gate`.
+
+```bash
+muxcode sync-main        # no arguments; any argument prints usage and exits 2
+```
+
+| Step | Behaviour |
+|------|-----------|
+| Authority | The commit agent or a verified person only (`CheckSyncMainAuthority`); any other role is refused before anything runs, the fetch included, and told to delegate: `muxcode send commit rebase "<describe the sync>"` |
+| Settled tree | A rebase already in progress, or unmerged paths, is refused with nothing changed |
+| Fetch | `git fetch origin +refs/heads/main:refs/remotes/origin/main` (30 s timeout) |
+| Sync, on a branch | `git rebase --autostash origin/main` |
+| Rebase conflict | `git rebase --abort` — HEAD where it was, no rebase left in progress — and the conflicting files listed |
+| Autostash conflict | The rebase replayed but restoring the uncommitted changes conflicted: the unmerged files are listed and the stash still holding the changes is named, never dropped |
+| Sync, on `main` | Never a rebase: `git merge --ff-only origin/main`, carrying the uncommitted work — modified tracked files and untracked ones, such as `55-defect-backlog-loop`'s activated spec (`fastForwardMain`) |
+| Refused on `main` | With nothing changed and no stash made: `main` holds commits `origin/main` lacks (a fast-forward cannot carry them), or an uncommitted or untracked file is one the upstream changes touch — those files are listed as the conflicts |
+
+The report ends with the sentinel the node routes on: `EXIT=0` only for a clean rebase or
+fast-forward with a settled tree, reporting the new ahead/behind against `origin/main`; `EXIT=1`
+otherwise. The process exit code matches. It never resolves a conflict, drops a stash, commits or
+pushes.
+
+Core code: `cmd/sync_main.go`, `bus/sync_main.go` (`SyncOntoMain`, `fastForwardMain`),
+`bus/branch_freshness.go`.
 
 ### `muxcode spec`
 
