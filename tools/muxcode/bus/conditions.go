@@ -54,6 +54,7 @@ var knownConditionTypes = map[string]bool{
 
 	CondBranchBehind:             true,
 	CondUpstreamTouchesSpecFiles: true,
+	CondOutputToken:              true,
 }
 
 // IsKnownCondition returns true if the condition type is recognized.
@@ -133,6 +134,8 @@ func evaluateCondition(condType string, value any, ctx *ChainContext) ConditionR
 		return evalBranchBehind(value, ctx)
 	case CondUpstreamTouchesSpecFiles:
 		return evalUpstreamTouchesSpecFiles(value, ctx)
+	case CondOutputToken:
+		return evalOutputToken(value, ctx)
 	default:
 		return ConditionResult{
 			Type:   condType,

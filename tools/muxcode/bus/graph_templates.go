@@ -111,11 +111,11 @@ var builtinGraphJSON = map[string]string{
   "start": "preflight",
   "nodes": [
     {"id": "preflight", "type": "send", "role": "commit", "action": "pr-read", "message": "Report, WITHOUT changing anything, the current branch (git branch --show-current) and the working tree status (git status --short). If the current branch is main, your reply MUST contain the literal token ON-MAIN; otherwise it must not. A completed read exits zero either way"},
-    {"id": "on-main", "type": "condition", "conditions": {"output_contains": "ON-MAIN"}},
+    {"id": "on-main", "type": "condition", "conditions": {"output_token": "ON-MAIN"}},
     {"id": "main-gate", "type": "wait_human", "message": "This checkout is not on main — the defect loop works each defect on main and creates its branch only at ship time. Approve switching to main with git and pulling origin/main, or cancel the run"},
     {"id": "to-main", "type": "send", "role": "commit", "action": "checkout", "message": "Switch to main (git switch main), then pull it (git pull --rebase origin main), as separate commands. If uncommitted changes block the switch, change nothing, report them and exit non-zero. Report the branch and HEAD sha"},
     {"id": "select", "type": "send", "role": "plan", "action": "defect-select", "message": "Choose the next defect for this loop and make it the active spec. Resume first: if a spec from the 'Defects — prioritized' table of docs/requirements/backlog/backlog.md is in docs/requirements/drafts/ with status In Progress, set it active (muxcode spec set <path>) and pick nothing else. Otherwise take the best-ranked row (#1 first) whose spec file is in docs/requirements/backlog/, is not listed under Parked, and whose 'Depends on' entries are all done (a link into ../completed/, or —; ⇄ marks a peer, not a blocker). Move that spec to docs/requirements/drafts/ (a plain file move, not git mv — the ship step stages it), set its Status to In Progress, list it in backlog.md's In progress table, and set it active with muxcode spec set <new path>. Commit nothing. Then reply with the literal token DEFECT-ACTIVATED followed by its id, title and path. If no row qualifies, clear the active spec (muxcode spec clear) and reply with the literal token NO-DEFECTS-REMAINING, naming why each remaining row was skipped. A completed selection exits zero either way"},
-    {"id": "activated", "type": "condition", "conditions": {"output_contains": "DEFECT-ACTIVATED"}},
+    {"id": "activated", "type": "condition", "conditions": {"output_token": "DEFECT-ACTIVATED"}},
     ` + freshnessCheckNodes("", "main") + `,
     {"id": "finish", "type": "send", "role": "plan", "action": "defect-loop-done", "message": "The defect loop's selection started no defect. Its report: ${output:select}. If that report carries NO-DEFECTS-REMAINING the backlog is worked through: confirm it and exit zero, which completes the run. If it does not, the selection broke rather than ran dry: say what it reported and exit non-zero, so the run fails instead of reading as finished. Change nothing"},
     {"id": "implement", "type": "spawn", "role": "edit", "message": "Implement ${current_phase} of the active requirements spec — the defect this loop is working (muxcode spec get names it). The phase is derived from the spec — if it is already complete, verify and report rather than re-implementing. Work on the current branch and commit nothing: the graph branches, commits and ships once every phase is done. Before reporting, if the phase has an integration script, run it through the run agent (muxcode send run run \"bash scripts/test-<feature>.sh\" --wait — never go test, the graph's test node owns the suite) and quote its counts and its task id"},
@@ -131,7 +131,7 @@ var builtinGraphJSON = map[string]string{
     {"id": "ship", "type": "send", "role": "commit", "action": "commit", "message": "Ship the closed-out defect the active spec names (muxcode spec get): create and switch to a branch named after the spec's filename without .md (its <id>-<slug>), carrying every uncommitted change — if that branch already exists, switch to it. Stage and commit everything uncommitted, the fix and the spec close-out together, with a subject of the spec's id and title (nothing uncommitted = skip the commit). Fetch origin and rebase the branch onto origin/main; on a conflict run git rebase --abort, report the conflicting files and exit non-zero — never resolve a conflict yourself. Push the branch and create a PR titled exactly '<id> <spec title>' — if the spec has a **Tracking:** line naming a GitHub issue, put Closes #<that issue number> on its own line in the PR body. If a PR already exists for the branch, report it instead of creating another. Report the branch, commit sha, PR number and URL"},
     {"id": "ship-stuck-gate", "type": "wait_human", "message": "Shipping the defect failed: ${output:ship} — resolve it (a rebase conflict, a push or PR failure), then approve retrying the commit, rebase, push and PR, or cancel the run"},
     ` + ciWatchNodeJSON + `,
-    {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
+    {"id": "ci-green", "type": "condition", "conditions": {"output_token": "CI-GREEN"}},
     ` + prReviewReadNodesJSON + `,
     ` + freshnessCheckNodes("pr-", "This defect's PR branch") + `,
     {"id": "pr-fix", "type": "spawn", "role": "edit", "message": "Fix this defect's PR. The latest CI watch reported: ${output:ci-watch}. If that report lacks CI-GREEN, fix the failing checks it names. If it carries CI-GREEN, CI passed and you are here for review comments — address each one the latest review read listed: ${output:read-comments} — fixing it in the code or declining it with a reason (wrong, or out of scope). If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit, push or reply to comments: the graph does those after you report. Your report MUST list every comment id with what you changed (file:line) or why you declined it, carrying earlier iterations forward, since the reply step reads only your latest report"},
@@ -241,7 +241,7 @@ var builtinGraphJSON = map[string]string{
   "start": "find-pr",
   "nodes": [
     {"id": "find-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its number and URL if one exists, or the literal token NO-PR-FOUND if none does. This node asks a question, so a completed lookup exits zero EITHER WAY; reserve a non-zero exit for a lookup you could not complete at all"},
-    {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
+    {"id": "pr-exists", "type": "condition", "conditions": {"output_token": "PR-CONFIRMED"}},
     ` + prReviewReadNodesJSON + `,
     {"id": "fix-gate", "type": "wait_human", "message": "The PR has review comments to address — approve fixing them, committing and pushing the fixes to the PR branch, and replying to each comment"},
     ` + freshnessCheckNodes("", "This PR's branch") + `,
@@ -346,7 +346,7 @@ var builtinGraphJSON = map[string]string{
   "start": "suite",
   "nodes": [
     {"id": "suite", "type": "send", "role": "run", "action": "run", "timeout_secs": 5400, "message": "Run exactly this one command and report its summary: bash scripts/test-all.sh — it runs every scripts/test-*.sh one at a time and exits non-zero if any fail. If the repo has no scripts/test-all.sh, run each scripts/test-*.sh one at a time as separate commands instead. Report each script's pass and fail counts. If any script failed, your reply MUST contain the literal token SUITE-FAILED and name every failing check; if every script passed it must not"},
-    {"id": "suite-failed", "type": "condition", "conditions": {"output_contains": "SUITE-FAILED"}},
+    {"id": "suite-failed", "type": "condition", "conditions": {"output_token": "SUITE-FAILED"}},
     ` + freshnessCheckNodes("", "The current branch") + `,
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix what the integration suite reported failing. THE SUITE'S REPORT: ${output:suite}. If the rebuild after your last change failed, fix that too — ${failure_report}. Fix the code, not the test, unless the test itself is wrong — say which. Do not run the suite yourself: the graph rebuilds and re-runs it after you report"},
     {"id": "build", "type": "send", "role": "build", "action": "build", "message": "Run ./build.sh and report results"}
@@ -367,9 +367,9 @@ var builtinGraphJSON = map[string]string{
   "start": "find-pr",
   "nodes": [
     {"id": "find-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its number and URL if one exists, or the literal token NO-PR-FOUND if none does. This node asks a question, so a completed lookup exits zero EITHER WAY; reserve a non-zero exit for a lookup you could not complete at all"},
-    {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
+    {"id": "pr-exists", "type": "condition", "conditions": {"output_token": "PR-CONFIRMED"}},
     {"id": "read-ci", "type": "send", "role": "commit", "action": "pr-read", "message": "Read the CI checks on this branch's PR WITHOUT changing anything. For each failing check give its name, the failing job and step, and the log excerpt that shows why (gh run view --log-failed). If every check passed your reply MUST contain the literal token CI-GREEN; if any failed it must not. A completed read exits zero either way. If checks are still running, reply CI-PENDING and exit non-zero — the run stops, to be re-run once CI finishes"},
-    {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
+    {"id": "ci-green", "type": "condition", "conditions": {"output_token": "CI-GREEN"}},
     {"id": "fix-gate", "type": "wait_human", "message": "The PR's CI is failing — approve fixing it, then committing and pushing the fixes to the PR branch"},
     ` + freshnessCheckNodes("", "This PR's branch") + `,
     {"id": "fix", "type": "spawn", "role": "edit", "message": "Fix the failing CI checks on this branch's PR, listed by the CI read: ${output:read-ci}. If a build, test or review failed after your last change, fix that too — THE FAILURE TO FIX: ${failure_report}. Do not commit or push: the graph does that after you report. Report what you changed for each failing check"},
@@ -401,11 +401,11 @@ var builtinGraphJSON = map[string]string{
   "start": "find-pr",
   "nodes": [
     {"id": "find-pr", "type": "send", "role": "commit", "action": "pr-read", "message": "Report whether an open PR exists for the current branch WITHOUT creating or changing anything. Your reply MUST contain the literal token PR-CONFIRMED followed by its number and URL if one exists, or the literal token NO-PR-FOUND if none does. This node asks a question, so a completed lookup exits zero EITHER WAY; reserve a non-zero exit for a lookup you could not complete at all"},
-    {"id": "pr-exists", "type": "condition", "conditions": {"output_contains": "PR-CONFIRMED"}},
+    {"id": "pr-exists", "type": "condition", "conditions": {"output_token": "PR-CONFIRMED"}},
     ` + prReviewReadNodesJSON + `,
     {"id": "open-comments", "type": "wait_human", "message": "NOT MERGING — the PR has unresolved review comments: ${output:read-comments} — address them with muxcode graph run 80-pr-review-fix, then run 110-pr-merge again. Approving this only acknowledges it and ends the run; nothing is merged"},
     ` + ciWatchNodeJSON + `,
-    {"id": "ci-green", "type": "condition", "conditions": {"output_contains": "CI-GREEN"}},
+    {"id": "ci-green", "type": "condition", "conditions": {"output_token": "CI-GREEN"}},
     {"id": "merge-gate", "type": "wait_human", "message": "CI is green and the PR had no unresolved review comments when read — approve merging the PR, deleting its branch, updating main, and moving the tracker story (Jira) to Done. The review is read again right before the merge, and a comment that arrived meanwhile stops it"},
     ` + prReviewReadNodes("recheck-comments", "still-clear") + `,
     {"id": "new-comments", "type": "wait_human", "message": "NOT MERGING — review comments arrived while CI ran or the merge waited for approval: ${output:recheck-comments} — address them with muxcode graph run 80-pr-review-fix, then run 110-pr-merge again. Approving this only acknowledges it and ends the run; nothing is merged"},
@@ -448,7 +448,7 @@ const prReviewReadMessage = "Read every review comment on this branch's PR — r
 // more than once, and node ids must be unique.
 func prReviewReadNodes(readID, clearID string) string {
 	return `{"id": "` + readID + `", "type": "send", "role": "commit", "action": "pr-read", "message": "` + prReviewReadMessage + `"},
-    {"id": "` + clearID + `", "type": "condition", "conditions": {"output_contains": "` + NoActionableCommentsToken + `"}}`
+    {"id": "` + clearID + `", "type": "condition", "conditions": {"output_token": "` + NoActionableCommentsToken + `"}}`
 }
 
 // prReviewReadNodesJSON is the first review read of a template: read-comments
@@ -483,4 +483,4 @@ func freshnessCheckEdges(p, work string) string {
 // every template that merges (110-pr-merge, 55-defect-backlog-loop): green
 // means every check passed on the PR's current head, never an older commit's
 // results or an empty check list.
-const ciWatchNodeJSON = `{"id": "ci-watch", "type": "send", "role": "watch", "action": "watch", "timeout_secs": 3600, "message": "Watch the CI checks for this branch's PR's CURRENT head commit. First read the head (gh pr view --json headRefOid) and confirm a CI run exists for exactly that commit (gh run list --commit <headRefOid>); a just-pushed commit's checks take a moment to register, so while none exists re-check every 15s for up to 5 minutes — never treat 'no checks' or an older commit's results as this commit's. Then watch them until they finish (gh pr checks --watch) and report each check's result and the commit it ran on. Only if every check on the current head passed must your reply contain the literal token CI-GREEN; no run for the head after 5 minutes is not green"}`
+const ciWatchNodeJSON = `{"id": "ci-watch", "type": "send", "role": "watch", "action": "watch", "timeout_secs": 3600, "message": "Watch the CI checks for this branch's PR's CURRENT head commit. First read the head (gh pr view --json headRefOid) and confirm a CI run exists for exactly that commit (gh run list --commit <headRefOid>); a just-pushed commit's checks take a moment to register, so while none exists re-check every 15s for up to 5 minutes — never treat 'no checks' or an older commit's results as this commit's. Then watch them until they finish (gh pr checks --watch) and report each check's result and the commit it ran on. Only if every check on the current head passed must your reply contain the literal token CI-GREEN; no run for the head after 5 minutes is not green. Otherwise reply CI-RED and never write the green token at all, not even negated"}`

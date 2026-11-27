@@ -362,6 +362,12 @@ other line numbers are September's and were not re-read. The forged-hold positiv
 asked for exists as `TestExecUnverifiedHoldReleasedByAuditedUserApproval`
 (`bus/graph_exec_test.go:1822`, commit `77f32b8`); that item moved to MUX-244, ticked there.
 
+## Time Tracking
+
+| Branch | Active time | Last updated |
+|--------|-------------|--------------|
+| MUX-157-role-boundary-an-agent-can-ignore | 20m | 2026-11-27 15:31 |
+
 ## Status
 
 **Complete** — closed out 2026-11-25 at 28/28 by the `55-defect-backlog-loop` run that activated it that day: Phases 1–4 and every acceptance criterion verified, the integration script 29/29 hermetic and 3/3 live (a real OpenCode run). Filed 2026-09-08. Unparked 2026-11-24 on the user's decisions:

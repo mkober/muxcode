@@ -1540,7 +1540,7 @@ muxcode subscribe disable <id>
 - `<notify-role>` — role to notify when matched
 - `<action>` — action name for the sent message
 - `[message-template]` — optional template with `${event}`, `${outcome}`, `${exit_code}`, `${command}`, `${branch}`, `${changed_files}` (default: `"${event} ${outcome}: ${command}"`)
-- `--conditions JSON` — optional JSON object with condition expressions (same types as chain conditions: `files_match`, `branch_match`, `env_set`, `env_equals`, `output_contains`, `exit_code`, etc.). All conditions must pass for the subscription to fire.
+- `--conditions JSON` — optional JSON object with condition expressions (same types as chain conditions: `files_match`, `branch_match`, `env_set`, `env_equals`, `output_contains`, `output_token`, `exit_code`, etc. — 19 types, tabled in [Hooks](hooks.md#condition-types)). All conditions must pass for the subscription to fire.
 
 **Examples:**
 ```bash
@@ -2181,6 +2181,17 @@ matches with or without the number (`50` and `spec` both land on `50-spec-to-pr`
 removed the same day) fails loudly naming its successor (`renamedGraphTemplates`, `bus/graph.go`)
 rather than resolving as an alias, which would keep the old name in circulation; the single-digit
 names the templates carried for part of that afternoon were never released and have no aliases.
+
+**Sentinel conditions use `output_token`** (2026-11-27). Every builtin condition node that reads a
+reply for a literal token — `on-main`, `activated`, `ci-green`, `pr-exists`, `suite-failed`,
+`no-comments`, `still-clear` — carries `{"output_token": "<TOKEN>"}`, not `output_contains`: the
+token must appear as a whole word in an occurrence the preceding word does not negate (`not`, `no`,
+`never`, `without`, …; see [Hooks](hooks.md#condition-types)). `output_contains` is a substring test
+and stays one for chain configs. On 2026-11-27 watch reported a red PR as "CI RED (not CI-GREEN)",
+the `55-defect-backlog-loop`'s `ci-green` passed on the substring and `merge` was dispatched; the
+commit agent declining was the only stop. The shared `ci-watch` request (`ciWatchNodeJSON`) now also
+tells watch to reply `CI-RED` on anything but a full pass and never to write the green token at all,
+not even negated. A project or user template that names a sentinel should use `output_token` too.
 
 **`80-pr-review-fix` shape** (2026-09-24). `find-pr` (commit, `pr-read`: `PR-CONFIRMED` or
 `NO-PR-FOUND`, a completed lookup is `EXIT=0` either way) → `pr-exists` → `read-comments` (every
