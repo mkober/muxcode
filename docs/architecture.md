@@ -521,7 +521,7 @@ authority is the real fix. `c4997ed` (2026-09-08 19:11) added that half — `Sea
 the list at daemon startup (`gate-authority-sealed`; live edits may narrow, never widen) and
 `gateApprovalHolds` re-decides every release on the marker's `approved_by`, with `approvalHasAudit`
 requiring a matching `graph-gate-approved` lifecycle row. It landed unverified and authored out of
-role ([MUX-157](requirements/backlog/MUX-157-role-boundary-an-agent-can-ignore.md)); `77f32b8` then
+role ([MUX-157](requirements/completed/MUX-157-role-boundary-an-agent-can-ignore.md)); `77f32b8` then
 made audit rows survive log rotation and the full suite ran green on it, and PR #73 carried it through
 review — but its inputs are still the agent-writable config files, and a routine `./build.sh`
 restarts the daemon and re-seals from them. That step stays open.
@@ -983,7 +983,7 @@ so the commit node was asked to create a PR that existed, on a tree with one unr
 file and no commit message, and its correct decline ended the run. The template now starts at
 `pr-precheck`, a read-only `commit:pr-read` node that reports whether an open PR exists for the
 branch using the literal tokens `verify-pr` already demands (`PR-CONFIRMED` plus its URL, or
-`NO-PR-FOUND`); a `pr-exists` condition (`output_contains: PR-CONFIRMED`) routes success straight to
+`NO-PR-FOUND`); a `pr-exists` condition (`output_token: PR-CONFIRMED` since 2026-11-27, `output_contains` before) routes success straight to
 `b` — watch the review feedback — and failure to `gate1`, now worded *"No PR exists yet"*. It can sit
 ahead of the gate because `pr-read` is the commit role's one read-shaped action — `nodeRequiresGate`
 exempts it and nothing else on that role — so the gate rule holds and a person is asked to approve
@@ -1353,7 +1353,7 @@ Hooks are Claude Code shell hooks configured in `.claude/settings.json`. They ru
 
 ### Hook Chain Guarantee
 
-The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (18 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `first_command_match` on that command's first shell statement alone (`firstStatement`) and `grep_files_match` on a grep's input-file operands — the watch chain's log-reader gate, which a `cd … &&` wildcard, a later `;` statement or a search pattern that merely says `.log` cannot reach (MUX-177; PR #177 review) — `swiftpm_query` — a boolean predicate, not a glob, true for a SwiftPM query such as `swift test --list-tests`, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check `spec_branch` for the start-of-run branch check, and `branch_behind` and `upstream_touches_spec_files` for the branch-freshness gate) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
+The build-test-review and deploy-run-watch chains are **deterministic** — driven by bash hooks detecting command exit codes, not by LLM decisions. Chain actions support conditional expressions (19 condition types evaluated as AND logic, including `command_match`/`command_not_match` on the triggering command, `first_command_match` on that command's first shell statement alone (`firstStatement`) and `grep_files_match` on a grep's input-file operands — the watch chain's log-reader gate, which a `cd … &&` wildcard, a later `;` statement or a search pattern that merely says `.log` cannot reach (MUX-177; PR #177 review) — `swiftpm_query` — a boolean predicate, not a glob, true for a SwiftPM query such as `swift test --list-tests`, `spec_phases_remaining` for spec-driven loops, `spec_phase_committable` for the per-phase commit check `spec_branch` for the start-of-run branch check, `branch_behind` and `upstream_touches_spec_files` for the branch-freshness gate, and `output_token` — the graph sentinel test, the token as a whole word in an occurrence the preceding word does not negate, which every builtin template's sentinel condition uses since 2026-11-27 in place of the substring `output_contains`) with first-match-wins semantics on action arrays. This ensures the chains fire reliably regardless of how the agent phrases its output.
 
 ### Atlassian write authority
 

@@ -29,6 +29,40 @@ var claudeAgentFlagFiles = map[string]string{
 // editor config and never launches an agent.
 var repoRoots = []string{"scripts", "config", "agents", "skills"}
 
+// bareLaunchAllowed names the non-Go files, by repo-relative path, that may
+// match the bare-launch pattern, each with the invocation the matching line
+// must itself carry. Only a non-Claude CLI belongs here: OpenCode's
+// `--agent <name>` names a config-file agent and is not the Claude flag this
+// test guards. The line must name the invocation, so a continuation line of
+// a multi-line claude launch in the same file is still refused.
+var bareLaunchAllowed = map[string]string{
+	"scripts/test-role-write-guard.sh": "opencode run ", // MUX-157 live permissions probe
+}
+
+func bareLaunchExempt(rel, line string) bool {
+	want, ok := bareLaunchAllowed[rel]
+	return ok && strings.Contains(line, want) && !strings.Contains(line, "claude")
+}
+
+func TestBareLaunchExempt(t *testing.T) {
+	const file = "scripts/test-role-write-guard.sh"
+	cases := []struct {
+		rel, line string
+		want      bool
+	}{
+		{file, `  perl -e 'alarm shift; exec @ARGV' 300 opencode run --standalone --archived --agent "$AGENT" --format json "$PROMPT") \`, true},
+		{file, `      --agent "$AGENT" --format json`, false},
+		{file, `claude --agent test-runner -p hi`, false},
+		{file, `opencode run --agent x; claude --agent y`, false},
+		{"scripts/other.sh", `opencode run --agent "$AGENT"`, false},
+	}
+	for _, c := range cases {
+		if got := bareLaunchExempt(c.rel, c.line); got != c.want {
+			t.Errorf("bareLaunchExempt(%s, %q) = %v, want %v", c.rel, c.line, got, c.want)
+		}
+	}
+}
+
 func TestClaudeAgentFlagSoleEmitter(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -76,8 +110,11 @@ func TestClaudeAgentFlagSoleEmitter(t *testing.T) {
 				return nil
 			}
 			nonGo++
+			rel, _ := filepath.Rel(repoRoot, path)
 			for _, hit := range linesMatching(t, path, bareLaunch) {
-				rel, _ := filepath.Rel(repoRoot, path)
+				if bareLaunchExempt(filepath.ToSlash(rel), hit.text) {
+					continue
+				}
 				t.Errorf("bare-name launch outside the launcher: %s:%d: %s", rel, hit.n, strings.TrimSpace(hit.text))
 			}
 			return nil
@@ -91,6 +128,20 @@ func TestClaudeAgentFlagSoleEmitter(t *testing.T) {
 		nonGo++
 		for _, hit := range linesMatching(t, path, bareLaunch) {
 			t.Errorf("bare-name launch outside the launcher: %s:%d: %s", name, hit.n, strings.TrimSpace(hit.text))
+		}
+	}
+	for rel := range bareLaunchAllowed {
+		path := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		exempt := 0
+		if _, err := os.Stat(path); err == nil {
+			for _, hit := range linesMatching(t, path, bareLaunch) {
+				if bareLaunchExempt(rel, hit.text) {
+					exempt++
+				}
+			}
+		}
+		if exempt == 0 {
+			t.Errorf("stale bareLaunchAllowed entry %s: no longer launches with --agent; remove it", rel)
 		}
 	}
 	if nonGo < 20 {

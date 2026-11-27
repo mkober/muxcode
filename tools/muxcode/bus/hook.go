@@ -1252,6 +1252,9 @@ func logChainWithheld(session, role, command, taskID, chain string) {
 type GuardDecision struct {
 	Blocked bool   `json:"blocked"`
 	Reason  string `json:"reason,omitempty"`
+	// Path is set by the never-author guard (CheckSourceWriteGuard,
+	// CheckSourceShellWriteGuard): the write it refused, for role-write-refused.
+	Path string `json:"path,omitempty"`
 }
 
 // guardRule maps a command pattern to a block reason. A command matching one
@@ -1435,13 +1438,15 @@ func CheckEditGuard(command string) *GuardDecision {
 // the delegation rules before the hook-road evidence rule, so a prohibited
 // command names the agent that owns it. A file tool is checked path by path —
 // one Claude path, or every path a Codex apply_patch names — so a docs file
-// patched second is refused as surely as one patched first.
+// patched second is refused as surely as one patched first. Both roads carry
+// the never-author rule for build, test and review (MUX-157): a file-tool path
+// through CheckSourceWriteGuard, a shell write through CheckSourceShellWriteGuard.
 func GuardDecisionFor(role string, ev *ToolEvent) *GuardDecision {
 	if d := CheckAtlassianMCPGuard(role, ev.ToolName); d != nil && d.Blocked {
 		return d
 	}
 	if cmd := ev.ToolInput.Command; cmd != "" {
-		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckHistoryWriteGuard, CheckEvidenceGuard, CheckListenerGuard, CheckPIIPipeGuard} {
+		for _, check := range []func(string, string) *GuardDecision{CheckAtlassianCommandGuard, CheckGuard, CheckHistoryWriteGuard, CheckSourceShellWriteGuard, CheckEvidenceGuard, CheckListenerGuard, CheckPIIPipeGuard} {
 			if d := check(role, cmd); d != nil && d.Blocked {
 				return d
 			}
@@ -1450,6 +1455,9 @@ func GuardDecisionFor(role string, ev *ToolEvent) *GuardDecision {
 	}
 	for _, p := range guardedPaths(ev) {
 		if d := CheckDocFileGuard(role, p); d != nil && d.Blocked {
+			return d
+		}
+		if d := CheckSourceWriteGuard(role, p); d != nil {
 			return d
 		}
 	}

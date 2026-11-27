@@ -109,7 +109,7 @@ Codex agents on the hook road ([MUX-159](requirements/completed/MUX-159-codex-ho
 **Phase:** PreToolUse
 **Trigger:** Bash
 **Mode:** sync (blocks tool execution)
-**Window:** every role — edit for the delegation rules; build, test and deploy for the hook-road evidence rule below; any role with an Atlassian authority limit; and all of them for the inbox-listener rule below (there is no role gate in `hookGuard` since 2026-09-22)
+**Window:** every role — edit for the delegation rules; build, test and deploy for the hook-road evidence rule below; build, test and review for the never-author rule below; any role with an Atlassian authority limit; and all of them for the inbox-listener rule below (there is no role gate in `hookGuard` since 2026-09-22)
 
 Blocks prohibited commands in the edit window (build, test, deploy, git commands) and returns delegation instructions. It runs before the tool executes and can reject the command (`hook stop` and `hook comment-block` are the other sync hooks).
 
@@ -151,6 +151,33 @@ A line that fails any step does not take the carve-out and falls through to the 
 | `muxcode send … ; muxcode log build … --exit-code 0`, `gofmt -l . ; ls` | allowed — a compound with no build/test/deploy statement is not the rule's business (the definitions' own log-and-report sequence is one) |
 
 The denial (Claude `decision: block`, Codex `permissionDecision: deny`) names the statement and how many others it is bundled with, says to run it alone — a leading `cd … &&` or env assignment is fine, a pipe or `;`/`&&` chain is not — and to send acks or reports in a separate call; a `guard-denied` lifecycle row names role, tool and reason. Scope is `HasEvidenceGuard`: build, test and deploy only — edit and plan are denied those commands outright by their delegation rules, and run's verdict is the whole call's exit code by design. `agents/code-builder.md` and `agents/test-runner.md` state the rule in their sequences (test-runner's old `go vet … && go test …` fallback was itself a compound; vet is now its own call, a [precheck](#hook-bash-bash-hook)). Both providers, one rule; the agent's own reply still closes the node. Covered by `bus/evidence_guard_test.go` (the splitter is `parseShellStatements`; `0<&0` has a foreground/background pair) and two hermetic cases in `scripts/test-codex-hooks.sh` (floor 37 → 39, run 39/39 on 2026-09-09 01:15).
+
+**Never-author rule (build, test, review).** The validation roles verify work and never author it ([MUX-157](requirements/completed/MUX-157-role-boundary-an-agent-can-ignore.md)): on 2026-09-08 the test agent wrote source for an hour against a prose rule, a halt and a reload, and certified its own changes. `validationRoles` (`bus/source_write_guard.go`) is build, test and review — the user's decision of 2026-11-24; watch and analyze are not guarded. `hookGuard` has no role gate, so every hook-road event reaches `GuardDecisionFor`, which applies the rule on both of a write's roads:
+
+| Road | Check | What it reads |
+|------|-------|---------------|
+| File tools | `CheckSourceWriteGuard(role, path)` on every path — the one Claude `Write`/`Edit`/`NotebookEdit` path, or each path a Codex `apply_patch` names — beside `CheckDocFileGuard` | The path **literally**: no quote removal, `~` expansion or `$var` reading, so `$source.go` names a file of exactly that name |
+| Shell | `CheckSourceShellWriteGuard(role, command)`, in the Bash checks after the history-file guard and before the evidence rule | The files an in-place writer rewrites — `sed`/`perl -i` (BSD `-i ''` included), `gofmt`/`goimports`/`gofumpt -w`, any `--fix`/`--write` (no operand means the working directory) — and every redirect and `tee` target. Quotes and `~` are normalized once (`shellTargetPath`), and each target goes through the same path check |
+
+**Source** is any path inside the checkout — the nearest `.git` above the hook's working directory, symlinks resolved on both sides. Two things are exempt: everything outside the checkout (`/tmp`, `/dev`, caches, home), and the role's own output (`roleOutputDirs`: build's `bin/`). What `./build.sh` and `./test.sh` write is written by child processes (`go`, `make`, `install`), which no PreToolUse guard sees, so neither needs an exemption.
+
+| Call | Verdict |
+|------|---------|
+| test `Write` to `tools/muxcode/bus/x.go`; a build `apply_patch` naming a source file; review `Edit` of `src/app.ts` | denied — source in the checkout |
+| test `gofmt -w bus/x.go`; build `sed -i 's/a/b/' main.go`; `gofmt -w /tmp/a.go bus/x.go` | denied — the refusal names the file, not the command |
+| build `Write` to `bin/muxcode`; build `gofmt -w bin/generated.go` | allowed — build's own output |
+| review `Write` to `/tmp/muxcode-review-1.txt`; `./test.sh > /tmp/muxcode-test.out 2>&1`; `sed -i … /tmp/x` | allowed — outside the checkout |
+| `cat > "$tmpfile" <<'EOF' …` | allowed — a `$var` target cannot be resolved here |
+| edit's `Write`, plan's `docs/` `Write`, a watch or analyze `Write` | not this rule's business |
+
+The denial reads `BLOCKED: the <role> agent validates and never authors — <path> is source in this checkout` and names `muxcode send edit` as the delegation. `hookGuard` writes a warn-level `role-write-refused` lifecycle row naming role, tool and path, beside the usual `guard-denied`.
+
+**Not covered — stated so the rule is not read as more than it is:**
+
+- **Scrape-road Codex** (`MUXCODE_CODEX_HOOKS=0`, or an ineligible codex) runs no hook, and Codex runs unsandboxed by default since 2026-11-02, so nothing examines its writes.
+- **Command shape.** A write the shapes do not recognise passes: an interpreter writing a file, a `$var` redirect target, a formatter that writes by default (`black`, `ruff format`, `cargo fmt` without `--check`), `go mod tidy`, `go generate`. This is the limit [MUX-197](requirements/backlog/MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) records, which the user accepted for edit and plan on 2026-11-24: the guard is a nudge against the habitual wrong command, not a boundary against an agent working around it. The file tools carry a path and are refused outright.
+
+OpenCode runs no PreToolUse guard and carries the rule as permission rules instead — see [Agents](agents.md#agent-permissions). Covered by `bus/role_write_guard_test.go` and the `apply_patch` cases in `TestGuardDecisionFor_CodexPayloads`.
 
 **Inbox-listener rule (every role).** `CheckListenerGuard` (`bus/listener_guard.go`) is the last check in `GuardDecisionFor` and denies any Bash call in which `muxcode inbox --poll`/`--loop` (either dash form, any path to the binary) is not the bare, lone statement. The harness backgrounds the listener itself (`run_in_background`) and returns each message as the call's output; a listener detached or redirected by the agent consumes messages into output nobody reads while receipts record them `acked` by the role — the [MUX-156](requirements/completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) failure, made on purpose. On 2026-09-22 10:09:22 (session `muxcode`) watch ran `nohup muxcode inbox --poll --loop > /tmp/watch-listener.log 2>&1 & disown; sleep 1; ps aux | grep …`; pid 19757 had `PPID=1` (launchd) within a second, carrying `AGENT_ROLE=watch BUS_SESSION=muxcode`. edit verified ownership (role and session from the narrow `ps eww -p` form) and killed it; watch's inbox was empty, so nothing was lost — that time. The guard refuses the orphan an agent makes on purpose; one made any other way now ends itself — a listener whose parent process is gone exits before reading the inbox and logs `listener-orphan-exit` (see [`muxcode inbox`](agent-bus.md#muxcode-inbox)).
 
@@ -453,6 +480,7 @@ Chain actions support condition expressions that control when they fire. Conditi
 | `env_set` | env var name | Environment variable is set and non-empty |
 | `env_equals` | `VAR=value` | Environment variable equals the specified value |
 | `output_contains` | substring | Command output contains the substring |
+| `output_token` | sentinel token (non-empty string) | The output carries the token as a **whole word** in at least one occurrence not negated by the word before it (`evalOutputToken`, `bus/output_token.go`). A letter, digit, `-` or `_` on either side joins the token to its neighbour (`isTokenEdgeChar`), so `NOT-CI-GREEN` is no occurrence of `CI-GREEN`; a quote does not, so `'CI-GREEN'` counts. An occurrence is negated when the word immediately before it — skipping only whitespace, opening brackets, single and double quotes, backticks and `*`, never sentence punctuation; the apostrophe is a word character here alone, so `isn't` reads whole — is `not`, `no`, `never`, `without`, `nor`, or `isn't`/`wasn't`/`aren't`/`weren't` (with or without the apostrophe), case-insensitive: `CI RED (not CI-GREEN)` fails, `No. CI-GREEN` passes. One un-negated occurrence is enough, whatever else the output says. The graph sentinel test: every builtin template's sentinel condition uses it (`ON-MAIN`, `DEFECT-ACTIVATED`, `CI-GREEN`, `PR-CONFIRMED`, `SUITE-FAILED`, `NO-ACTIONABLE-COMMENTS`), while `output_contains` keeps its substring meaning for chain configs. Added 2026-11-27, when watch answered a red PR "CI RED (not CI-GREEN)", the `55-defect-backlog-loop`'s substring `ci-green` condition read success and dispatched the merge — only the commit agent declining stopped it |
 | `exit_code` | integer | Command exit code equals the value |
 | `spec_phases_remaining` | `true`/`false` | The active spec still has (or has no) phase with an open box — the spec-driven loop condition |
 | `spec_phase_committable` | guarded commit node id | The active spec's current phase is complete in the tree and not at HEAD — the same `phaseCommitReady` predicate as the named node's `phase-progress` guard; graph runs only |

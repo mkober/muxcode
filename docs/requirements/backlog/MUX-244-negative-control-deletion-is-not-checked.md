@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#257](https://github.com/mkober/muxcode/issues/257)
 
-**Split from:** [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md) — its negative-control
+**Split from:** [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — its negative-control
 criterion, its forged-hold criterion and the controls half of its Phase 4, moved here on the user's
 decision of 2026-11-24 relayed by edit.
 
@@ -15,7 +15,7 @@ it took a person reading the diff.
 
 ### Observed (2026-09-08)
 
-From [MUX-157](./MUX-157-role-boundary-an-agent-can-ignore.md), verified there against `c4997ed`.
+From [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md), verified there against `c4997ed`.
 
 `TestExecUnverifiedHoldReleasedByUser` proved that `forgeApproval` writes a marker the code actually
 reads. Its siblings (`…RefusesAgentApproval`, `…RefusesStrippedIdentityApproval`,

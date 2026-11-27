@@ -63,6 +63,8 @@ All Claude Code agents run with `--dangerously-skip-permissions` for autonomous 
 
 OpenCode agents use per-agent `permission` blocks in their generated agent definition (`.opencode/agents/<role>.md`). Muxcode's tool profiles are automatically translated to OpenCode's format — `Bash(pattern)` → `"pattern": allow`, `Write`/`Edit` → `edit: allow`.
 
+Skipping permission prompts does not mean every role may write anything. The validation roles — build, test and review — may not write source in the checkout: on Claude and hook-road Codex the PreToolUse guard refuses it, and on OpenCode their generated `permission` block does (the never-author rule, [Agent Permissions](#agent-permissions)).
+
 ### Multi-CLI provider support
 
 Each agent independently resolves its AI CLI provider. The provider is fixed for the session lifetime.
@@ -547,6 +549,18 @@ Agents have scoped permissions via tool profiles (`bus/profile.go`). The `--allo
 - **api**: `curl`, `wget`, `http`, `jq`, `python`, `node`, `openssl`, `base64`, `dig`, `nslookup`, `Write`, `Edit`
 
 Build, test and deploy run their evidence command **as its own tool call**: `hook guard` denies a build/test/deploy statement that is chained with anything else (a `muxcode send` ack, `;`/`&&`), piped, or backgrounded, because the PostToolUse hook classifies a call by its first statement and records the last one's exit code — bundled, it records nothing and the chain never fires (the hook-road evidence rule, [Hooks](hooks.md#hook-guard-edit-guard)). A leading `cd … &&` or env assignment is fine. `code-builder.md` and `test-runner.md` state it in their sequences.
+
+**Build, test and review never author** ([MUX-157](requirements/completed/MUX-157-role-boundary-an-agent-can-ignore.md)). They may not write a source file — any path inside the checkout except build's own `bin/`; paths outside it (`/tmp`, caches, home) stay writable. Watch and analyze are not guarded (the user's decision of 2026-11-24). A refused agent reports what needs changing to edit and does not route around the refusal. How it is enforced depends on the road:
+
+| Road | Enforcement |
+|------|-------------|
+| Claude, hook-road Codex | The PreToolUse guard: every file-tool and `apply_patch` path, and the files a recognised shell writer, redirect or `tee` targets, with a `role-write-refused` lifecycle row ([Hooks](hooks.md#hook-guard-edit-guard)) |
+| OpenCode | No guard runs. The three profiles carry `DenyTools: sourceWriteDenyTools` as bash deny rules (`sed -i*`, `sed --in-place*`, `perl -i*`, `perl -pi*`, `gofmt -w*`, `goimports -w*`, `gofumpt -w*`, `* --fix*`, `* --write*`), and `translateToolProfile` writes a path-aware `edit:` map — `"*": deny`, then `"/*": allow` (outside the project), then `"bin/*": allow` for build |
+| Scrape-road Codex (`MUXCODE_CODEX_HOOKS=0`, or an ineligible codex) | **None.** No hook runs, and Codex runs unsandboxed by default since 2026-11-02 |
+
+Two OpenCode differences follow from a glob being unable to read a command's operands: a shell writer is refused wherever it writes, `/tmp` included, and a redirect into the tree is **not** refused. The `edit:` map relies on opencode (read in v2.4.1) turning the legacy map into ordered rules where the last match wins, with in-project files named by project-relative path — documented for `read` and inferred for `edit`. A real OpenCode run confirmed it for the test role on 2026-11-25 (`scripts/test-role-write-guard.sh --live`: the in-checkout write was refused with `Permission denied: edit`, the outside one landed); build's `bin/*` re-allow has not been run live. The opencode docs also mark the V1 `permission:` block `WriteAgentConfig` writes as deprecated in favour of V2 `permissions:` rule lists; it still converts today.
+
+On every road a write the patterns do not recognise passes — an interpreter writing a file, a `$var` redirect target, a formatter that writes by default (`black`, `ruff format`, `cargo fmt` without `--check`), `go mod tidy`, `go generate`. That is the command-shape limit [MUX-197](requirements/backlog/MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) records.
 
 All agents have access to `muxcode` commands. The edit agent's lack of `Write`/`Edit` tools is enforced at the tool profile level — Claude Code will not auto-approve file modifications, ensuring all code changes go through the user's accept/reject flow.
 

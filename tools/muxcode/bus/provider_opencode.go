@@ -375,7 +375,10 @@ func translateToolProfile(role string) string {
 		}
 	}
 
-	if editAllow {
+	switch {
+	case IsValidationRole(resolveRoleAlias(role)):
+		buf.WriteString(openCodeSourceEditRules(resolveRoleAlias(role))) // never-author (MUX-157)
+	case editAllow:
 		buf.WriteString("  edit: allow\n")
 	}
 

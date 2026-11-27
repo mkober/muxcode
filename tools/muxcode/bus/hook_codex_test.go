@@ -600,8 +600,8 @@ func codexEventWith(t *testing.T, fixture, toolName, command string) *ToolEvent 
 // second, where a first-path-only check passes), the plan exemption, and an
 // Atlassian MCP write from a role with no delegation rules. One denial is then
 // rendered in both dialects: the decision is the rule set's, the provider's
-// only say is the JSON shape. The last case is MUX-157's characterization — a
-// test-role source patch passes unexamined until its Phase 2 adds the rule.
+// only say is the JSON shape. The last cases are MUX-157's never-author rule
+// on every path a patch names, with a path outside the checkout as the control.
 func TestGuardDecisionFor_CodexPayloads(t *testing.T) {
 	t.Setenv("MUXCODE_ATLASSIAN_AUTHORITY_ROLES", "plan")
 	bash := func(role, cmd string) *GuardDecision {
@@ -632,7 +632,12 @@ func TestGuardDecisionFor_CodexPayloads(t *testing.T) {
 		{"edit docs patched second denied", patch("edit", "src/main.go", "docs/architecture.md"), "plan agent"},
 		{"plan docs patch allowed", patch("plan", "docs/architecture.md"), ""},
 		{"build atlassian mcp write denied", mcpWrite, "BLOCKED"},
-		{"test source patch passes unexamined (MUX-157 Phase 2 inverts this)", patch("test", "bus/x.go"), ""},
+		{"test source patch denied", patch("test", "bus/x.go"), "never authors"},
+		{"build source patch denied", patch("build", "bus/x.go"), "never authors"},
+		{"review source patched second denied", patch("review", "/tmp/notes.txt", "bus/x.go"), "never authors"},
+		{"build scratch patch allowed", patch("build", "/tmp/notes.txt"), ""},
+		{"test literal dollar filename denied", patch("test", "$source.go"), "never authors"},
+		{"test literal tilde directory denied", patch("test", "~/source.go"), "never authors"},
 	}
 	for _, c := range cases {
 		blocked := c.got != nil && c.got.Blocked

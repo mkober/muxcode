@@ -270,7 +270,9 @@ func triggerChain(session, from, eventType, outcome, exitCode, command, toolUseI
 // hookGuard implements the PreToolUse hook: the session and provider gates,
 // then bus.GuardDecisionFor's one rule set, then the denial in the provider's
 // dialect (FormatGuardBlockFor) with a `guard-denied` lifecycle row naming
-// role, tool and reason, so every refusal is attributable. Only fires for
+// role, tool and reason, so every refusal is attributable — plus a
+// `role-write-refused` row naming role, tool and path when the never-author
+// guard refused a validation role's write (MUX-157). Only fires for
 // providers on the hook road; scrape-road OpenCode agents use permission.bash
 // deny rules in their agent config instead. There is no role gate: the
 // inbox-listener rule binds every role, and Atlassian write authority and the
@@ -303,6 +305,10 @@ func hookGuard() {
 		fmt.Println(bus.FormatGuardBlockFor(provider, d.Reason))
 		bus.LogLifecycle(session, "info", "hook", "guard-denied",
 			fmt.Sprintf("%s: %s — %s", role, ev.ToolName, firstLine(d.Reason, 160)))
+		if d.Path != "" {
+			bus.LogLifecycle(session, "warn", "hook", bus.RoleWriteRefusedEvent,
+				fmt.Sprintf("%s: %s %s", role, ev.ToolName, firstLine(d.Path, 160)))
+		}
 		return
 	}
 	bus.RecordRunProvenance(session, role, ev)

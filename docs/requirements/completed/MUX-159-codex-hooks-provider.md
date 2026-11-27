@@ -152,7 +152,7 @@ it, and MUX-012 deletes it).
 - [x] A pending actionable message is delivered by the `Stop` hook as the agent's next prompt, with a true `acked` receipt written before Codex continues
 - [x] An idle hook-enabled codex agent is woken with the fixed sentence only; the payload arrives through `UserPromptSubmit` → `additionalContext`; **a `type: response` is never injected as prompt text** (MUX-009 negative control: the receiving agent's chain does not re-fire)
 - **Deferred → live-run follow-up (2026-09-09 09:40, user-approved):** `PreToolUse` on `Bash` and `apply_patch` runs `hook guard`; a denied command answers `permissionDecision: "deny"` with the reason, and the command does not run (positive control first: an allowed command passes) — *hermetic half done (allow passes silently, deny answers the JSON — script); that Codex then refuses to run the command is proven only live*
-- **Deferred → [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) (2026-09-09 09:40, user-approved):** The never-author and doc-file guards hold for codex build/test/review — [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md)'s missing road — *doc-file holds on every patch path; the never-author rule set does not exist in `guardRulesForRole` yet (MUX-157's to add — it will apply to both providers unchanged)*
+- **Deferred → [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) (2026-09-09 09:40, user-approved):** The never-author and doc-file guards hold for codex build/test/review — [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)'s missing road — *doc-file holds on every patch path; the never-author rule set does not exist in `guardRulesForRole` yet (MUX-157's to add — it will apply to both providers unchanged)*
 - [x] The trust flag is passed only when `hooks.json` hashes to what muxcode wrote; a tampered file refuses launch with a lifecycle row
 - [x] Every `muxcode hook` subcommand is a no-op outside a muxcode session (`BUS_SESSION` unset) — a developer's own codex in this repo is unaffected
 - [x] Per-role opt-in (`MUXCODE_CODEX_HOOKS`, then per-role `MUXCODE_<ROLE>_CODEX_HOOKS`) with the scrape road as the fallback; an older codex (no hooks) or `[features] hooks = false` is detected and falls back with a lifecycle row, never a silent half-state
@@ -324,7 +324,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   `graph-authority-refused spawn-e0035225` rows at 00:27:31: the implement spawn ran a test-classified
   command itself despite reporting "build/test left to the graph", and its hook chain was refused from
   firing into graph-owned roles — the authority guard working, and one more instance of
-  [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md)'s class, an instruction in prose
+  [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md)'s class, an instruction in prose
   that nothing enforced. (c) `verify-spec` fired at 00:46:24, two seconds after a review reply that
   answered `EXIT=1` (changes requested) — the plan notification did not read the verdict. (d) A lone
   `go vet ./...` classifies as a **test** success (`go*vet` sits in `DefaultTestPatterns`,
@@ -410,7 +410,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
   refuse a denied command and to relaunch after a tamper is restored. `SpecOpenItems` counts every
   `- [ ]` in the file (ACs included), so the loop's `spec_phases_remaining` would have sent the run back
   to Phase 5 forever. On the user's instruction the six were converted from checkboxes to *Deferred*
-  bullets: three to [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) (recorded in its
+  bullets: three to [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) (recorded in its
   Notes and backlog row) and three to a live-run follow-up under the backlog's *Ideas without specs*.
   The spec closes at 61/67 with those six deferred; the run's next `loop-check` reads no phases
   remaining and proceeds to `final-gate` — push and PR are the user's.
@@ -449,7 +449,7 @@ in `bus/codex_hooks.go` at hand-off, **flipped to `true` 2026-09-09 00:10** afte
 - [MUX-148](./MUX-148-node-outcome-reads-command-ran-as-task-done.md) — authoritative-row provenance
   on the graph road; Phase 3 gives codex nodes authoritative rows for the first time, so its
   attribution rules apply to them too.
-- [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) — Phase 5 is the codex enforcement road
+- [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) — Phase 5 is the codex enforcement road
   it lists as missing.
 - [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) — hooks do not change the
   sandbox; a codex test agent still needs the socket-free suite.

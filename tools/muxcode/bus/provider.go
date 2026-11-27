@@ -562,6 +562,8 @@ func describeConditions(conditions map[string]any) string {
 			}
 		case "output_contains":
 			parts = append(parts, fmt.Sprintf("output contains %q", val))
+		case CondOutputToken:
+			parts = append(parts, fmt.Sprintf("output carries token %q", val))
 		case "exit_code":
 			parts = append(parts, fmt.Sprintf("exit code is %v", val))
 		default:

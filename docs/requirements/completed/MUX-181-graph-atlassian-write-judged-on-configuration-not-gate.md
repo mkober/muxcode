@@ -65,7 +65,7 @@ place.
 | [MUX-144](../completed/MUX-144-wait-human-gate-openable-by-any-agent.md) | **Parent.** Its Phase 1 step 3 recorded this finding; its Phase 4 closed the git half and step 5 now points here. Its reusable pieces are the starting point: `Message.GraphRun`/`GraphNode`, `dispatchMatchesNode`, `approvalDenial` |
 | [MUX-165](./MUX-165-gated-jira-write-declined-by-requester-rule.md) | **Co-scheduled (`⇄`), not a dependency in either direction.** MUX-165's fix already specifies provenance on the dispatch and `VerifyGateProvenance` at the bus so plan can *accept* a gate-approved write; this spec pins the *refusal* side of that same check — fail closed, keyed on the raw graph sender, logged — and the inversion of the two MUX-144 pins. Build the mechanism once; land both rules together |
 | [MUX-132](../completed/MUX-132-graph-retry-launders-gate-approval.md) | Adjacent: guards whether an approval is *current*, not whether it is *human* — unchanged |
-| [MUX-157](../backlog/MUX-157-role-boundary-an-agent-can-ignore.md) | Same lesson: a role's definition is a behavioural boundary, and this spec is what a mechanical one would look like for one write path |
+| [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) | Same lesson: a role's definition is a behavioural boundary, and this spec is what a mechanical one would look like for one write path |
 
 ## Decisions (user, 2026-11-24)
 

@@ -408,7 +408,7 @@ func TestPRReviewFixQuestionNodesDeclareExitConvention(t *testing.T) {
 				t.Errorf("%s: %s does not name the %s token its condition branches on", name, id, token)
 			}
 		}
-		if c := g.node("no-comments"); c == nil || c.Conditions["output_contains"] != NoActionableCommentsToken {
+		if c := g.node("no-comments"); c == nil || c.Conditions[CondOutputToken] != NoActionableCommentsToken {
 			t.Errorf("%s: no-comments must branch on %s", name, NoActionableCommentsToken)
 		}
 		if n := g.node("read-comments"); n != nil {

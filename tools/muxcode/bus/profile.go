@@ -814,6 +814,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(cargo fmt --check*)", "Bash(tsc *)",
 					"Bash(pnpm audit*)",
 				}, appleBuildTools...),
+				DenyTools: sourceWriteDenyTools,
 			},
 			"test": {
 				Include:     []string{"bus", "readonly", "common"},
@@ -832,6 +833,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(npx c8*)", "Bash(nyc *)", "Bash(coverage*)",
 					"Bash(python -m coverage*)", "Bash(tox *)",
 				}, appleTestTools...),
+				DenyTools: sourceWriteDenyTools,
 			},
 			"review": {
 				Include:  []string{"bus", "readonly", "common"},
@@ -843,6 +845,7 @@ func DefaultConfig() *MuxcodeConfig {
 					"Bash(git shortlog*)", "Bash(git stash list*)", "Bash(git remote*)",
 					"Bash(diff <(*)", "Bash(python3*)", "Bash(jq*)",
 				},
+				DenyTools: sourceWriteDenyTools,
 			},
 			"edit": {
 				Include:     []string{"bus", "readonly", "common"},
