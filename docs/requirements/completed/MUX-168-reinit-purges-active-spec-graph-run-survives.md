@@ -27,7 +27,7 @@ next to a `[running]` run.
 | 15:37 | plan re-sets the pointer by hand (`muxcode spec set docs/requirements/drafts/MUX-163-…`) — a repair, not the fix | this session |
 
 The window was invisible at first: `lifecycle show --since 30m` returned nothing before 15:34 until
-`--limit 3000` was added ([MUX-124](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md)).
+`--limit 3000` was added ([MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)).
 
 ### Second occurrence (same run, 2026-09-10)
 
@@ -209,7 +209,7 @@ script is not executable in the tree (`-rw-r--r--`) and was run as `bash scripts
 - Related: [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) (Phase 3 —
   `ReconcileActiveSpec`, the pointer-honesty principle this extends one layer down);
   [MUX-121](../completed/MUX-121-multi-phase-sequential-graph.md) (the termination
-  semantics that make a vanished pointer look like a finished spec); [MUX-124](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md)
+  semantics that make a vanished pointer look like a finished spec); [MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)
   (why the window was invisible at first); [MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)
   (why the run must not carry a second copy); [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)
   (the fail-closed `phase-check` path a vanished pointer would take).

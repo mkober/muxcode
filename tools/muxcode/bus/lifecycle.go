@@ -153,13 +153,22 @@ func ReadLifecycleLog(session string) ([]LifecycleEntry, error) {
 
 // FilterLifecycleLog reads and filters lifecycle entries.
 func FilterLifecycleLog(session string, opts LifecycleFilterOpts) ([]LifecycleEntry, error) {
-	entries, err := ReadLifecycleLog(session)
+	entries, _, err := FilterLifecycleLogCounted(session, opts)
+	return entries, err
+}
+
+// FilterLifecycleLogCounted is FilterLifecycleLog that also returns how many
+// entries matched the filters before opts.Limit cut them, so a caller can tell
+// "nothing matched" from "matches existed but were cut" (MUX-124). matched
+// exceeds len(entries) exactly when the limit truncated the result.
+func FilterLifecycleLogCounted(session string, opts LifecycleFilterOpts) (entries []LifecycleEntry, matched int, err error) {
+	all, err := ReadLifecycleLog(session)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var filtered []LifecycleEntry
-	for _, e := range entries {
+	for _, e := range all {
 		if opts.Source != "" && e.Source != opts.Source {
 			continue
 		}
@@ -175,12 +184,12 @@ func FilterLifecycleLog(session string, opts LifecycleFilterOpts) ([]LifecycleEn
 		filtered = append(filtered, e)
 	}
 
-	// Apply limit (take last N entries)
-	if opts.Limit > 0 && len(filtered) > opts.Limit {
-		filtered = filtered[len(filtered)-opts.Limit:]
+	matched = len(filtered)
+	if opts.Limit > 0 && matched > opts.Limit {
+		filtered = filtered[matched-opts.Limit:]
 	}
 
-	return filtered, nil
+	return filtered, matched, nil
 }
 
 // ListLifecycleSessions returns session names that have lifecycle logs.

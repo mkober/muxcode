@@ -151,6 +151,65 @@ func TestFilterLifecycleLogSince(t *testing.T) {
 	}
 }
 
+// writeTimedEntries writes n events at ts into session's log, bypassing the
+// clock so a test controls the time distribution.
+func writeTimedEntries(t *testing.T, session, event string, ts int64, n int) {
+	t.Helper()
+	logPath := LifecycleLogPath(session)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for i := 0; i < n; i++ {
+		d, _ := json.Marshal(LifecycleEntry{TS: ts, Level: "warn", Source: "daemon", Session: session, Event: event})
+		f.Write(append(d, '\n'))
+	}
+}
+
+func TestFilterLifecycleLogCountedReportsMatchedBeforeLimit(t *testing.T) {
+	pinLogDir(t, t.TempDir())
+	session := "test-counted"
+	now := time.Now().Unix()
+	writeTimedEntries(t, session, "old", now-7200, 5)
+	writeTimedEntries(t, session, "task-stall", now-60, 60)
+
+	entries, matched, _ := FilterLifecycleLogCounted(session, LifecycleFilterOpts{Since: now - 3600})
+	if len(entries) != 60 || matched != 60 {
+		t.Errorf("unlimited window: got %d entries, matched %d; want 60, 60", len(entries), matched)
+	}
+
+	entries, matched, _ = FilterLifecycleLogCounted(session, LifecycleFilterOpts{Since: now - 3600, Limit: 10})
+	if len(entries) != 10 || matched != 60 {
+		t.Errorf("window --limit 10: got %d entries, matched %d; want 10, 60", len(entries), matched)
+	}
+
+	entries, matched, _ = FilterLifecycleLogCounted(session, LifecycleFilterOpts{Limit: 50})
+	if len(entries) != 50 || matched != 65 {
+		t.Errorf("unscoped limit 50: got %d entries, matched %d; want 50, 65", len(entries), matched)
+	}
+}
+
+func TestFilterLifecycleLogCountedNoTruncationControls(t *testing.T) {
+	pinLogDir(t, t.TempDir())
+	session := "test-counted-neg"
+	now := time.Now().Unix()
+	writeTimedEntries(t, session, "old", now-7200, 5)
+
+	entries, matched, _ := FilterLifecycleLogCounted(session, LifecycleFilterOpts{Since: now - 3600, Limit: 50})
+	if len(entries) != 0 || matched != 0 {
+		t.Errorf("empty window: got %d entries, matched %d; want 0, 0", len(entries), matched)
+	}
+
+	entries, matched, _ = FilterLifecycleLogCounted(session, LifecycleFilterOpts{Limit: 50})
+	if len(entries) != 5 || matched != 5 {
+		t.Errorf("within limit: got %d entries, matched %d; want 5, 5", len(entries), matched)
+	}
+}
+
 func TestRotateLifecycleLog(t *testing.T) {
 	tmpDir := t.TempDir()
 	pinLogDir(t, tmpDir)

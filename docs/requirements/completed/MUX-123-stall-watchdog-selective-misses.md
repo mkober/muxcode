@@ -33,7 +33,7 @@ Parsed from the raw log by timestamp:
 
 **26 task-stall rows that day.** The "zero rows" reading came from `muxcode lifecycle show`, whose
 default limit truncates any query to the most recent 50 entries — see
-[MUX-124](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md), filed alongside this. **The investigation
+[MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md), filed alongside this. **The investigation
 tool produced the false premise**, which is why that bug is worth fixing before anyone debugs
 timing-sensitive daemon behaviour again.
 
