@@ -1600,9 +1600,30 @@ muxcode lifecycle purge [--days N]
 | Subcommand | Description |
 |------------|-------------|
 | `log` | Write a lifecycle entry (used by bash scripts via CLI) |
-| `show` | Display filtered entries with human-readable timestamps (default: last 50) |
+| `show` | Display filtered entries with human-readable timestamps (default: last 50; `--since` shows its whole window — see below) |
 | `list` | List sessions with lifecycle logs, entry counts, and last modified date |
 | `purge` | Remove log files older than N days (default: 30) |
+
+**How many rows `show` prints** (`resolveShowLimit`, `cmd/lifecycle.go`; MUX-124). Filters apply
+first, then the limit keeps the last N matches:
+
+| Flags | Limit applied |
+|-------|---------------|
+| none, or only `--source`/`--level`/`--event` | the default, 50 |
+| `--since <d>` with no `--limit` | none — every match in the window |
+| `--limit N`, with or without `--since` | N — an explicit limit always holds |
+| `--all` | none, whatever else is given |
+
+Whenever the limit cuts matching rows, by any flag combination, `show` prints one notice on
+**stderr** — `showing last N of M`, M being the matches before the cut (`truncationNotice`, counted
+by `bus.FilterLifecycleLogCounted`). stdout carries rows alone, so a pipe or a script reading them is
+unaffected, and a result that fits its limit prints no notice. A filtered query (`--source`,
+`--level`, `--event` or `--since`) that matches nothing prints nothing on either stream — empty means
+nothing matched, never that matches were cut; an unfiltered `show` on an empty log prints
+`No lifecycle events for session "<name>"` on stderr.
+
+Before this, `--since` kept the default limit: `lifecycle show --since 8h` returned the most recent
+50 events and presented them as the whole window — zero `task-stall` rows on a day that recorded 26.
 
 **Entry format:**
 

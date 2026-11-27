@@ -62,7 +62,7 @@ unaffected, because there `F{index}` and the positional key coincide.
 The status bar is the only affordance telling a user which key reaches a window. A label that is
 confidently wrong is worse than no label: the user presses it, nothing happens, and the natural
 inference is that spawn switching is broken rather than that the label lied. Same family as
-[`MUX-124`](../backlog/MUX-124-lifecycle-since-truncated-by-limit.md) and
+[`MUX-124`](./MUX-124-lifecycle-since-truncated-by-limit.md) and
 [`MUX-006`](./MUX-006-diagnose-false-clean-verdict.md) — *the instrument misreports its own subject*.
 
 Related: [`MUX-128`](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md) covers F-key navigation for spawn

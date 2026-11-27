@@ -16,8 +16,10 @@ Subcommands:
   log <session> <level> <source> <event> [--detail TEXT] [--pid N]
       Write a lifecycle log entry
 
-  show [session] [--limit N] [--source S] [--level L] [--event E] [--since DURATION]
-      Show lifecycle log entries (default: current session, last 50)
+  show [session] [--limit N] [--source S] [--level L] [--event E] [--since DURATION] [--all]
+      Show lifecycle log entries (default: current session, last 50; --since shows
+      its whole window unless --limit is given). A cut result prints
+      "showing last N of M" on stderr
 
   list
       List sessions with lifecycle logs
@@ -98,11 +100,41 @@ func lifecycleLog(args []string) {
 	}
 }
 
+// lifecycleShowDefaultLimit bounds an unscoped `lifecycle show`.
+const lifecycleShowDefaultLimit = 50
+
+// resolveShowLimit picks the limit `lifecycle show` applies. An explicit
+// --limit always holds and --all lifts it; otherwise a --since window is
+// honoured whole, because the user asked a time-scoped question and a silent
+// cut of it read as "this never happened" — 0 task-stall rows reported on a day
+// holding 26 (MUX-124). Only an unscoped query keeps the default of 50.
+func resolveShowLimit(limit int, limitSet, all bool, since int64) int {
+	switch {
+	case all:
+		return 0
+	case limitSet:
+		return limit
+	case since > 0:
+		return 0
+	default:
+		return lifecycleShowDefaultLimit
+	}
+}
+
+// truncationNotice is the stderr line `lifecycle show` prints when the limit
+// cut matching rows, or "" when every match was shown. It never goes to stdout,
+// which carries rows alone for pipes and scripts.
+func truncationNotice(shown, matched int) string {
+	if matched <= shown {
+		return ""
+	}
+	return fmt.Sprintf("showing last %d of %d", shown, matched)
+}
+
 func lifecycleShow(args []string) {
 	session := ""
-	opts := bus.LifecycleFilterOpts{
-		Limit: 50,
-	}
+	opts := bus.LifecycleFilterOpts{}
+	limit, limitSet, all := 0, false, false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -117,7 +149,7 @@ func lifecycleShow(args []string) {
 				fmt.Fprintf(os.Stderr, "invalid --limit: %s\n", args[i])
 				os.Exit(1)
 			}
-			opts.Limit = n
+			limit, limitSet = n, true
 		case "--source":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "--source requires a value")
@@ -152,7 +184,7 @@ func lifecycleShow(args []string) {
 			}
 			opts.Since = time.Now().Add(-d).Unix()
 		case "--all":
-			opts.Limit = 0
+			all = true
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
@@ -167,15 +199,19 @@ func lifecycleShow(args []string) {
 		session = bus.BusSession()
 	}
 
-	entries, err := bus.FilterLifecycleLog(session, opts)
+	opts.Limit = resolveShowLimit(limit, limitSet, all, opts.Since)
+	entries, matched, err := bus.FilterLifecycleLogCounted(session, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	if notice := truncationNotice(len(entries), matched); notice != "" {
+		fmt.Fprintln(os.Stderr, notice)
+	}
 
-	if len(entries) == 0 {
-		fmt.Printf("No lifecycle events for session %q\n", session)
-		return
+	filtered := opts.Source != "" || opts.Level != "" || opts.Event != "" || opts.Since > 0
+	if len(entries) == 0 && !filtered {
+		fmt.Fprintf(os.Stderr, "No lifecycle events for session %q\n", session)
 	}
 
 	for _, e := range entries {
