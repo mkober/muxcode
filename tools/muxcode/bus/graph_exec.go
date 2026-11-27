@@ -1706,14 +1706,20 @@ func finishNode(session string, run *GraphRun, n *Node, outcome, output string) 
 // every item is recorded. Its pending dispatches are settled ahead of the
 // replace and resume roads, so those roads only ever act on settled lanes:
 // replaced first, a lane's replacement was then pointed back at the dead
-// worker its interrupted dispatch had reached (MUX-195 review must-fix).
+// worker its interrupted dispatch had reached (MUX-195 review must-fix). A
+// send node's output, success or failure, is prefixed with any guard denial
+// its task received (GuardDenialNote, MUX-190).
 func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNodeStatus) {
 	now := time.Now().Unix()
 	if (n.Type == NodeSpawn || n.Type == NodeMap) && retryPendingStops(session, run, n, st.TaskID) {
 		return
 	}
 	if n.TimeoutSec > 0 && st.StartedAt > 0 && now-st.StartedAt > int64(n.TimeoutSec) {
-		finishNode(session, run, n, OutcomeFailure, explicitTimeoutReason(session, n, st, now))
+		reason := explicitTimeoutReason(session, n, st, now)
+		if n.Type == NodeSend {
+			reason = GuardDenialNote(session, st.TaskID, reason)
+		}
+		finishNode(session, run, n, OutcomeFailure, reason)
 		return
 	}
 
@@ -1725,16 +1731,17 @@ func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *Gr
 			finishNode(session, run, n, OutcomeFailure, "task record lost")
 			return
 		}
+		denied := func(output string) string { return GuardDenialNote(session, task.ID, output) }
 		switch task.Status {
 		case TaskCompleted:
 			if sendResponseIsNonResult(session, task) {
 				if TaskExpired(task, now) {
-					finishNode(session, run, n, OutcomeFailure, "task expired")
+					finishNode(session, run, n, OutcomeFailure, denied("task expired"))
 				}
 				return
 			}
 			outcome, output := deriveSendOutcome(session, n, st, task)
-			finishNode(session, run, n, outcome, output)
+			finishNode(session, run, n, outcome, denied(output))
 		case TaskTimedOut, TaskFailed:
 			if adoptLateAnswerToCleared(session, run, n, st, task) {
 				return
@@ -1742,13 +1749,13 @@ func harvestRunningNode(session string, run *GraphRun, g *Graph, n *Node, st *Gr
 			if task.Status == TaskTimedOut && task.ClearedBy != "" && continueAfterRelaunch(session, run, n, st, task, now) {
 				return
 			}
-			finishNode(session, run, n, OutcomeFailure, taskEndReason(task, now))
+			finishNode(session, run, n, OutcomeFailure, denied(taskEndReason(task, now)))
 		default:
 			if adoptLateAnswerToCleared(session, run, n, st, task) {
 				return
 			}
 			if TaskExpired(task, now) {
-				finishNode(session, run, n, OutcomeFailure, "task expired")
+				finishNode(session, run, n, OutcomeFailure, denied("task expired"))
 				return
 			}
 			redriveStalledDispatch(session, run, n, st, task, now)

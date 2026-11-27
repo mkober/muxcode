@@ -1238,6 +1238,78 @@ func TestRunAgentLaunch_PresetAgentRolePreserved(t *testing.T) {
 	}
 }
 
+// MUX-188: a spawn worker launching plan's definition, fresh or resumed,
+// leaves plan's unread startup, its read-but-unanswered task and its
+// agent-defs stamp alone, and adds no startup of its own; the same launch as
+// plan itself retires the unread startup for a new one, clears the task and
+// restamps — the control proving each effect is seen. On 2026-11-27 each
+// edit-based graph worker sent the live edit agent a stray request:startup.
+func TestRunAgentLaunch_SpawnWorkerLeavesBaseRoleAlone(t *testing.T) {
+	const resumeID = "0b7e2a1c-3f4d-4e5a-9b6c-7d8e9f0a1b2c"
+	for _, tc := range []struct {
+		name, agentRole, resume string
+		worker                  bool
+	}{
+		{"spawn worker fresh", "spawn-plan-1", "", true},
+		{"spawn worker resume", "spawn-plan-1", resumeID, true},
+		{"base role fresh", "", "", false},
+		{"base role resume", "", resumeID, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := "test-spawn-base-" + strings.ReplaceAll(tc.name, " ", "-")
+			home, _ := launchSandbox(t, session)
+			fakeClaudeOnPath(t)
+			writeFile(t, filepath.Join(home, ".config", "muxcode", "agents", "planner.md"),
+				"---\ndescription: Docs\n---\nMaintain docs.\n")
+			t.Setenv("AGENT_ROLE", tc.agentRole)
+
+			unread := NewMessage("plan", "plan", "request", "startup", "earlier launch", "")
+			if err := SendNoCC(session, unread); err != nil {
+				t.Fatal(err)
+			}
+			read := NewMessage("edit", "plan", "request", "update-docs", "being worked on", "")
+			if err := CreateTask(session, read, 600); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, agentDefHashPath(session, "plan"), "stale")
+
+			if err := RunAgentLaunchResume("plan", tc.resume, LaunchReasonSpawn); err != nil {
+				t.Fatalf("launch: %v", err)
+			}
+
+			msgs, _ := Peek(session, "plan")
+			var startups []string
+			for _, m := range msgs {
+				if m.Type == "request" && m.Action == "startup" {
+					startups = append(startups, m.ID)
+				}
+			}
+			if len(startups) != 1 {
+				t.Fatalf("plan's inbox holds %d startup requests, want 1: %v", len(startups), msgs)
+			}
+			if kept := startups[0] == unread.ID; kept != tc.worker {
+				t.Errorf("plan's unread startup kept = %v, want %v", kept, tc.worker)
+			}
+
+			task, err := ReadTask(session, read.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTask := TaskTimedOut
+			if tc.worker {
+				wantTask = TaskInFlight
+			}
+			if task.Status != wantTask {
+				t.Errorf("plan's read task status = %q, want %q", task.Status, wantTask)
+			}
+
+			if stale := ReadAgentDefHash(session, "plan") == "stale"; stale != tc.worker {
+				t.Errorf("plan's agent-defs stamp left stale = %v, want %v", stale, tc.worker)
+			}
+		})
+	}
+}
+
 // launchSandbox isolates RunAgentLaunch from the machine: temp HOME (so the
 // user tier is whatever the test writes), empty install dir, temp project,
 // scratch bus, exec captured. Returns the temp HOME and the captured argv.

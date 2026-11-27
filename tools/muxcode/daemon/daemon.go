@@ -411,6 +411,7 @@ func (d *Daemon) Run() error {
 		d.checkWindowFKeyLabels()
 		d.checkNonHookTasks()
 		d.checkTrackedTasks()
+		d.checkGuardDenials()
 		d.checkStalledTasks()
 		d.checkGraphRuns()
 		d.checkNonHookEdits()
@@ -3600,6 +3601,14 @@ func (d *Daemon) sealGateAuthority() {
 		"wait_human gates may be released by: "+sealed)
 }
 
+// checkGuardDenials acts on the guard denials the hook filed: one re-drive or
+// alert per interrupted task (bus.ProcessGuardDenials, MUX-190). It runs
+// before the stall watchdog, which then leaves every denied task to it
+// (bus.GuardDenialOwns).
+func (d *Daemon) checkGuardDenials() {
+	bus.ProcessGuardDenials(d.session)
+}
+
 // checkGraphRuns advances every in-flight graph run one executor tick
 // (MUX-014). Runs right after checkTrackedTasks so completions correlated
 // this poll route their edges on the same tick. All state lives in the
@@ -3620,7 +3629,8 @@ func (d *Daemon) checkGraphRuns() {
 // force, whose redrive path re-injects the consumed request. Two
 // redrives per task, then one give-up log — the task timeout owns final
 // failure. Opt out with MUXCODE_TASK_STALL_DISABLE=1; threshold via
-// MUXCODE_TASK_STALL_SECS.
+// MUXCODE_TASK_STALL_SECS. A task holding a guard denial is skipped before any
+// sighting: the guard road owns its one re-drive (MUX-190).
 //
 // Two questions, in order, because they are not each other's negation.
 // AgentIsWorking is POSITIVE evidence of a live turn and is provider-aware
@@ -3661,7 +3671,7 @@ func (d *Daemon) checkStalledTasks() {
 	live := make(map[string]bool, len(tasks))
 	for _, t := range tasks {
 		live[t.ID] = true
-		if !bus.TaskStalled(t, now, bus.TaskStallSecs()) {
+		if !bus.TaskStalled(t, now, bus.TaskStallSecs()) || bus.GuardDenialOwns(d.session, t.ID) {
 			continue
 		}
 		role := bus.WindowForRole(t.To)

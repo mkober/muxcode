@@ -333,7 +333,7 @@ runs on the lanes it got, and `muxcode spawn start` fails with the reason and th
 | [MUX-131](./MUX-131-spawn-implement-output-never-ported.md) | Predecessor, complete — stopped the worker being rebuilt **every iteration** within one node; this spec extends the same rule to the run, the session and the agent road |
 | [MUX-135](./MUX-135-spawn-seed-record-gc-strands-completion.md) | Dependency — the delivery-record GC that makes `spawnHasResponded` lie is the stranding mechanism here; Phase 2's `reply_to` fallback closes this side of it |
 | [MUX-120](./MUX-120-spawn-worker-never-woken-for-seeded-task.md) | Same family — a seeded worker never woken; not merged, a delivery defect rather than a count defect |
-| [MUX-188](../backlog/MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Same family — a side effect of each launch; fewer launches means fewer stray requests, but it is its own fix |
+| [MUX-188](./MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | Same family — a side effect of each launch; fewer launches means fewer stray requests, but it is its own fix |
 | [MUX-128](../backlog/MUX-128-fkey-navigation-for-spawn-windows.md) | Fewer worker windows is what makes its F11/F12 question tractable |
 | [MUX-147](./MUX-147-process-leak-and-memory-footprint.md), [MUX-184](./MUX-184-orphaned-session-processes-never-reaped.md) | Same footprint, different roads |
 | [MUX-178](./MUX-178-spawn-node-cuts-no-worktree-port-harvest-broken.md) | Why a worker ends unanswered; graph workers run in the session checkout, so adoption does not cross trees |

@@ -140,12 +140,14 @@ func ForceDeliverFor(session, role string, force bool, firstTaskID string) (Deli
 // which no inbox-based path can reach (the rows are already drained).
 // Returns how many requests the typed text held — not how many were in flight:
 // the bound can leave a tail out. firstTaskID, when set, leads the batch.
-// ForceDeliverFor, its only caller, has already refused a working pane.
+// ForceDeliverFor, its only caller, has already refused a working pane. Tasks
+// holding a guard denial are left out: the guard road owns their re-drive.
 func redriveInFlightTasks(session, role string, provider Provider, firstTaskID string) int {
 	tasks, err := ListTasks(session, TaskInFlight)
 	if err != nil {
 		return 0
 	}
+	tasks = withoutGuardOwned(session, tasks)
 	msgs := redriveFirst(redriveMessages(tasks, role, time.Now().Unix()), firstTaskID)
 	if len(msgs) == 0 {
 		return 0
@@ -188,8 +190,20 @@ func redriveText(session, role string, provider Provider, text string) error {
 // into its role's pane — the graph executor's per-dispatch redrive.
 // ForceDeliver's force path redrives every in-flight task for the role,
 // which would duplicate unrelated work the agent legitimately holds; a
-// graph node owns only its own dispatch.
+// graph node owns only its own dispatch. A task holding a guard denial is
+// refused: the guard road owns its re-drive (GuardDenialOwns, MUX-190).
 func RedriveTask(session string, t Task) bool {
+	if GuardDenialOwns(session, t.ID) {
+		LogLifecycle(session, "info", "deliver", "redrive-withheld-guard-denied",
+			fmt.Sprintf("%s: task %s — the guard road owns its re-drive", WindowForRole(t.To), t.ID))
+		return false
+	}
+	return redriveTask(session, t)
+}
+
+// redriveTask is RedriveTask without the guard-ownership refusal — the guard
+// road's own re-drive.
+func redriveTask(session string, t Task) bool {
 	role := WindowForRole(t.To)
 	provider := ResolveProvider(role)
 	msgs := redriveMessages([]Task{t}, role, time.Now().Unix())
@@ -299,14 +313,17 @@ var redriveNewlines = strings.NewReplacer("\r\n", " ⏎ ", "\n", " ⏎ ", "\r", 
 // redriveBlock renders one re-driven request. Its reply goes to the request's
 // ReplyTarget — read from its log line (replyTargetFor), so a `daemon`
 // dispatch answers edit and a chain request its reply_role — never the raw
-// sender, which may be no bus role at all.
+// sender, which may be no bus role at all. A request the guard refused a
+// command on carries the guard's reason, so the agent is told what to change
+// (MUX-190) — on every re-drive road, the stall watchdog's included.
 func redriveBlock(session string, m Message) string {
 	target := replyTargetFor(session, Task{ID: m.ID, From: m.From})
 	if target == "" || !IsKnownRole(target) {
 		target = "edit"
 	}
-	return fmt.Sprintf(" | [%s] from %s [%s:%s]: %s — To reply: %s",
-		m.ID, m.From, m.Type, m.Action, redriveNewlines.Replace(m.Payload), buildReplyCommand(target, m.ID))
+	return fmt.Sprintf(" | [%s] from %s [%s:%s]: %s%s — To reply: %s",
+		m.ID, m.From, m.Type, m.Action, redriveNewlines.Replace(m.Payload),
+		guardDenialRedriveText(session, m.ID), buildReplyCommand(target, m.ID))
 }
 
 // redriveMessages maps a role's live in-flight tasks back to injectable

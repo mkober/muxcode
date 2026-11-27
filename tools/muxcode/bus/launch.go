@@ -883,15 +883,23 @@ func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
 		m.Payload = autoStartupTaskPayload
 	}
 	_ = SendNoCC(session, m)
+	logAgentLaunch(session, role, cli, reason, "")
+}
 
-	if session != "" {
-		logCLI := cli
-		if logCLI == "" {
-			logCLI = "claude"
-		}
-		LogLifecycle(session, "info", "agent", "launch",
-			fmt.Sprintf("role=%s cli=%s reason=%s", role, logCLI, reason.logName()))
+// logAgentLaunch writes the `launch` lifecycle row; worker, when set, names
+// the spawn identity a worker launched role's definition under.
+func logAgentLaunch(session, role, cli string, reason LaunchReason, worker string) {
+	if session == "" {
+		return
 	}
+	if cli == "" {
+		cli = "claude"
+	}
+	detail := fmt.Sprintf("role=%s cli=%s reason=%s", role, cli, reason.logName())
+	if worker != "" {
+		detail += " as=" + worker
+	}
+	LogLifecycle(session, "info", "agent", "launch", detail)
 }
 
 // retirePendingStartups removes every unread request:startup from role's inbox
@@ -1059,6 +1067,15 @@ func RunAgentLaunch(role string) error {
 // resolves one with findLaunchResumeID. Providers other
 // than Claude Code cannot resume: the id is dropped with a `resume-ignored`
 // lifecycle row and the agent launches fresh with its normal flags (MUX-126).
+//
+// A spawn worker launches role's definition under its own bus identity
+// (AGENT_ROLE=spawn-…, set by spawnLaunchCommand), so the launch steps keyed on
+// role — the startup request and retiring pending ones, clearing in-flight
+// tasks, the agent-defs and sandbox stamps — belong to role's own agent and are
+// skipped; only the launch row is written, naming the worker. Before, every
+// edit-based graph worker sent the live edit agent a stray startup request,
+// cleared the edit tasks it had read and not yet answered, and restamped edit
+// with the installed state, which can hide a reload edit still needs.
 func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 	if sessionID != "" && sessionID != ResumeAuto && !ValidResumeSessionID(sessionID) {
 		return fmt.Errorf("invalid resume session id %q: want a Claude Code session UUID", sessionID)
@@ -1086,19 +1103,22 @@ func RunAgentLaunchResume(role, sessionID string, reason LaunchReason) error {
 		return err
 	}
 
-	// Pre-launch: startup inbox message + lifecycle log
 	binary, launchArgs := cfg.BuildExecArgs()
-	PreLaunchSetup(role, session, binary, reason)
+	if worker := os.Getenv("AGENT_ROLE"); IsSpawnRole(worker) {
+		logAgentLaunch(session, role, binary, reason, worker)
+	} else {
+		PreLaunchSetup(role, session, binary, reason)
 
-	// Consumed tasks a prior instance left in flight — see ClearInFlightTasksForRole.
-	if n := ClearInFlightTasksForRole(session, role, fmt.Sprintf("%s relaunched (reason=%s)", role, reason.logName())); n > 0 {
-		LogLifecycle(session, "info", "launch", "cleared-inflight-tasks",
-			fmt.Sprintf("%s: %d stale in-flight task(s) cleared on launch", role, n))
+		// Consumed tasks a prior instance left in flight — see ClearInFlightTasksForRole.
+		if n := ClearInFlightTasksForRole(session, role, fmt.Sprintf("%s relaunched (reason=%s)", role, reason.logName())); n > 0 {
+			LogLifecycle(session, "info", "launch", "cleared-inflight-tasks",
+				fmt.Sprintf("%s: %d stale in-flight task(s) cleared on launch", role, n))
+		}
+
+		// Before exec: the agent-defs watchdog compares these stamps with the installed state.
+		StampAgentDefHash(session, role)
+		StampLaunchSandbox(session, role)
 	}
-
-	// Before exec: the agent-defs watchdog compares these stamps with the installed state.
-	StampAgentDefHash(session, role)
-	StampLaunchSandbox(session, role)
 
 	// Activate Python venv if found
 	if cfg.VenvDir != "" {
