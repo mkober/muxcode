@@ -41,6 +41,12 @@
 // filled — what an agent that did the work does. The stub never answers its
 // listener's messages, so a request it consumed stays unanswered until a
 // re-drive hands it a command to run.
+//
+// While the file named by CLAUDE_STUB_BUSY_FILE holds "1" the pane shows
+// Claude's working spinner, refreshed every second, so AgentIsWorking reads a
+// live turn (MUX-190's scripts/test-guard-denied-redrive.sh); when it stops
+// holding "1" the stub prints enough prompt rows to push the spinner out of
+// the pane's live tail (recoverableIdleTailLines), and reads idle again.
 package main
 
 import (
@@ -116,6 +122,7 @@ func main() {
 		os.Exit(0)
 	}()
 
+	go showBusy()
 	fmt.Print("❯ \n")
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
@@ -153,6 +160,25 @@ func handleTyped(line string) {
 	}
 	cmd = strings.ReplaceAll(cmd, "<your one-line summary>", "Re-drive answered. EXIT=0")
 	_ = exec.Command("bash", "-c", cmd).Run()
+}
+
+// showBusy renders the working spinner while CLAUDE_STUB_BUSY_FILE holds "1"
+// — see the package doc.
+func showBusy() {
+	busy := false
+	for secs := 1; ; time.Sleep(time.Second) {
+		b, _ := os.ReadFile(os.Getenv("CLAUDE_STUB_BUSY_FILE"))
+		now := strings.TrimSpace(string(b)) == "1"
+		switch {
+		case now:
+			fmt.Printf("✻ Working… (%ds · esc to interrupt)\n", secs)
+			secs++
+		case busy:
+			fmt.Print(strings.Repeat("❯ \n", 12))
+			secs = 1
+		}
+		busy = now
+	}
 }
 
 // exitDelay holds a /exit — see the package doc.

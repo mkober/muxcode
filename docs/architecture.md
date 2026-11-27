@@ -226,6 +226,23 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
    MUXCODE_SPAWN_IDLE_SECS (600) — spawn-reaped; window closed, entry completed
 ```
 
+**A worker launch touches nothing of its base role**
+([MUX-188](requirements/completed/MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md)). Step 4
+runs the **base** role's launch under the worker's own bus identity (`AGENT_ROLE=spawn-…`), so every launch
+step keyed on the role would act on the live base agent. `RunAgentLaunchResume` therefore tests
+`IsSpawnRole(AGENT_ROLE)` and, for a worker, on the fresh and the resume road alike, writes only the
+`launch` lifecycle row — `role=<base> cli=… reason=spawn as=<spawn role>`:
+
+| Launch step | Base-role launch | Worker launch |
+|-------------|------------------|---------------|
+| `request:startup` bootstrap, and retiring unread ones (`PreLaunchSetup`) | Sent to the role | Skipped — a worker gets no startup bootstrap; the `spawn-task` seed of step 3 is what starts it, and it is the only request in its inbox at start |
+| `ClearInFlightTasksForRole` | Clears tasks a prior instance read and left in flight | Skipped — those are the live base agent's work |
+| `StampAgentDefHash`, `StampLaunchSandbox` | Stamps what the agent launched with | Skipped — the stamps describe the base agent, and restamping could hide a reload it still needs |
+
+Before, each edit-based graph worker sent the live edit agent a stray `request:startup`, removed edit's own
+unread one, cleared the edit tasks it had read and not yet answered, and restamped edit with the installed
+state; the stray also read as edit's last request in `graph status`'s "Triggered by".
+
 **One worker per run, one per agent** (MUX-195). `acquireSpawnWorker` (graph nodes) and
 `AcquireAgentWorker` (`spawn start`) are the only roads to a worker. Graph order: the run's own worker
 (`reserveRunWorker`, keyed on run + base role, so `implement` and `fix` share it; a worker another node of
