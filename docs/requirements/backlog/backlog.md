@@ -171,6 +171,7 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
 | [`MUX-239`](./MUX-239-validate-accepts-a-review-node-with-no-failure-route.md) | `Validate()` Accepts a Graph Whose Review Node Has No Failure Route | Medium | — |
+| [`MUX-246`](./MUX-246-daemon-auto-approves-gates-on-self-approval-runs.md) | The Daemon Auto-Approves Gates on Runs Whose Creator May Self-Approve | Medium | — |
 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The Prompt Profile Denies Its Own Discovery Commands | Low | — |
 | [`MUX-138`](./MUX-138-github-versioning-releases.md) | GitHub versioning & releases | Medium | — |
 | [`MUX-011`](./MUX-011-opencode-plugin-hook-bridge.md) | OpenCode Plugin Hook Bridge | High | — |
