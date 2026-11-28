@@ -52,24 +52,37 @@ type sendExited int
 // exit code: 0 when Send returns, else the code it handed sendExit.
 func runSendAs(t *testing.T, role string, args ...string) (out string, code int) {
 	t.Helper()
+	out, _, code = runSendCapture(t, role, args...)
+	return out, code
+}
+
+// runSendCapture is runSendAs returning stderr as well, kept apart from stdout.
+func runSendCapture(t *testing.T, role string, args ...string) (out, errOut string, code int) {
+	t.Helper()
 	t.Setenv("AGENT_ROLE", role)
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("Pipe: %v", err)
+	pipe := func() (*os.File, chan string) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("Pipe: %v", err)
+		}
+		done := make(chan string)
+		go func() {
+			b, _ := io.ReadAll(r)
+			r.Close()
+			done <- string(b)
+		}()
+		return w, done
 	}
-	savedOut, savedExit := os.Stdout, sendExit
-	os.Stdout = w
+	wOut, outDone := pipe()
+	wErr, errDone := pipe()
+	savedOut, savedErr, savedExit := os.Stdout, os.Stderr, sendExit
+	os.Stdout, os.Stderr = wOut, wErr
 	sendExit = func(c int) { panic(sendExited(c)) }
-	done := make(chan string)
-	go func() {
-		b, _ := io.ReadAll(r)
-		r.Close()
-		done <- string(b)
-	}()
 	defer func() {
-		os.Stdout, sendExit = savedOut, savedExit
-		w.Close()
-		out = <-done
+		os.Stdout, os.Stderr, sendExit = savedOut, savedErr, savedExit
+		wOut.Close()
+		wErr.Close()
+		out, errOut = <-outDone, <-errDone
 		if p := recover(); p != nil {
 			c, ok := p.(sendExited)
 			if !ok {
@@ -79,7 +92,7 @@ func runSendAs(t *testing.T, role string, args ...string) (out string, code int)
 		}
 	}()
 	Send(args)
-	return "", 0
+	return "", "", 0
 }
 
 // inboxPayloadCount counts rows in role's inbox carrying payload.

@@ -307,7 +307,9 @@ func redriveFirst(msgs []Message, id string) []Message {
 }
 
 // redriveNewlines flattens a payload to one line: a newline typed into the
-// pane would submit the prompt before the reply command.
+// pane would submit the prompt before the reply command. Every road that types
+// a payload uses it — the re-drive, and the OpenCode and scrape-road Codex
+// wakes (MUX-010), which a `--payload-file` send can hand a multi-line one.
 var redriveNewlines = strings.NewReplacer("\r\n", " ⏎ ", "\n", " ⏎ ", "\r", " ⏎ ")
 
 // redriveBlock renders one re-driven request. Its reply goes to the request's

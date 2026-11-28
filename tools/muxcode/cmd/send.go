@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -26,7 +27,7 @@ func notSent(format string, args ...any) {
 }
 
 // Send handles the "muxcode send" subcommand.
-// Usage: muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
+// Usage: muxcode send <to> <action> ("<payload>" | - | --payload-file PATH) [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
 //
 // A request matching the sender's own in-flight task for (to, action) is not
 // sent again: --track reports NOT SENT naming that task and exits 1, --wait
@@ -48,7 +49,8 @@ func notSent(format string, args ...any) {
 // are printed in its place.
 func Send(args []string) {
 	if len(args) < 2 {
-		fmt.Fprintf(os.Stderr, "Usage: muxcode send <to> <action> \"<payload>\" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]\n")
+		fmt.Fprintf(os.Stderr, "Usage: muxcode send <to> <action> (\"<payload>\" | - | --payload-file PATH) [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]\n")
+		fmt.Fprintf(os.Stderr, "  - reads the payload from stdin; --payload-file sends a file's content — either carries a long or multi-line payload on a one-line command\n")
 		fmt.Fprintf(os.Stderr, "  --reply-to on a response must name the request it answers; an id naming no message is attached to your one open request from <to>, else the reply is refused (exit 1) and a reply command printed for each open request\n")
 		os.Exit(1)
 	}
@@ -56,62 +58,12 @@ func Send(args []string) {
 	to := args[0]
 	action := args[1]
 
-	// Scan all remaining args for flags first, then determine payload source.
-	payload := ""
-	msgType := "request"
-	replyTo := ""
-	noNotify := false
-	force := false
-	wait := false
-	track := false
-	payloadSet := false
-
-	remaining := args[2:]
-	for i := 0; i < len(remaining); i++ {
-		switch remaining[i] {
-		case "--type":
-			if i+1 >= len(remaining) {
-				fmt.Fprintf(os.Stderr, "Error: --type requires a value\n")
-				os.Exit(1)
-			}
-			i++
-			msgType = remaining[i]
-		case "--reply-to":
-			if i+1 >= len(remaining) {
-				fmt.Fprintf(os.Stderr, "Error: --reply-to requires a value\n")
-				os.Exit(1)
-			}
-			i++
-			replyTo = remaining[i]
-		case "--no-notify":
-			noNotify = true
-		case "--force":
-			force = true
-		case "--wait":
-			wait = true
-		case "--track":
-			track = true
-		default:
-			if strings.HasPrefix(remaining[i], "--") {
-				fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", remaining[i])
-				os.Exit(1)
-			}
-			// First non-flag argument is the payload
-			if !payloadSet {
-				payload = remaining[i]
-				payloadSet = true
-			} else {
-				fmt.Fprintf(os.Stderr, "Unexpected argument: %s\n", remaining[i])
-				os.Exit(1)
-			}
-		}
-	}
-
-	// --wait and --track are mutually exclusive
-	if wait && track {
-		fmt.Fprintf(os.Stderr, "Error: --wait and --track are mutually exclusive\n")
+	f, err := parseSendFlags(args[2:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	msgType, replyTo, noNotify, force, wait, track := f.msgType, f.replyTo, f.noNotify, f.force, f.wait, f.track
 
 	// Default request sends to async tracking unless --wait is explicitly given.
 	// A bare `muxcode send <role> <action> "..."` (request) now creates a
@@ -126,14 +78,18 @@ func Send(args []string) {
 		track = true
 	}
 
-	if !payloadSet {
-		fmt.Fprintf(os.Stderr, "Error: payload is required\n")
+	payload, byRef, err := resolvePayload(f, sendStdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v — nothing sent\n", err)
 		os.Exit(1)
 	}
 
-	// Validate payload content
-	for _, w := range validatePayload(payload) {
-		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+	if warnings := validatePayload(payload); !byRef && len(warnings) > 0 {
+		fmt.Fprint(os.Stderr, payloadWarningBlock(warnings))
+		if sendStrict() {
+			notSent("%s %s — %s refuses the payload the warning above names: %s", to, action, sendStrictEnv, strings.Join(warnings, "; "))
+			return
+		}
 	}
 
 	// Validate target role
@@ -245,7 +201,6 @@ func Send(args []string) {
 	// --force routes through SendForce, bypassing both the window dedup
 	// and the in-flight request guard — the explicit-override contract.
 	var sent bool
-	var err error
 	if force {
 		err = bus.SendForce(session, msg)
 		sent = err == nil
@@ -359,6 +314,11 @@ func responseAnswers(m bus.Message, target, host, action, msgID string) bool {
 // responsible for any timeout messaging.
 //
 // Only a response that correlates counts as the answer — see responseAnswers.
+//
+// While it waits it prints `still waiting on <target> (<n>s elapsed)` to
+// stderr every waitHeartbeatEvery (30 s), checked after each poll's reply
+// checks, so a reply landing within the first interval prints none and stdout
+// carries only what it always has (MUX-010: a healthy --wait was silent).
 func waitForResponse(session, role, target, action, msgID string, timeout int) (bool, string) {
 	if timeout <= 0 {
 		timeout = resolveWaitTimeout()
@@ -374,10 +334,12 @@ func waitForResponse(session, role, target, action, msgID string, timeout int) (
 	// Poll delivery status at 500ms — just stat + read a small JSON file,
 	// no inbox locking or contention with --poll.
 	const pollMs = 500
-	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
+	start := time.Now()
+	deadline := start.Add(time.Duration(timeout) * time.Second)
+	nextHeartbeat := start.Add(waitHeartbeatEvery)
 
 	var polls int
-	for time.Now().Before(deadline) {
+	for ; time.Now().Before(deadline); nextHeartbeat = waitHeartbeat(waitHeartbeatOut, target, start, nextHeartbeat) {
 		time.Sleep(time.Duration(pollMs) * time.Millisecond)
 		polls++
 
@@ -443,6 +405,23 @@ func waitForResponse(session, role, target, action, msgID string, timeout int) (
 	}
 
 	return false, ""
+}
+
+// waitHeartbeatEvery is waitForResponse's heartbeat interval and
+// waitHeartbeatOut its writer; tests shorten the one and capture the other.
+var (
+	waitHeartbeatEvery           = 30 * time.Second
+	waitHeartbeatOut   io.Writer = os.Stderr
+)
+
+// waitHeartbeat prints the heartbeat once next has passed and returns when
+// the following one is due.
+func waitHeartbeat(w io.Writer, target string, start, next time.Time) time.Time {
+	if now := time.Now(); !now.Before(next) {
+		fmt.Fprintf(w, "still waiting on %s (%ds elapsed)\n", target, int(now.Sub(start).Seconds()))
+		return now.Add(waitHeartbeatEvery)
+	}
+	return next
 }
 
 // degradeWaitSecs returns the maximum seconds a --wait blocks before degrading
@@ -699,6 +678,149 @@ func consumeExistingResponses(session, from, to, action, payload string) bool {
 	}
 	fmt.Printf("\nRe-send with --force to deliver anyway.\n")
 	return true
+}
+
+// sendStdin is where `muxcode send <to> <action> -` reads its payload; tests
+// replace it.
+var sendStdin io.Reader = os.Stdin
+
+// sendFlags is `muxcode send`'s parsed command line after <to> <action>.
+type sendFlags struct {
+	inline         string
+	inlineSet      bool
+	payloadFile    string
+	payloadFileSet bool
+	msgType        string
+	replyTo        string
+	noNotify       bool
+	force          bool
+	wait           bool
+	track          bool
+}
+
+// parseSendFlags parses everything after <to> <action>. Each error is the
+// line Send prints before exiting 1, so a refused command line reaches no
+// send. --payload-file may be given once, with a non-empty path: a repeat
+// silently kept the last path, and an empty one vanished beside an inline
+// payload (MUX-010 review).
+func parseSendFlags(remaining []string) (sendFlags, error) {
+	f := sendFlags{msgType: "request"}
+	value := func(i int, flag, what string) (string, error) {
+		if i+1 >= len(remaining) {
+			return "", fmt.Errorf("Error: %s requires %s", flag, what)
+		}
+		return remaining[i+1], nil
+	}
+	for i := 0; i < len(remaining); i++ {
+		var err error
+		switch remaining[i] {
+		case "--type":
+			f.msgType, err = value(i, "--type", "a value")
+			i++
+		case "--reply-to":
+			f.replyTo, err = value(i, "--reply-to", "a value")
+			i++
+		case "--no-notify":
+			f.noNotify = true
+		case "--force":
+			f.force = true
+		case "--wait":
+			f.wait = true
+		case "--track":
+			f.track = true
+		case "--payload-file":
+			if f.payloadFileSet {
+				return f, errors.New("Error: --payload-file given twice — give the payload once — nothing sent")
+			}
+			f.payloadFile, err = value(i, "--payload-file", "a path")
+			if err == nil && f.payloadFile == "" {
+				err = errors.New("Error: --payload-file requires a non-empty path — nothing sent")
+			}
+			f.payloadFileSet = true
+			i++
+		default:
+			switch {
+			case strings.HasPrefix(remaining[i], "--"):
+				err = fmt.Errorf("Unknown flag: %s", remaining[i])
+			case f.inlineSet:
+				err = fmt.Errorf("Unexpected argument: %s", remaining[i])
+			default:
+				f.inline, f.inlineSet = remaining[i], true
+			}
+		}
+		if err != nil {
+			return f, err
+		}
+	}
+	if f.wait && f.track {
+		return f, errors.New("Error: --wait and --track are mutually exclusive")
+	}
+	return f, nil
+}
+
+// resolvePayload returns the payload from its one source — the inline
+// argument, `--payload-file <path>`, or stdin when the inline argument is `-`
+// — and whether it came by reference (file or stdin), which skips
+// validatePayload's newline and length warnings: passing it by reference is
+// the remedy those warnings ask for, and the command line stays one line the
+// `Bash(muxcode *)` glob matches (MUX-010). A by-reference payload is sent
+// byte for byte, trailing newline included, and is still the same message to
+// every later check — the inbox cap, the authority guards. No source, more
+// than one, or a file that cannot be read is an error, and nothing is sent.
+func resolvePayload(f sendFlags, stdin io.Reader) (payload string, byRef bool, err error) {
+	switch {
+	case f.payloadFileSet && f.inlineSet:
+		return "", false, fmt.Errorf("give the payload once: --payload-file %s and an inline payload (%q) were both given", f.payloadFile, f.inline)
+	case f.payloadFileSet:
+		data, err := os.ReadFile(f.payloadFile)
+		if err != nil {
+			return "", false, fmt.Errorf("--payload-file %s: %w", f.payloadFile, err)
+		}
+		return string(data), true, nil
+	case f.inlineSet && f.inline == "-":
+		data, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", false, fmt.Errorf("reading the payload from stdin: %w", err)
+		}
+		return string(data), true, nil
+	case f.inlineSet:
+		return f.inline, false, nil
+	}
+	return "", false, errors.New("payload is required (inline, --payload-file <path>, or - for stdin)")
+}
+
+// sendStrictEnv opts a session into refusing what payloadWarningBlock warns
+// about (MUX-010).
+const sendStrictEnv = "MUXCODE_SEND_STRICT"
+
+// sendStrict reports MUXCODE_SEND_STRICT on: any value but empty, 0, false,
+// no or off (trimmed, any case) — so `MUXCODE_SEND_STRICT=false` reads as off,
+// as a reader would expect, rather than as a set variable.
+func sendStrict() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(sendStrictEnv))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
+}
+
+// payloadWarningBlock renders validatePayload's causes as one block on
+// stderr, every line prefixed so it cannot be read past: the cause, the
+// consequence — a command line holding such a payload misses the
+// `Bash(muxcode *)` permission glob, so the agent is shown a permission prompt
+// instead of the send running — and the two remedies. Before MUX-010 it was
+// one plain "Warning:" line per cause, and senders went on ignoring it.
+func payloadWarningBlock(warnings []string) string {
+	var b strings.Builder
+	b.WriteString("!! muxcode send: WARNING — this payload is unfit for a delegation\n")
+	for _, w := range warnings {
+		b.WriteString("!!   cause: " + w + "\n")
+	}
+	b.WriteString("!!   consequence: a command line carrying it misses the Bash(muxcode *) permission glob — the agent gets a permission prompt instead of the send\n")
+	b.WriteString("!!   remedy: send it by reference — muxcode send <to> <action> --payload-file <path>  (or - to read stdin)\n")
+	b.WriteString("!!   remedy: or write it to /tmp/<name>.md and send a one-line pointer to that file\n")
+	b.WriteString("!!   " + sendStrictEnv + "=1 refuses such payloads instead of sending them\n")
+	return b.String()
 }
 
 // validatePayload returns warning strings for payload issues.

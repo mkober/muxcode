@@ -527,6 +527,60 @@ func TestOpenCodeSendWakeUp_InjectsAtComposer(t *testing.T) {
 	}
 }
 
+// MUX-010: a payload that reaches a typed wake road with newlines in it —
+// what a `--payload-file` send carries — is typed as one line, its reply
+// instruction in the same keystrokes: a newline typed into the composer is
+// Enter, and would submit the prompt mid-payload with the reply instruction
+// left to arrive as a second, orphaned prompt. Control: a one-line payload is
+// typed unchanged.
+func TestTypedWakeRoads_FlattenMultiLinePayloads(t *testing.T) {
+	for _, road := range []struct {
+		name     string
+		provider interface {
+			SendWakeUp(session, role string, force bool) error
+		}
+		pane string
+	}{
+		{"opencode", &OpenCodeProvider{}, "╭──────╮\n│ >    │\n╰──────╯"},
+		{"codex scrape road", &CodexProvider{}, codexComposerPane},
+	} {
+		for _, c := range []struct {
+			name, payload, want string
+		}{
+			{"two lines", "line one\nline two\r\nline three", "line one ⏎ line two ⏎ line three"},
+			{"control: one line", "do the thing", "do the thing"},
+		} {
+			t.Run(road.name+"/"+c.name, func(t *testing.T) {
+				session := "inject-flatten"
+				injectionTestSession(t, session)
+				calls := stubInjectionPane(t, road.pane, nil)
+				m := Message{ID: "R1", From: "edit", To: "run", Type: "request", Action: "run", Payload: c.payload}
+				if err := SendNoCC(session, m); err != nil {
+					t.Fatal(err)
+				}
+				if err := road.provider.SendWakeUp(session, "run", true); err != nil {
+					t.Fatalf("SendWakeUp: %v", err)
+				}
+				var typed []string
+				for _, call := range *calls {
+					if n := len(call); n > 3 && call[0] == "send-keys" && call[n-3] == "-l" {
+						typed = append(typed, call[n-1])
+					}
+				}
+				if len(typed) != 1 {
+					t.Fatalf("typed text calls = %q, want one", typed)
+				}
+				if strings.ContainsAny(typed[0], "\r\n") || !strings.Contains(typed[0], c.want) {
+					t.Errorf("typed %q, want one line holding %q", typed[0], c.want)
+				}
+				if !strings.Contains(typed[0], "--reply-to R1") {
+					t.Errorf("typed %q, want the reply instruction in the same keystrokes", typed[0])
+				}
+			})
+		}
+	}
+}
+
 // Claude's wake path is reached by `deliver --force`, which skips the idle
 // gate — the one road that can type into a dead Claude pane.
 func TestSendWakeUpWithText_ClaudeRefusesShell(t *testing.T) {

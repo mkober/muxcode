@@ -89,7 +89,7 @@ criteria and phases rewritten to them:
 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | 0/22 | The user's choice: accept and document the guard's shape gaps — the guard is a delegation nudge, bus authority checks are the boundary; the local-LLM allowlist matches plain commands only |
 | [`MUX-166`](../completed/MUX-166-run-builds-on-stale-base-no-freshness-gate.md) | closed 2026-11-25 at 40/40 | The user's choice: gate at 5 commits behind `origin/main` by default, `MUXCODE_FRESHNESS_MAX_BEHIND` to change it; overlap always gates. Widened on the user's decision of 2026-11-25 to templates 55, 60, 80 and 90 |
 | [`MUX-185`](../completed/MUX-185-history-row-provenance-declared-not-proven.md) | closed 2026-11-24 at 43/43 | One-line shortcut threat model; witness corroboration plus guard, daemon secret deferred; history files under any bus dir; `actor` is person or agent only; rely on `since`, no migration |
-| [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | 0/35 | Split: this spec keeps the hygiene half — `--payload-file` and stdin, a `--wait` stderr heartbeat about every 30 s, a louder warning, opt-in `MUXCODE_SEND_STRICT`, `--track` documented as the default. The frozen-agent watchdog is MUX-241 |
+| [`MUX-010`](../completed/MUX-010-delegation-message-hygiene.md) | closed 2026-11-28 at 39/39 | Split: this spec keeps the hygiene half — `--payload-file` and stdin, a `--wait` stderr heartbeat about every 30 s, a louder warning, opt-in `MUXCODE_SEND_STRICT`, `--track` documented as the default. The frozen-agent watchdog is MUX-241. As shipped the typed wakes also flatten newlines and `FormatMessage` indents continuation lines, both found by the spec's own survey; the strict-mode off values are edit's call |
 
 Points the rewrites left for a spec's own first phase, none of them a parked-grade decision:
 MUX-231 (detect by tmux hook or daemon poll; what the five remote-control callers of
@@ -125,20 +125,19 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 |---|---|----|--------|-----|------------|
 | 1 | 0 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` fails, passes on rerun, and nothing recorded which test failed | High | — · ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
 | 2 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
-| 3 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | A long or multi-line delegation is only warned about, and has no first-class road | Medium | — |
-| 4 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
-| 5 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
-| 6 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 7 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
-| 8 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
-| 9 | 6 | [`MUX-240`](./MUX-240-idle-task-rescue-acts-on-a-role-with-live-background-work.md) | Idle-task rescue re-queues and times out a task whose role has live background work | Medium | — |
-| 10 | 6 | [`MUX-239`](./MUX-239-validate-accepts-a-review-node-with-no-failure-route.md) | `Validate()` accepts a graph whose review node has no failure route | Medium | — |
-| 11 | 6 | [`MUX-238`](./MUX-238-nothing-fails-when-a-test-binds-a-socket.md) | Nothing fails when a test binds a socket | Low | — |
-| 12 | 6 | [`MUX-241`](./MUX-241-no-watchdog-recovers-a-frozen-but-alive-agent.md) | No watchdog recovers a frozen-but-alive agent | Medium | — |
-| 13 | 6 | [`MUX-243`](./MUX-243-a-halt-that-halts.md) | A halt request does not stop an agent's work, and a reload brings it back | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 14 | 6 | [`MUX-244`](./MUX-244-negative-control-deletion-is-not-checked.md) | Deleting or inverting a negative control leaves the suite green | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 15 | 6 | [`MUX-245`](./MUX-245-a-worker-certifies-its-own-change.md) | Nothing says whose verdict counts when a worker certifies its own change | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 16 | 6 | [`MUX-247`](./MUX-247-bus-suite-fails-under-codex-workspace-write-sandbox.md) | The bus suite fails under Codex's opt-in `workspace-write` sandbox | Medium | — |
+| 3 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
+| 4 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
+| 5 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 6 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
+| 7 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
+| 8 | 6 | [`MUX-240`](./MUX-240-idle-task-rescue-acts-on-a-role-with-live-background-work.md) | Idle-task rescue re-queues and times out a task whose role has live background work | Medium | — |
+| 9 | 6 | [`MUX-239`](./MUX-239-validate-accepts-a-review-node-with-no-failure-route.md) | `Validate()` accepts a graph whose review node has no failure route | Medium | — |
+| 10 | 6 | [`MUX-238`](./MUX-238-nothing-fails-when-a-test-binds-a-socket.md) | Nothing fails when a test binds a socket | Low | — |
+| 11 | 6 | [`MUX-241`](./MUX-241-no-watchdog-recovers-a-frozen-but-alive-agent.md) | No watchdog recovers a frozen-but-alive agent | Medium | — |
+| 12 | 6 | [`MUX-243`](./MUX-243-a-halt-that-halts.md) | A halt request does not stop an agent's work, and a reload brings it back | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 13 | 6 | [`MUX-244`](./MUX-244-negative-control-deletion-is-not-checked.md) | Deleting or inverting a negative control leaves the suite green | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 14 | 6 | [`MUX-245`](./MUX-245-a-worker-certifies-its-own-change.md) | Nothing says whose verdict counts when a worker certifies its own change | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 15 | 6 | [`MUX-247`](./MUX-247-bus-suite-fails-under-codex-workspace-write-sandbox.md) | The bus suite fails under Codex's opt-in `workspace-write` sandbox | Medium | — |
 
 ### Reliability & observability
 
@@ -153,7 +152,6 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | [`MUX-125`](./MUX-125-usage-and-billing-modal.md) | Usage and Billing Modal | Medium | — |
 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-Agent Turn Budget — Attribute, Then Fix | High | — |
 | [`MUX-249`](./MUX-249-verify-closed-form-startup-bounded-against-live-local-model.md) | Verify the Closed-Form Startup Is Bounded Against a Live Local Model (task; needs Ollama) | Low | [MUX-110](../completed/MUX-110-harness-startup-tool-loop-exhaustion.md) |
-| [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | Delegation Message Hygiene | Medium | — |
 | [`MUX-012`](./MUX-012-remove-gated-pane-scrape-delivery.md) | Remove gated pane-scrape delivery machinery | Low | — |
 | [`MUX-013`](./MUX-013-channels-message-transport.md) | Channels-based message transport | Medium | — |
 | [`MUX-230`](./MUX-230-integration-scripts-opt-out-of-the-consumer-guard.md) | Integration Scripts Run With the Consumer Guard Turned Off | Medium | [MUX-145](../completed/MUX-145-messages-routed-to-windowless-role.md) |
@@ -416,6 +414,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-194`](../completed/MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock |
 | [`MUX-111`](../completed/MUX-111-harness-reply-miscorrelation.md) | Harness Reply Correlates to the Batch's Last Message, Not the Request |
 | [`MUX-110`](../completed/MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness Startup Message Exhausts the Tool Loop |
+| [`MUX-010`](../completed/MUX-010-delegation-message-hygiene.md) | Delegation Message Hygiene |
 
 ## Ideas without specs
 

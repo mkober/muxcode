@@ -175,7 +175,7 @@ func (p *OpenCodeProvider) SendWakeUp(session, role string, force bool) error {
 			continue
 		}
 		if m.Payload != "" {
-			parts = append(parts, m.Payload)
+			parts = append(parts, redriveNewlines.Replace(m.Payload))
 		} else {
 			parts = append(parts, fmt.Sprintf("You have a new %s request from %s", m.Action, m.From))
 		}
