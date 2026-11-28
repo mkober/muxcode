@@ -937,6 +937,20 @@ const (
 	defaultTmpFootprintLimit = 1 << 30 // 1 GiB of muxcode's own /tmp usage
 )
 
+// DiskPressureBackoffSecs is the ceiling on the disk-pressure back-off: after
+// three cycles under pressure that freed no byte, the cleanup ladder is held
+// until the footprint moves, and re-checked at least this often (MUX-160,
+// Decision 3). Override with MUXCODE_DISK_PRESSURE_BACKOFF in seconds; 0
+// disables the back-off, so every cycle runs the ladder as before.
+func DiskPressureBackoffSecs() int64 {
+	if v := os.Getenv("MUXCODE_DISK_PRESSURE_BACKOFF"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 1800
+}
+
 // TmpFreeFloorBytes is the absolute free-space floor below which /tmp counts as
 // under pressure. Override with MUXCODE_TMP_FREE_FLOOR (accepts K/M/G suffixes).
 func TmpFreeFloorBytes() int64 {

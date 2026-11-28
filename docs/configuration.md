@@ -378,6 +378,25 @@ A session holds **one worker per graph run and one per spawning agent** ([MUX-19
 
 Both follow the standard resolution chain (env → config file). See [Agent Bus CLI → `muxcode spawn`](agent-bus.md#muxcode-spawn) for the four outcomes `spawn start` reports and [Architecture → Agent Spawn Flow](architecture.md#agent-spawn-flow) for the acquisition order.
 
+### Disk pressure
+
+The daemon checks `/tmp` every 60 s and runs a cleanup ladder when it is under pressure — see
+[Architecture → Disk-pressure cleanup](architecture.md#disk-pressure-cleanup) for the stages.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MUXCODE_TMP_CLEANUP_THRESHOLD` | `90` | An on/off switch only: `0` disables the check, any other value from 1 to 100 leaves it on. It was once a percent-used trigger; the percentage no longer triggers anything |
+| `MUXCODE_TMP_FREE_FLOOR` | `2G` | Free space on the `/tmp` filesystem below which it counts as under pressure (`K`/`M`/`G` suffixes) |
+| `MUXCODE_TMP_FOOTPRINT_LIMIT` | `1G` | Size of muxcode's own footprint — its `muxcode-*` entries under `/tmp`, the bus directories and the spawn tree — above which it counts as under pressure (`K`/`M`/`G` suffixes) |
+| `MUXCODE_DISK_PRESSURE_BACKOFF` | `1800` | Seconds. The ceiling on the back-off (`bus.DiskPressureBackoffSecs`, [MUX-160](requirements/completed/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)): after three consecutive pressure cycles that freed no byte, the ladder is held until the footprint moves, and re-checked at least this often. `0` disables the back-off, so every cycle runs the ladder |
+
+Two lifecycle rows report it (`muxcode lifecycle show --event disk-pressure`):
+
+| Event | Level | When | Detail |
+|-------|-------|------|--------|
+| `disk-pressure` | warn | A cycle that freed something, or an ineffective one when its alert fires | `/tmp free=… footprint=… volume=…% stale=… claude=… artifacts=… gocache=… freed=<bytes from every stage, stale included> top=<the three largest counted paths with sizes>` |
+| `disk-pressure-unclearable` | warn | Once per back-off episode, on the third consecutive zero-byte cycle | `3 cycles under pressure freed 0 B; footprint=<size> top=<path (size), …> — cleanup held until the footprint moves, re-checked every <N>s` |
+
 ### Integrations
 
 | Variable | Default | Description |
@@ -611,7 +630,7 @@ everything that reads the variable falls back to `muxcode bus-dir`.
 |------|------|
 | `/tmp/muxcode-analyze-{session}.trigger` | Analyze trigger, rewritten on every edit |
 | `/tmp/muxcode-preview-{session}.tmp` | Diff preview temp file |
-| `/tmp/muxcode-cache-<uid>/` | Codex package caches ([MUX-160](requirements/backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)) |
+| `/tmp/muxcode-cache-<uid>/` | Codex package caches ([MUX-160](requirements/completed/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)) |
 
 Stale cleanup scans the bus base, plus `/tmp` on the default base (preview files, triggers, legacy
 buses not yet migrated) and the spawn root; the disk-pressure footprint counts the bus base and still
