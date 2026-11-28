@@ -36,6 +36,8 @@ func (r LaunchReason) UserInitiated() bool {
 const (
 	startupRestorePayload  = "Session started — review last saved context from memory to restore session state."
 	autoStartupTaskPayload = "Agent started — search Jira for available stories and present them to the user for selection."
+	// localStartupRestorePayload: a local-model role's closed-form startup — see PreLaunchSetup.
+	localStartupRestorePayload = "Session started — run `muxcode memory context` once, then reply with one sentence summarizing what it shows. That reply finishes this task: run nothing else."
 )
 
 // autoStartupTaskEnabled reports whether a user-initiated launch of the auto

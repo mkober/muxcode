@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,8 +59,9 @@ func TestProcessBatch_SimpleResponse(t *testing.T) {
 }
 
 // recordingBus is a BusClient whose binary is a script appending each call's
-// argv, one argument per line, to a log; sends returns the `send` calls.
-func recordingBus(t *testing.T, role string) (*BusClient, func() [][]string) {
+// argv, one argument per line, to a log; calls(verb) returns the calls whose
+// first argument is verb ("send", "lifecycle").
+func recordingBus(t *testing.T, role string) (*BusClient, func(verb string) [][]string) {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls.log")
@@ -68,24 +70,112 @@ func recordingBus(t *testing.T, role string) (*BusClient, func() [][]string) {
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sends := func() [][]string {
+	calls := func(verb string) [][]string {
 		data, _ := os.ReadFile(log)
 		var calls [][]string
 		for _, call := range strings.Split(strings.TrimSuffix(string(data), "--end--\n"), "--end--\n") {
-			if args := strings.Split(strings.TrimSuffix(call, "\n"), "\n"); len(args) > 0 && args[0] == "send" {
+			if args := strings.Split(strings.TrimSuffix(call, "\n"), "\n"); len(args) > 0 && args[0] == verb {
 				calls = append(calls, args)
 			}
 		}
 		return calls
 	}
-	return &BusClient{BusDir: dir, Role: role, BinPath: bin}, sends
+	return &BusClient{BusDir: dir, Role: role, BinPath: bin}, calls
+}
+
+// toolLoopModel is a stub model that never stops calling tools — a distinct
+// `echo` each call, so the filter's repeat guard never steps in — counting
+// its calls.
+func toolLoopModel(t *testing.T) (*OllamaClient, *int) {
+	t.Helper()
+	n := 0
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		json.NewEncoder(w).Encode(ChatResponse{Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", ToolCalls: []ToolCall{{
+			ID: "call", Type: "function",
+			Function: FunctionCall{Name: "bash", Arguments: json.RawMessage(`{"command":"echo turn ` + strconv.Itoa(n) + `"}`)},
+		}}}}}})
+	}))
+	t.Cleanup(server.Close)
+	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
+	return ollama, &n
+}
+
+// MUX-110 Phase 1: a batch whose model never stops calling tools is terminal
+// and visible — its request is answered once with the exhaustion text under
+// its own id (which marks it responded, so nothing re-drives it), exactly one
+// harness-tool-loop-exhausted row names the role, the request and the turn
+// budget, the model is called a bounded number of times, and processBatch
+// reports failure — the empty-answer case once read as a success and reset
+// the circuit breaker. Negative control: a batch answered within budget
+// writes no exhaustion row, is answered as before and reports success.
+func TestProcessBatch_ExhaustionIsTerminalAndLogged(t *testing.T) {
+	request := Message{ID: "R1", From: "edit", To: "commit", Type: "request", Action: "commit", Payload: "Review your context"}
+	for _, c := range []struct {
+		name      string
+		exhausted bool
+		model     string // "loop": never stops calling tools; "empty": answers empty text; "text": answers
+		turns     string // the row's turns-used wording
+	}{
+		{"exhausted", true, "loop", "after 3 of its 3 turns"},
+		{"empty answers: names the turns used, not the budget", true, "empty", "after 2 of its 3 turns"}, // turn 1 is the forced tool-use retry
+		{"control: answered within budget", false, "text", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bus, calls := recordingBus(t, "commit")
+			cfg := Config{Role: "commit", Session: "test", BusDir: bus.BusDir, MaxTurns: 3}
+			model, n := textModel(t), new(int)
+			switch c.model {
+			case "loop":
+				model, n = toolLoopModel(t)
+			case "empty":
+				model = replyModel(t, "")
+			}
+			tools := []string{"Bash(echo *)"}
+			success := processBatch(context.Background(), cfg, bus, model, NewExecutor(tools), BuildToolDefs(tools), "system prompt", NewFilter("commit"), []Message{request}, &mockEventSink{}, nil)
+			if success == c.exhausted {
+				t.Errorf("processBatch success = %v, want %v — an exhausted batch must count as failed for the breaker", success, !c.exhausted)
+			}
+
+			sends, rows := calls("send"), calls("lifecycle")
+			if len(sends) != 1 {
+				t.Fatalf("sends = %v, want exactly one reply", sends)
+			}
+			reply := sends[0]
+			if n := len(reply); n < 7 || reply[1] != "edit" || reply[n-1] != "R1" || reply[n-2] != "--reply-to" {
+				t.Errorf("reply = %q, want one to edit under R1", reply)
+			}
+			if !c.exhausted {
+				if len(rows) != 0 || reply[3] == toolLoopExhausted {
+					t.Errorf("an answered batch: lifecycle calls %v, reply %q — want none and the model's answer", rows, reply[3])
+				}
+				return
+			}
+			if reply[3] != toolLoopExhausted {
+				t.Errorf("reply payload = %q, want the exhaustion text", reply[3])
+			}
+			if len(rows) != 1 || rows[0][5] != "harness-tool-loop-exhausted" || !strings.Contains(rows[0][7], "commit: request R1 answered with the exhaustion text "+c.turns) {
+				t.Errorf("lifecycle calls = %q, want one harness-tool-loop-exhausted row naming commit, R1 and %q", rows, c.turns)
+			}
+			if *n > cfg.MaxTurns+1 {
+				t.Errorf("model called %d times for a %d-turn budget — the loop is not bounded", *n, cfg.MaxTurns)
+			}
+		})
+	}
 }
 
 // textModel is a stub model endpoint answering every turn with plain text.
 func textModel(t *testing.T) *OllamaClient {
 	t.Helper()
+	return replyModel(t, "Done. EXIT=0")
+}
+
+// replyModel is a stub model endpoint answering every turn with content.
+func replyModel(t *testing.T, content string) *OllamaClient {
+	t.Helper()
 	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(ChatResponse{Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: "Done. EXIT=0"}}}})
+		json.NewEncoder(w).Encode(ChatResponse{Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: content}}}})
 	}))
 	t.Cleanup(server.Close)
 	ollama := NewOllamaClient(server.URL, "test-model")
@@ -127,11 +217,11 @@ func TestProcessBatch_ReplyCorrelatesToTheRequest(t *testing.T) {
 			[][3]string{{"edit", "commit", "R1"}, {"commit", "startup", "B1"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			bus, sends := recordingBus(t, "commit")
+			bus, recorded := recordingBus(t, "commit")
 			cfg := Config{Role: "commit", Session: "test", BusDir: bus.BusDir, MaxTurns: 3}
 			processBatch(context.Background(), cfg, bus, textModel(t), NewExecutor(nil), BuildToolDefs(nil), "system prompt", NewFilter("commit"), c.msgs, &mockEventSink{}, nil)
 
-			calls := sends()
+			calls := recorded("send")
 			if len(calls) != len(c.want) {
 				t.Fatalf("send calls = %v, want %d", calls, len(c.want))
 			}

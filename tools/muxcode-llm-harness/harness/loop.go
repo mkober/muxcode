@@ -547,14 +547,16 @@ func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *Ollam
 	}
 
 	// Mark success if tools executed and we got a real response
-	if toolsExecuted && finalResponse != "" && finalResponse != "(no response generated — tool loop exhausted)" && finalResponse != "(all tool calls blocked — agent stuck in loop)" {
+	if toolsExecuted && finalResponse != "" && finalResponse != toolLoopExhausted && finalResponse != "(all tool calls blocked — agent stuck in loop)" {
 		batchSuccess = true
 	}
 
 sendResponse:
 	// Send response
 	if finalResponse == "" {
-		finalResponse = "(no response generated — tool loop exhausted)"
+		finalResponse = toolLoopExhausted
+		batchSuccess = false // an empty text answer set it; exhaustion is never a success for the breaker
+		logExhaustion(bus, cfg.busRole(), answered, turn+1, maxTurns, sink)
 	}
 
 	// Truncate very long responses
@@ -575,6 +577,36 @@ sendResponse:
 	}
 
 	return batchSuccess
+}
+
+// toolLoopExhausted is the reply a batch that produced no response sends.
+const toolLoopExhausted = "(no response generated — tool loop exhausted)"
+
+// logExhaustion writes the one `harness-tool-loop-exhausted` row a batch that
+// produced no response gets, naming the role, the requests answered only by
+// toolLoopExhausted and the turns used of the budget (MUX-110) — before, it
+// was visible only in the harness pane. It fires on any empty response, not
+// only a spent budget (a model answering empty text on turn 1), which is why
+// it names the turns used rather than claiming the budget ran out. The
+// exhaustion text is still sent to each request as its reply, which marks it
+// responded, so the batch is terminal: nothing re-drives a request the
+// harness has answered.
+func logExhaustion(bus *BusClient, role string, reqs []Message, turnsUsed, maxTurns int, sink EventSink) {
+	ids := "no request"
+	if len(reqs) > 0 {
+		var s []string
+		for _, r := range reqs {
+			s = append(s, r.ID)
+		}
+		ids = "request " + strings.Join(s, ",")
+	}
+	if turnsUsed > maxTurns {
+		turnsUsed = maxTurns
+	}
+	detail := fmt.Sprintf("%s: %s answered with the exhaustion text after %d of its %d turns", role, ids, turnsUsed, maxTurns)
+	if err := bus.LogLifecycle("warn", "harness-tool-loop-exhausted", detail); err != nil {
+		sink.Emit(Event{Kind: EventError, Time: time.Now(), Message: fmt.Sprintf("lifecycle log error: %v", err)})
+	}
 }
 
 // batchRequests lists the requests a batch's answer is sent to, in arrival

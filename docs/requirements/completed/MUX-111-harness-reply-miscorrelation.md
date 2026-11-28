@@ -39,7 +39,7 @@ artifact of arrival time, not of what the agent was asked to do.
 
 ### Interaction with MUX-110
 
-This defect is what makes [MUX-110](../backlog/MUX-110-harness-startup-tool-loop-exhaustion.md) *repeat*: an
+This defect is what makes [MUX-110](./MUX-110-harness-startup-tool-loop-exhaustion.md) *repeat*: an
 un-receipted startup request is re-driven every backstop cycle, and each redelivery burns a full
 turn budget. The two are independent — this one would strand any un-receipted request even with a
 perfectly-shaped prompt — but together they produce the observed five-minute loop.

@@ -854,6 +854,14 @@ var lookPath = exec.LookPath
 // send-keys wake is dropped (Claude Code's TUI can ignore keystrokes during
 // its post-prompt init phase).
 //
+// A local-model role (LocalProvider — the LLM harness or `muxcode agent`)
+// gets the closed-form localStartupRestorePayload instead: one command, one
+// deliverable and the point at which the task is done. A small model given
+// the open-ended wording kept calling tools until its turn budget was spent
+// and never answered (MUX-110); a large model infers the stopping point, so
+// every other provider keeps startupRestorePayload. Both open with
+// "Session started —", the words the agent definitions key on.
+//
 // The auto agent's task-oriented startup replaces that message only when
 // reason is user-initiated and MUXCODE_AUTO_STARTUP_TASK is not 0. A restart,
 // reload, mode cycle, resume or unset reason restores context and asks for no
@@ -877,6 +885,9 @@ func PreLaunchSetup(role, session, cli string, reason LaunchReason) {
 		Payload: startupRestorePayload,
 
 		LaunchReason: string(reason),
+	}
+	if _, local := ResolveProvider(role).(*LocalProvider); local {
+		m.Payload = localStartupRestorePayload
 	}
 	if role == "auto" && reason.UserInitiated() && autoStartupTaskEnabled() {
 		m.From = "edit"
