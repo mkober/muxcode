@@ -37,6 +37,18 @@
 #      BUS_GLOBAL_MEMORY_DIR pin removed, run under another scratch HOME, must
 #      create that HOME's global memory and fail TestGlobalMemoryDir_IsolatedFromHome
 #      naming the missing pin.
+#   5. Analyze triggers (MUX-248): section 1's suite must create or modify no
+#      /tmp/muxcode-analyze-*.trigger (checksummed; a live tmux session's own
+#      trigger is excluded, since agents edit while the suite runs). Negative
+#      control: a throwaway copy with TriggerFile's bus-dir override removed,
+#      its hook test's session renamed so the leak lands in a file this script
+#      creates, must have that trigger reported by name. The control file is
+#      claimed exclusively (noclobber, a fresh random session per try) and
+#      removed by the exit trap, so a leftover from an interrupted run is never
+#      touched; a preservation control proves a claim on an existing path is
+#      refused. The script deletes only what it claimed — never a trigger it
+#      did not create, the stale test-analyze-trigger one included, which a
+#      cleanup pass or the user removes.
 #
 # The real tree and the real state directory are only read; the control's
 # leaks land in its own scratch copy and scratch state root. A live agent's
@@ -49,7 +61,7 @@
 # Usage: bash scripts/test-bus-dir-leak.sh
 set -uo pipefail
 
-FLOOR=22
+FLOOR=27
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 command -v go >/dev/null 2>&1 || { echo "  FAIL  go not available"; exit 1; }
 
@@ -59,7 +71,10 @@ ok()  { echo "  ${GREEN}PASS${NC}  $*"; pass=$((pass + 1)); }
 bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail + 1)); }
 
 WORK="$(mktemp -d /tmp/bus-dir-leak.XXXXXX)"
+OWN_TRIGGERS=() # /tmp triggers this run created itself (claim_trigger) — the only ones it may delete
 cleanup() {
+  local f
+  for f in ${OWN_TRIGGERS[@]+"${OWN_TRIGGERS[@]}"}; do rm -f "$f"; done
   [ -n "${SENT:-}" ] && rm -rf "$SENT"
   [ "${MUXCODE_TEST_KEEP:-}" = "1" ] && { echo "  (kept for diagnosis: $WORK)"; return; }
   rm -rf "$WORK"
@@ -95,6 +110,33 @@ gm_state() {
 
 # global_mem <home> — the global memory directory a home resolves to.
 global_mem() { echo "$1/.config/muxcode/memory"; }
+
+# trig_state — each /tmp/muxcode-analyze-*.trigger with its checksum, sorted;
+# a live tmux session's own trigger is left out, since its agents write it
+# while the suite runs.
+trig_state() {
+  local live f s
+  live="$(tmux list-sessions -F '#S' 2>/dev/null)"
+  for f in /tmp/muxcode-analyze-*.trigger; do
+    [ -e "$f" ] || continue
+    s="${f#/tmp/muxcode-analyze-}"; s="${s%.trigger}"
+    printf '%s\n' "$live" | grep -qxF -- "$s" && continue
+    shasum "$f"
+  done | sort
+}
+
+# trig_leaks <before> <after> — "LEAK <path>" for each trigger created or changed.
+trig_leaks() { comm -13 "$1" "$2" | awk '{print "LEAK " $2}'; }
+
+# claim_trigger <session> — create /tmp/muxcode-analyze-<session>.trigger
+# exclusively (noclobber) and record it for the exit trap; fails, touching
+# nothing, if the path already exists — a leftover from an interrupted run, or
+# anyone else's file.
+claim_trigger() {
+  local f="/tmp/muxcode-analyze-$1.trigger"
+  ( set -C; : > "$f" ) 2>/dev/null || return 1
+  OWN_TRIGGERS+=("$f")
+}
 
 REAL_GOCACHE="$(go env GOCACHE)"; REAL_GOPATH="$(go env GOPATH)"; REAL_GOENV="$(go env GOENV)"
 GITCFG=""
@@ -133,6 +175,7 @@ nfiles="$(grep -c . "$WORK/sentinel.manifest")"
   || bad "sentinel seeded $nfiles files, want 7"
 
 snap "$STATE_BASE" "$REPO/tools" > "$WORK/main-before"
+trig_state > "$WORK/trig-before"
 REAL_GMEM="$(global_mem "$HOME")"
 gm_state "$REAL_GMEM" > "$WORK/gmem-before"
 (cd "$REPO" && env -u BUS_GLOBAL_MEMORY_DIR MUXCODE_TEST_LOG_DIR="$WORK/test-logs" GOFLAGS="${GOFLAGS:+$GOFLAGS }-count=1" bash ./test.sh) > "$WORK/suite.log" 2>&1
@@ -150,6 +193,11 @@ ncached="$(cat "$WORK"/test-logs/*/*.log 2>/dev/null | grep -c '(cached)')"
   || bad "suite results not all executed: $nok ok, $ncached cached — the side effects measured may never have run"
 snap "$STATE_BASE" "$REPO/tools" > "$WORK/main-after"
 leaks "$WORK/main-before" "$WORK/main-after" > "$WORK/main-leaks"
+trig_state > "$WORK/trig-after"
+trig_leaks "$WORK/trig-before" "$WORK/trig-after" > "$WORK/trig-leaks"
+[ -s "$WORK/trig-leaks" ] \
+  && bad "suite created or modified analyze triggers under the real /tmp: $(tr '\n' ' ' < "$WORK/trig-leaks")" \
+  || ok "no /tmp/muxcode-analyze-*.trigger created or modified ($(grep -c . "$WORK/trig-before") pre-existing, unchanged)"
 
 grep -q '^LEAK /tmp/muxcode-bus-' "$WORK/main-leaks" \
   && bad "suite created /tmp bus dirs: $(grep '^LEAK /tmp/' "$WORK/main-leaks" | tr '\n' ' ')" \
@@ -265,6 +313,53 @@ grep -q -- '--- FAIL: TestGlobalMemoryDir_IsolatedFromHome' "$WORK/gctl-test.log
   && grep -q 'TestMain must pin BUS_GLOBAL_MEMORY_DIR' "$WORK/gctl-test.log" \
   && ok "control: TestGlobalMemoryDir_IsolatedFromHome fails naming the missing pin" \
   || { bad "control: the pin's control test did not fail"; tail -5 "$WORK/gctl-test.log" | sed 's/^/        /'; }
+
+# --- 5. Negative control: TriggerFile's override removed ---------------------
+echo "--- 5. control: TriggerFile's bus-dir override removed in a throwaway copy (MUX-248)"
+TTREE="$WORK/ttree"
+mkdir -p "$TTREE" && cp -R "$REPO/tools/muxcode" "$TTREE/muxcode"
+CTL_SESSION=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  s="test-analyze-trigger-ctl-$$-$RANDOM"
+  claim_trigger "$s" && { CTL_SESSION="$s"; break; }
+done
+if [ -z "$CTL_SESSION" ]; then
+  bad "could not claim a fresh control trigger path — aborting rather than run the control against a file this run does not own"
+  exit 1
+fi
+CTL_TRIGGER="/tmp/muxcode-analyze-$CTL_SESSION.trigger"
+ok "control trigger claimed exclusively: $CTL_TRIGGER"
+
+# Preservation control: a path that already exists is never claimed, and its
+# content survives the attempt.
+DECOY_SESSION="test-analyze-trigger-decoy-$$-$RANDOM"
+DECOY="/tmp/muxcode-analyze-$DECOY_SESSION.trigger"
+if claim_trigger "$DECOY_SESSION"; then
+  echo "decoy content" > "$DECOY"
+  if ! claim_trigger "$DECOY_SESSION" && [ "$(cat "$DECOY")" = "decoy content" ]; then
+    ok "control: an existing trigger is refused by the claim and left byte for byte"
+  else
+    bad "control: claim_trigger took or clobbered an existing file"
+  fi
+else
+  bad "control: could not create the decoy trigger"
+fi
+perl -0pi -e 's/\tif busDirOverride != "" \{\n\t\treturn filepath\.Join\(busDirOverride, name\)\n\t\}\n//' "$TTREE/muxcode/bus/config.go"
+perl -pi -e "s/session := \"test-analyze-trigger\"/session := \"$CTL_SESSION\"/" "$TTREE/muxcode/bus/hook_test.go"
+if ! grep -q 'filepath.Join(busDirOverride, name)' "$TTREE/muxcode/bus/config.go" \
+  && grep -q "session := \"$CTL_SESSION\"" "$TTREE/muxcode/bus/hook_test.go"; then
+  ok "reverted: TriggerFile ignores the override; the hook test's session renamed to $CTL_SESSION"
+else
+  bad "the TriggerFile revert or the session rename did not apply"
+fi
+trig_state > "$WORK/tctl-before"
+(cd "$TTREE/muxcode" && go test ./bus -run '^TestProcessAnalyzeHook_TriggerFile$' -count=1 > "$WORK/tctl-test.log" 2>&1)
+trig_state > "$WORK/tctl-after"
+trig_leaks "$WORK/tctl-before" "$WORK/tctl-after" > "$WORK/tctl-leaks"
+echo "  control detector output:"; sed 's/^/        /' "$WORK/tctl-leaks"
+grep -qFx "LEAK $CTL_TRIGGER" "$WORK/tctl-leaks" \
+  && ok "control: the reverted TriggerFile's /tmp trigger is reported by name" \
+  || { bad "control: the trigger leak was not reported — the main pass's silence proves nothing"; tail -5 "$WORK/tctl-test.log" | sed 's/^/        /'; }
 
 # --- Summary ---------------------------------------------------------------
 echo

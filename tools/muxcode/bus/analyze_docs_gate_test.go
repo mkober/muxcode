@@ -1,8 +1,6 @@
 package bus
 
 import (
-	"fmt"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,13 +37,12 @@ func gateCheckout(t *testing.T) string {
 }
 
 // analyzeWrite runs the hook for a write to path from window, on a workflow
-// that has just reached reviewed. TriggerFile ignores the bus-dir override and
-// names the real /tmp, so the session is unique and its trigger is removed.
+// that has just reached reviewed, in a fresh bus directory — which holds the
+// trigger too (MUX-248).
 func analyzeWrite(t *testing.T, window, path string) (AnalyzeHookResult, WorkflowStateEntry, string) {
 	t.Helper()
 	useTempBusDir(t)
-	session := fmt.Sprintf("test-mux150-gate-%d", rand.Int())
-	t.Cleanup(func() { os.Remove(TriggerFile(session)) })
+	session := "test-mux150-gate"
 	if !TransitionWorkflow(session, StateReviewed, "daemon:review-complete") {
 		t.Fatal("fixture: the workflow did not reach reviewed")
 	}

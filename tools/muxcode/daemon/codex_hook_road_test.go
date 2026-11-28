@@ -214,10 +214,14 @@ func dirtyRepo(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(wd) })
 }
 
+// TestCheckNonHookEdits_HookCodexSkipped runs under a bus-directory override,
+// which holds the analyze trigger too (MUX-248): without it the scrape-road
+// control wrote a real /tmp trigger on every suite run.
 func TestCheckNonHookEdits_HookCodexSkipped(t *testing.T) {
+	bus.SetBusDirBase(t.TempDir())
+	t.Cleanup(bus.ResetBusDirBase)
 	session := codexSession(t, "edit")
 	dirtyRepo(t)
-	t.Cleanup(func() { _ = os.Remove(bus.TriggerFile(session)) })
 	d := New(session, 5, 8)
 
 	hookRoad(t, session, "edit")
