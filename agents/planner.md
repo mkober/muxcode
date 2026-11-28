@@ -294,6 +294,7 @@ The doc must never show less time than it already showed. `seed` is a floor — 
 - **Phase steps** (`- [ ] Step description`) — check off when the code change clearly implements the step
 - **Acceptance criteria** (`- [ ] Criterion`) — check off when the implementation verifiably satisfies the criterion
 - **Deferred to another spec** — check off, annotated `deferred to MUX-NNN` with a link to it. An open box is not free: it holds `SpecCurrentPhase` on that phase, which blocks `50-spec-to-pr` on work this spec has decided it will never do. The annotation is what keeps a ticked box honest — it says handed off, not done
+- **Parked in this spec** (MUX-143) — an item that stays open but must not hold the loop, such as one waiting on a user decision, moves under a `### Deferred` heading inside `## Implementation`. That heading ends the phase, so its boxes belong to no phase and the loop moves on; they still count as open, so the spec cannot close until each is ticked or annotated as deferred to another spec
 - **Do NOT check off** items that are only partially implemented or require further verification
 
 ### Example reply

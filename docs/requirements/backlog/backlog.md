@@ -72,7 +72,7 @@ criteria and phases rewritten to them:
 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | 0/14 | Add `Bash(muxcode help*)` and bare `Bash(muxcode)` to the prompt profile only, with an allowed-set test and negative control |
 | [`MUX-188`](../completed/MUX-188-spawn-worker-launch-sends-edit-a-stray-startup-request.md) | closed 2026-11-27 at 21/21 | A spawn worker gets no startup bootstrap; the launch skips it for a `spawn-*` role. Widened by the user 2026-11-27: the worker launch also skips the base role's task clearing and launch stamps |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | 3/25 | The heartbeat already shipped (owner token, renewal — MUX-139). Restated to the leftover: `diagnose` reads a freshly renewed marker as a relaunch in progress; `writeReloadMarker` test-only; a lifecycle row on stale removal |
-| [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | 0/34 | Split in two: Defect A blesses `### Deferred` as the deferral mechanism, landing with MUX-130; Defect B warns, never refuses, when launch intent and derived phase disagree |
+| [`MUX-143`](../completed/MUX-143-run-carries-two-phase-identities.md) | closed 2026-11-27 at 33/33 | Split in two: Defect A blesses `### Deferred` as the deferral mechanism, landing with MUX-130; Defect B warns, never refuses, when launch intent and derived phase disagree |
 | [`MUX-130`](../completed/MUX-130-spec-phase-parsing-semantics.md) | closed 2026-11-27 at 55/55 | Phases are `### Phase N` under `## Implementation` only; duplicate phase numbers warn at dispatch; a deliberately open item holds the loop and the gate text says so. Phase 4 rewritten around MUX-183. Added by the user 2026-11-27: a spec with no implementation section is never commit-ready |
 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | 4/24 | Width overflow wraps in step order with no line wider than the pane, header included; the flat fallback is pinned through height overflow |
 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | 0/31 | Each request in a batch gets its own reply; self-messages filtered. The script skips its model section without Ollama |
@@ -124,7 +124,7 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
 | 1 | 0 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` fails, passes on rerun, and nothing recorded which test failed | High | — · ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
-| 2 | 4 | [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A run carries two unreconciled phase identities | High | [MUX-130](../completed/MUX-130-spec-phase-parsing-semantics.md) |
+| 2 | 1 | [`MUX-248`](./MUX-248-analyze-hook-test-writes-the-real-tmp-trigger.md) | An analyze-hook test writes the real `/tmp` trigger on every suite run | Low | — |
 | 3 | 5 | [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | Daemon auto-restart is unverified | High | — |
 | 4 | 5 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale reload-marker cleanup can delete a live exclusive lock | Medium | — |
 | 5 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
@@ -143,11 +143,13 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | 18 | 6 | [`MUX-243`](./MUX-243-a-halt-that-halts.md) | A halt request does not stop an agent's work, and a reload brings it back | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
 | 19 | 6 | [`MUX-244`](./MUX-244-negative-control-deletion-is-not-checked.md) | Deleting or inverting a negative control leaves the suite green | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
 | 20 | 6 | [`MUX-245`](./MUX-245-a-worker-certifies-its-own-change.md) | Nothing says whose verdict counts when a worker certifies its own change | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 21 | 6 | [`MUX-247`](./MUX-247-bus-suite-fails-under-codex-workspace-write-sandbox.md) | The bus suite fails under Codex's opt-in `workspace-write` sandbox | Medium | — |
 
 ### Reliability & observability
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-248`](./MUX-248-analyze-hook-test-writes-the-real-tmp-trigger.md) | An Analyze-Hook Test Writes the Real `/tmp` Trigger on Every Suite Run | Low | — |
 | [`MUX-240`](./MUX-240-idle-task-rescue-acts-on-a-role-with-live-background-work.md) | Idle-Task Rescue Re-Queues and Times Out a Task Whose Role Still Has Live Background Work | Medium | — |
 | [`MUX-241`](./MUX-241-no-watchdog-recovers-a-frozen-but-alive-agent.md) | No Watchdog Recovers a Frozen-but-Alive Agent | Medium | — |
 | [`MUX-242`](./MUX-242-session-memory-footprint-has-no-reclamation-path.md) | A Session's Memory Footprint Only Grows — the Largest Consumers Have No Reclamation Path | Medium | — |
@@ -155,7 +157,6 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` Fails, Passes on Rerun, and Nothing Recorded Which Test Failed | High | ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` Strands a Live Session — Its Monitor and Listeners Exit | Medium | — |
 | [`MUX-194`](./MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock | Medium | — |
-| [`MUX-143`](./MUX-143-run-carries-two-phase-identities.md) | A Run Carries Two Unreconciled Phase Identities | High | [MUX-130](../completed/MUX-130-spec-phase-parsing-semantics.md) |
 | [`MUX-125`](./MUX-125-usage-and-billing-modal.md) | Usage and Billing Modal | Medium | — |
 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-Agent Turn Budget — Attribute, Then Fix | High | — |
 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness Reply Correlates to the Batch's Last Message, Not the Request | High | — |
@@ -197,6 +198,7 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 
 | ID | Title | Priority | Depends on |
 |----|-------|----------|------------|
+| [`MUX-247`](./MUX-247-bus-suite-fails-under-codex-workspace-write-sandbox.md) | The Bus Suite Fails Under Codex's Opt-In Workspace-Write Sandbox | Medium | — |
 | [`MUX-201`](./MUX-201-non-hook-prompt-and-generated-body-drift.md) | Non-Hook Prompt Text and Generated Agent Bodies Drift From the Definition | Medium | [MUX-142](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) |
 | [`MUX-140`](./MUX-140-jira-issue-creation.md) | Jira Issue Creation From MuxCode | High | — |
 | [`MUX-017`](./MUX-017-gemini-cli-provider.md) | Gemini CLI provider | High | — |
@@ -417,6 +419,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-160`](../completed/MUX-160-tmp-go-cache-leak-unclearable-pressure.md) | The /tmp Go Caches the Disk-Pressure Sweep Counts but Cannot Clear |
 | [`MUX-150`](../completed/MUX-150-verify-spec-names-last-routed-batch.md) | `verify-spec` Names the Last Routed Batch, Not the Change Set |
 | [`MUX-130`](../completed/MUX-130-spec-phase-parsing-semantics.md) | Spec Phase Parsing: Two Definitions of Complete, Matched Document-Wide |
+| [`MUX-143`](../completed/MUX-143-run-carries-two-phase-identities.md) | A Run Carries Two Unreconciled Phase Identities |
 
 ## Ideas without specs
 

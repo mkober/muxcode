@@ -281,6 +281,9 @@ func CreateGraphRun(session string, g *Graph, template, intent string) (*GraphRu
 	announceGraphAction(session, actor, "graph-run-created",
 		fmt.Sprintf("Graph run %s (%s) %s · triggered by: %s", run.ID, template, runProvenance(run),
 			run.TriggeredBy()))
+	if w := PhaseIdentityWarning(session, intent); w != "" {
+		LogLifecycle(session, "warn", "graph", "graph-phase-identity-mismatch", run.ID+": "+w)
+	}
 	return run, nil
 }
 

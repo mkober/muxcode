@@ -15,7 +15,7 @@ decline.
 > C, D and E stand. The user settled the open decisions on 2026-11-24.
 
 > **Adjacent spec — lands together.**
-> [`MUX-143`](../backlog/MUX-143-run-carries-two-phase-identities.md) covers a run carrying **two unreconciled
+> [`MUX-143`](../completed/MUX-143-run-carries-two-phase-identities.md) covers a run carrying **two unreconciled
 > phase identities** (live `SpecCurrentPhase` vs frozen `IntentPhase`). This spec owns how a phase is
 > **read**; MUX-143 owns which phase a run **means**. They meet in the parser: MUX-143's Defect A is
 > settled as blessing a non-`Phase` `### Deferred` heading, which is the same heading rule this spec's
@@ -249,7 +249,7 @@ Relayed by edit. These settle the three decisions this spec left open for the ma
 | 4 | When graph and spec disagree, who wins? | A **deliberately open item holds the loop**, and the gate text says so — naming the phase and the open item, so the hold reads as the spec's instruction and not as a stuck run |
 
 Also directed: rewrite the stale Phase 4 around MUX-183's HEAD-anchored logic, and re-measure the
-stranded specs. [MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)'s Defect A — a `### Deferred`
+stranded specs. [MUX-143](../completed/MUX-143-run-carries-two-phase-identities.md)'s Defect A — a `### Deferred`
 heading as the way to park an item — lands with this spec's scoping.
 
 How decision 4 and MUX-143's `### Deferred` fit together: an open box **inside** a phase holds the
@@ -695,7 +695,7 @@ acceptance criteria.
 |--------------|-|
 | Scoping | A `### Phase N` is a phase only inside the spec's `## Implementation` section |
 | Strict refusal | A spec with no implementation section holding phases is still read document-wide for display, and is never commit-ready (the user, 2026-11-27) |
-| `### Deferred` | Boxes under a non-`Phase` `###` heading belong to no phase: they never hold the loop and still stop the close — [MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)'s Defect A, landed here |
+| `### Deferred` | Boxes under a non-`Phase` `###` heading belong to no phase: they never hold the loop and still stop the close — [MUX-143](../completed/MUX-143-run-carries-two-phase-identities.md)'s Defect A, landed here |
 | The hold says why | The stuck gate and the commit guard's decline name the lowest open phase, its open items and the deliberate hold (`${phase_hold}`) |
 | No sentinel in a noun slot | The builtin nodes naming `${current_phase}` dispatch `message_no_open_phase` when no phase is open |
 | Duplicate numbers | Warned at dispatch, with a `spec-phase-numbers` row; never refused |

@@ -50,14 +50,22 @@ func SpecOpenItems(path string) (int, []string, error) {
 var intentPhaseRe = regexp.MustCompile(`(?i)phase\s+([0-9]+)`)
 
 // IntentPhase returns the phase number named in a run intent, or 0 when
-// none is named.
+// none is named — so a named Phase 0 and no phase read alike. A caller that
+// must tell them apart uses intentPhaseNumber.
 func IntentPhase(intent string) int {
+	n, _ := intentPhaseNumber(intent)
+	return n
+}
+
+// intentPhaseNumber returns the phase number a run intent names and whether
+// it names one at all: "Phase 0" is a real phase since MUX-130, not "none".
+func intentPhaseNumber(intent string) (int, bool) {
 	m := intentPhaseRe.FindStringSubmatch(intent)
 	if m == nil {
-		return 0
+		return 0, false
 	}
 	n, _ := strconv.Atoi(m[1])
-	return n
+	return n, true
 }
 
 // SpecPhase is one `### Phase N` section of a requirements spec: its
@@ -312,20 +320,57 @@ func phaseNumberIssues(phases []SpecPhase) []int {
 }
 
 // UnscopedPhaseGuardWarning reports why a run's phase-complete guard will
-// not engage: the graph carries the guard but the intent names no phase,
-// so the commit ships unchecked. Empty when the guard is scoped or
+// not engage: the graph carries the guard but the intent names no phase, or
+// names Phase 0, which the guard passes through the same way (MUX-143), so
+// the commit ships unchecked. Empty when the guard is scoped or
 // absent. Shared by both launch surfaces — CLI and TUI — so neither can
 // drift (plan finding 2026-08-28: the CLI warned, the TUI did not).
 func UnscopedPhaseGuardWarning(g *Graph, intent string) string {
-	if IntentPhase(intent) != 0 {
+	phase, named := intentPhaseNumber(intent)
+	if named && phase != 0 {
 		return ""
 	}
 	for _, n := range g.Nodes {
-		if n.Guard == GuardPhaseComplete {
-			return fmt.Sprintf("node %q has a phase-complete guard but the intent names no phase (\"Phase N\") — the guard will pass through and the commit ships unchecked", n.ID)
+		if n.Guard != GuardPhaseComplete {
+			continue
 		}
+		if named {
+			return fmt.Sprintf("node %q has a phase-complete guard but the intent names Phase 0, which the guard does not check — it passes through and the commit ships unchecked", n.ID)
+		}
+		return fmt.Sprintf("node %q has a phase-complete guard but the intent names no phase (\"Phase N\") — the guard will pass through and the commit ships unchecked", n.ID)
 	}
 	return ""
+}
+
+// PhaseIdentityWarning reports that a run carries two phase identities that
+// disagree (MUX-143 Defect B): the intent names Phase N, frozen at launch,
+// while the active spec's lowest open phase — what ${current_phase} hands the
+// worker — is another. A phase-complete guard checks the intent's phase, so
+// it could pass on work the worker was never given. A warning, never a
+// refusal (the user, 2026-11-24). Empty when the intent names no phase —
+// UnscopedPhaseGuardWarning covers that — when no phase is open, or when the
+// two agree. A named Phase 0 is a phase, not "none" — but the guard passes it
+// through unchecked, and the warning says so rather than claim a check.
+// Shared by both launch surfaces and CreateGraphRun's row.
+func PhaseIdentityWarning(session, intent string) string {
+	want, named := intentPhaseNumber(intent)
+	if !named {
+		return ""
+	}
+	path, ok, _, _ := activeSpecFile(session)
+	if !ok {
+		return ""
+	}
+	current, found, err := SpecCurrentPhase(path)
+	if err != nil || !found || current.Number == want {
+		return ""
+	}
+	guard := fmt.Sprintf("a phase-complete guard checks Phase %d", want)
+	if want == 0 {
+		guard = "a phase-complete guard passes Phase 0 through unchecked"
+	}
+	return fmt.Sprintf("the intent names Phase %d but the active spec's lowest open phase is %q — dispatches will name Phase %d, while %s",
+		want, current.Title, current.Number, guard)
 }
 
 // SpecPhaseOpenItems counts the unchecked checkbox items inside one phase

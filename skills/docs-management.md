@@ -90,6 +90,16 @@ An item **deferred to another backlog spec** is also checked off, annotated with
 
 An open box holds `SpecCurrentPhase` on its phase and blocks `50-spec-to-pr` on work this spec has decided it will never do. The annotation is what keeps the tick honest — it reads as handed off, not done. Partial or unverified work still stays unchecked.
 
+An item that stays **open in this spec** but must not hold the loop — one waiting on a user decision — is parked under a `### Deferred` heading inside `## Implementation` (MUX-143). The heading ends the phase, so its boxes belong to no phase and the loop moves on to the next phase with open work; they still count as open, so the spec cannot close until each is ticked or annotated as deferred to another spec:
+
+```markdown
+### Phase 2: Config
+- [x] Wire the config loader
+
+### Deferred
+- [ ] Populate the prod role list — only on a user decision
+```
+
 ### Update phase status tables
 
 Some specs use tables to track phase status:
