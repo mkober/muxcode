@@ -1819,8 +1819,12 @@ func TestClassifyCommand_TestPrecheckOverrides(t *testing.T) {
 	}
 }
 
+// TestProcessAnalyzeHook_TriggerFile reads the trigger from the test's own bus
+// directory, which starts empty, and requires exactly the one line this call
+// wrote. At the old fixed /tmp path a line an earlier suite run left satisfied
+// the assertion with the hook's write disabled (MUX-248).
 func TestProcessAnalyzeHook_TriggerFile(t *testing.T) {
-	useTempBusDir(t)
+	dir := useTempBusDir(t)
 
 	session := "test-analyze-trigger"
 
@@ -1839,9 +1843,26 @@ func TestProcessAnalyzeHook_TriggerFile(t *testing.T) {
 	}
 
 	triggerPath := TriggerFile(session)
+	if filepath.Dir(triggerPath) != dir {
+		t.Fatalf("trigger at %s, want inside the test's bus directory %s — not the real /tmp", triggerPath, dir)
+	}
 	data, _ := os.ReadFile(triggerPath)
-	if !strings.Contains(string(data), "/foo/bar.go") {
-		t.Error("trigger file missing file path")
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 || !strings.HasSuffix(lines[0], " /foo/bar.go") {
+		t.Errorf("trigger file = %q, want exactly the one line this call wrote", data)
+	}
+}
+
+// TriggerFile follows a test's bus-directory override and is the fixed /tmp
+// path without one — the path production's hooks and daemon agree on.
+func TestTriggerFile_FollowsTheBusDirOverride(t *testing.T) {
+	ResetBusDirBase()
+	if got := TriggerFile("s"); got != "/tmp/muxcode-analyze-s.trigger" {
+		t.Errorf("no override: %s, want /tmp/muxcode-analyze-s.trigger", got)
+	}
+	dir := useTempBusDir(t)
+	if got := TriggerFile("s"); got != filepath.Join(dir, "muxcode-analyze-s.trigger") {
+		t.Errorf("under the override: %s, want inside %s", got, dir)
 	}
 }
 

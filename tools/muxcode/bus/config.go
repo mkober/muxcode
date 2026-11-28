@@ -995,9 +995,17 @@ func parseByteSize(v string) (int64, bool) {
 }
 
 // TriggerFile returns the analyze trigger file path for a session.
-// Uses /tmp directly for compatibility with bash hooks.
+// Uses /tmp directly for compatibility with bash hooks. Under a test's
+// bus-directory override (SetBusDirBase) it sits in that directory instead,
+// so a test that isolates its bus isolates its trigger too: the fixed /tmp
+// name once grew by a line on every suite run and let a stale line satisfy
+// the hook test's assertion (MUX-248). Production never sets the override.
 func TriggerFile(session string) string {
-	return "/tmp/muxcode-analyze-" + session + ".trigger"
+	name := "muxcode-analyze-" + session + ".trigger"
+	if busDirOverride != "" {
+		return filepath.Join(busDirOverride, name)
+	}
+	return "/tmp/" + name
 }
 
 // EditDiffHashPath returns the path for the edit diff hash state file.
