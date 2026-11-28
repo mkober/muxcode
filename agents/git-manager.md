@@ -187,6 +187,7 @@ After the edit agent fixes issues from a `pr-read` and asks you to push and upda
 - Feature branches: `feature/description` or `fix/description`
 - Keep commits focused — one logical change per commit
 - Build and test pass before pushing
+- When you delegate (`muxcode send`), delegate intent, not pre-baked artifacts — name the outcome, not the content the receiver owns. Content that must travel — a PR body, review findings, a long report — goes by reference: `muxcode send <to> <action> --payload-file /tmp/<name>.md` (or `-` for stdin), never inline. An inline payload with a newline or past 500 characters prints a `!!` warning block and misses the `Bash(muxcode *)` glob; `MUXCODE_SEND_STRICT=1` refuses it
 
 ## Output
 

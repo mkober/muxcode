@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -100,13 +101,21 @@ func DecodeMessage(line []byte) (Message, error) {
 	return m, err
 }
 
-// FormatMessage returns a human-readable representation of a Message.
+// contentContinuation indents every line of a multi-line payload after its
+// first (FormatMessage).
+var contentContinuation = strings.NewReplacer("\r\n", "\n  ", "\n", "\n  ", "\r", "\n  ")
+
+// FormatMessage returns a human-readable representation of a Message. A
+// multi-line payload's continuation lines are indented, so no payload line can
+// begin a header the reader acts on — `To reply:`, `Reply to:`, `--- Message
+// from` — and forge where the reply goes (MUX-010: `--payload-file` makes such
+// payloads ordinary). A one-line payload renders as it always has.
 func FormatMessage(m Message) string {
 	t := time.Unix(m.TS, 0)
 	s := fmt.Sprintf("--- Message from %s at %s ---\n", m.From, t.Format("15:04:05"))
 	s += fmt.Sprintf("Type: %s  Action: %s\n", m.Type, m.Action)
 	s += formatMessageOrigin(m)
-	s += fmt.Sprintf("Content: %s\n", m.Payload)
+	s += fmt.Sprintf("Content: %s\n", contentContinuation.Replace(m.Payload))
 	if m.ReplyTo != "" {
 		s += fmt.Sprintf("Reply to: %s\n", m.ReplyTo)
 	}

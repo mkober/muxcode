@@ -52,18 +52,48 @@ Inside a pane, hook or daemon muxcode launched, `$MUXCODE_BUS_DIR` already holds
 Send a message to another agent's inbox.
 
 ```bash
-muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
+muxcode send <to> <action> ("<payload>" | - | --payload-file PATH) [--type TYPE] [--reply-to ID] [--no-notify] [--force] [--wait] [--track]
 ```
 
 - `<to>` — target agent role (edit, build, test, review, deploy, run, commit, analyze, api, watch)
 - `<action>` — action name (build, test, review, deploy, run, commit, analyze, notify, etc.)
-- `<payload>` — message content (quoted string)
+- `<payload>` — message content (quoted string), given inline. Keep it short and single-line; see [Payload sources](#payload-sources) for anything longer
+- `-` — in the payload's place, reads the payload from stdin, byte for byte
+- `--payload-file PATH` — sends the file's content as the payload, byte for byte, a trailing newline included
 - `--type TYPE` — message type: `request` (default), `response`, or `event`
 - `--reply-to ID` — ID of the message being replied to. On a `response` the id is resolved before the send (MUX-225): one the bus knows — a message in the bus log, or a tracked task — is used as given. One that names **no** message is never accepted silently: if the sender holds exactly one open request whose reply goes to the role it is replying to (the request's reply target — its sender, or the `reply_role` it names, so a test-chain review request answers edit; `daemon` counts as edit), the reply is attached to that request, with a note on stderr and a `reply-to-repaired` row; with none or several, the reply is refused — `NOT SENT`, exit 1 — and a ready-to-copy reply command is printed for each request the sender holds open. Either way edit is told once per sender and id. There is no nearest-id matching. Copy the id from the request's own reply command; do not retype it
 - `--no-notify` — skip tmux notification to the target agent
 - `--force` — bypass pre-commit safeguard (only relevant when sending commit actions to the commit agent)
-- `--wait` — after sending, poll the sender's inbox every 500ms until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline. **Auto-degrade:** if no response arrives within `MUXCODE_WAIT_DEGRADE_SECS` (default 90s; `0` disables), the send is converted into a tracked task and returns immediately — the sender unblocks and drains its inbox, and the daemon wakes it when the result lands (same self-heal as `--track`). Backed by `awaitOrTrack`/`degradeWaitSecs` in `cmd/send.go`.
+- `--wait` — after sending, poll the sender's inbox every 500ms until a response arrives or timeout. Timeout controlled by `MUXCODE_INBOX_POLL_TIMEOUT` (default 600s). The response is printed to stdout inline. **Auto-degrade:** if no response arrives within `MUXCODE_WAIT_DEGRADE_SECS` (default 90s; `0` disables), the send is converted into a tracked task and returns immediately — the sender unblocks and drains its inbox, and the daemon wakes it when the result lands (same self-heal as `--track`). Backed by `awaitOrTrack`/`degradeWaitSecs` in `cmd/send.go`. **Heartbeat (MUX-010):** while it blocks, `--wait` prints `still waiting on <role> (<n>s elapsed)` to **stderr** about every 30 s, until the reply, the degrade or the timeout — liveness, not a failure. Stdout carries only what it carried before, and a reply that lands inside the first interval prints none. With the default 90 s degrade a waiting send prints two or three lines.
 - `--track` — after sending, create a tracked task and return immediately. The daemon auto-completes the task when the response arrives and wakes the sender via inbox notification. Use for long-running or fire-and-forget operations. Mutually exclusive with `--wait`.
+
+#### Payload sources
+
+A send takes its payload from exactly one source (MUX-010; `resolvePayload`, `parseSendFlags` in `cmd/send.go`):
+
+| Source | Form | Warned about? |
+|--------|------|---------------|
+| Inline | `muxcode send plan update-docs "Record Phase 2's findings"` | Yes, if it holds a newline or exceeds 500 characters |
+| File | `muxcode send plan update-docs --payload-file /tmp/findings.md` | No — sent by reference |
+| Stdin | `printf '%s\n' "line one" "line two" \| muxcode send plan update-docs -` | No — sent by reference |
+
+- **By reference means byte for byte.** A file or stdin payload is sent exactly as given. A file that ends in a newline, as most do, sends a payload that ends in one.
+- **One source only.** `--payload-file` given twice, with an empty path, or beside an inline payload exits 1 and sends nothing; so does a file that cannot be read, naming its path, and a send with no payload at all.
+- **A by-reference payload prints no warning** and is never refused by strict mode: passing content by reference is the remedy the warning asks for, and the command line stays one line that matches the `Bash(muxcode *)` permission glob. It is otherwise the same message — the inbox cap and every authority check still apply.
+- **An inline payload of exactly `-` means stdin.** It cannot be sent as text.
+
+**The warning block.** An inline payload that holds a newline or exceeds 500 characters prints a block on stderr, every line prefixed `!! `: a `WARNING` header, one `cause:` line per cause, the consequence — a command line carrying it misses the `Bash(muxcode *)` permission glob, so the agent gets a permission prompt instead of the send — and the two remedies (`--payload-file <path>` or `-`; a `/tmp/<name>.md` file plus a one-line pointer). The payload is still sent: a warning is not a refusal, so do not send that message again — a second copy duplicates the work once the dedup window has passed. Send the next one by reference.
+
+**Strict mode.** With `MUXCODE_SEND_STRICT` on, that same payload is refused instead: the block is printed, then `NOT SENT`, exit 1, and nothing is written to either inbox or the bus log. The refusal reads the warning's own predicate, so the two never disagree. It is off by default; see [Configuration](configuration.md) for the values.
+
+**How a receiver sees a multi-line payload.**
+
+| Road | Rendering |
+|------|-----------|
+| `muxcode inbox` (`FormatMessage`) | Whole. Continuation lines are indented two spaces, so no payload line can begin `To reply:`, `Reply to:` or `--- Message from` and pass for a header |
+| Typed wake — OpenCode and scrape-road Codex | Flattened to one line, each newline shown as ` ⏎ `, because a newline typed into a composer submits the prompt mid-payload. The re-drive flattens the same way |
+| Claude and hook-road Codex wakes | The payload is never typed; the agent reads it from its inbox |
+| At rest (inbox, bus log, task store) | JSONL, newlines escaped; it round-trips whole |
 
 **Pre-commit safeguard:** When sending a commit action (`commit`, `stage`, `push`, `merge`, `rebase`, `tag`) to the commit agent, the bus checks that all other agents (excluding edit, commit, watch) have empty inboxes, are not busy, and have no running background processes. If any agent has pending work, the send is blocked with an error. Use `--force` to bypass.
 
@@ -85,6 +115,7 @@ muxcode send <to> <action> "<payload>" [--type TYPE] [--reply-to ID] [--no-notif
 | Nothing can read the addressed role's inbox (MUX-145; any message type) | `bus.Send` → `ErrNoConsumer` (`refuseWithoutConsumer`, `bus/consumer.go`) | Written to an inbox nobody read |
 | A **response** carries a `--reply-to` naming no message, and the sender holds no single open request from the role it is replying to (MUX-225) | `bus.ResolveResponseReplyTo` → `ErrReplyToUnknown` (`bus/reply_to.go`), before the message is built; a `reply-to-unknown` lifecycle row; a reply command printed for each open request. With exactly one such request the reply is attached to it instead (`reply-to-repaired`) | `Sent`, correlated to nothing — the request it meant stayed open until its task expired; on 2026-11-14 a passing test run failed its graph node that way |
 | A **response** repeats the last response delivered on the same `(from, to, action)` within the window (MUX-175) | `bus.Send` → `ErrResponseSuppressed` (`brakeRepeatedResponse`, `bus/response_brake.go`); a `response-suppressed` lifecycle row; the message ends "a response with nothing new needs no reply" | Delivered — two agents could acknowledge each other indefinitely |
+| An **inline** payload holds a newline or exceeds 500 characters and `MUXCODE_SEND_STRICT` is on (MUX-010) | The CLI, before the message is built (`sendStrict`, `cmd/send.go`); the warning block is printed first. `--force` does not deliver it; send it by `--payload-file` or stdin | Warned about and sent — as it still is with strict mode off |
 | The addressed inbox already holds 50 unconsumed messages (MUX-180; any message type, a reply or an agent's own startup message included) | `bus.Send` → `ErrInboxFull` (`appendCapped`, `bus/inbox_cap.go`); one `inbox-full` lifecycle row per episode and one `inbox-full` event to edit. Nothing queued is dropped; sends are accepted again once the role's consumer drains it below 50 | Appended without limit — an inbox nobody read reached 109 |
 
 Each request road's message ends "Re-send with --force to deliver anyway". A script that sends a deliberate duplicate must expect exit 1.
@@ -140,11 +171,15 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
 
 **Message hygiene:** keep delegations short, single-line, and intent-level.
 
-- **Short, single-line, no newlines.** `validatePayload()` warns when a payload
-  contains newlines ("may break allowedTools glob matching") or exceeds 500 chars.
-  These warnings are advisory but real — a long or multi-line payload can miss the
+- **Short, single-line, no newlines.** `validatePayload()` flags an inline payload
+  that contains newlines or exceeds 500 chars, and the send prints the `!!`-prefixed
+  warning block described under [Payload sources](#payload-sources). The warning is
+  advisory but real — a long or multi-line payload can miss the
   `Bash(muxcode *)` permission glob and trigger a permission prompt instead of
-  delivering cleanly. Treat the warnings as errors to fix, not noise.
+  delivering cleanly. Treat it as an error to fix in the next send, not noise — the
+  warned message itself was delivered, so it is not re-sent; `MUXCODE_SEND_STRICT`
+  makes it a refusal, and only a send that printed `NOT SENT` is retried, by
+  reference.
 - **Delegate intent, not pre-baked artifacts.** Describe *what* you want done and
   let the receiving agent compose the details. Don't hand the commit agent a full
   multi-line commit message or an exhaustive file list — say what to commit and
@@ -163,12 +198,20 @@ Tracking task 1779979541-edit-d2c7d769 — response will arrive in inbox
   - Good for: batches of PR-comment replies, multi-file commit plans, long
     generated bodies, anything you'd otherwise cram into one giant payload.
   - Prefer descriptive `/tmp/<name>.md` names; the receiving agent reads the file
-    directly. (A future `muxcode send --payload-file` will formalize this — see
-    `docs/requirements/backlog/MUX-010-delegation-message-hygiene.md`.)
-- **Prefer `--track` for delegations.** Use `--track` for fire-and-forget /
+    directly.
+- **Or send the content itself by reference.** When the receiver should have the
+  content in its inbox rather than a pointer to it, pass it with
+  `--payload-file <path>` or on stdin with `-`
+  ([Payload sources](#payload-sources)). The command line stays one short line,
+  nothing is warned about, and the receiver's `muxcode inbox` shows the payload
+  whole. A pointer suits content the receiver works through item by item; a
+  by-reference payload suits content it should read once, such as findings or a
+  handoff.
+- **`--track` is the default to reach for.** Use `--track` for fire-and-forget /
   long-running work so the sender keeps working; reserve `--wait` for when the
   result is needed before the next step. A healthy `--wait` polls every 500ms and
-  can look like a hang while the sender drains its inbox backlog — it is not stuck.
+  prints a `still waiting on <role>` line to stderr about every 30 s — it is not
+  stuck.
 
 **Keep agents deliverable (no blocking foreground commands):** the daemon's
 `checkIdleAgents()` delivers and notifies **only idle** agents. An agent stuck in
@@ -210,7 +253,7 @@ wake gate refused on — see [MUX-192](requirements/completed/MUX-192-stale-in-f
 > every stop/restart path is keystroke- or marker-based and the startup wake is
 > unreliable. An automatic watchdog (detect freeze → kill → respawn → verify inbox
 > drained, with no user intervention) is tracked in
-> `docs/requirements/backlog/MUX-010-delegation-message-hygiene.md`.
+> `docs/requirements/backlog/MUX-241-no-watchdog-recovers-a-frozen-but-alive-agent.md`.
 
 ### `muxcode inbox`
 

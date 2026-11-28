@@ -84,6 +84,19 @@ So for any run that is more than a single bare command:
 
 This mirrors the file-handoff pattern for long content: the script is the payload, the bus message is a short pointer. It turns a fragile, mangle-prone one-liner into a deterministic single-command run.
 
+### Long content — delegate intent, send the rest by reference
+
+**Delegate intent, not pre-baked artifacts.** A delegation names what you want done — "commit the MUX-010 changes", "record Phase 2's findings" — not the commit message, the file list or the finished prose the receiving agent owns. When the content genuinely has to travel (findings, a handoff, a table), send it **by reference**, never inline:
+
+```bash
+muxcode send plan update-docs --payload-file /tmp/mux010-findings.md --wait   # a file's content, byte for byte
+printf '%s\n' "line one" "line two" | muxcode send plan update-docs - --wait   # or stdin, with -
+```
+
+Either keeps the command line one line, so it matches `Bash(muxcode *)` and delivers, and the receiver's `muxcode inbox` shows the payload whole. An inline payload with a newline or past 500 characters prints a `!!` warning block on stderr — a warning, not a refusal: the message **was sent**, so do not send it again (a second copy duplicates the work once the dedup window passes); send the next one by reference. Only a send that printed `NOT SENT` — under `MUXCODE_SEND_STRICT=1` such a payload is refused, exit 1 — went nowhere and is retried, by reference. `--payload-file` takes one path, given once; it cannot be combined with an inline payload.
+
+A `--wait` that is still blocking prints `still waiting on <role> (<n>s elapsed)` to stderr every 30 s — that is liveness, not failure; the result still arrives on stdout or, after the degrade, in your inbox.
+
 ### Jira & Confluence — delegate to the plan agent
 
 The **plan agent owns Jira and Confluence**. When the user asks about a Jira story, issue, ticket, or Confluence page — reads and writes alike — delegate it:

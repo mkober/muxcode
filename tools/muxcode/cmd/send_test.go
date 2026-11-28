@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mkober/muxcode/tools/muxcode/bus"
 )
@@ -323,6 +327,195 @@ func TestValidatePayload_ExactlyAtLimit(t *testing.T) {
 	}
 }
 
+// MUX-010 Phase 2: the payload's one source. A file and stdin are sent byte
+// for byte — multi-line, trailing newline and CRLF included — and flagged by
+// reference (which skips the newline and length warnings); an inline payload
+// is taken as given and is not (the control). A missing file names its path;
+// two sources, or none, are refused.
+func TestResolvePayload(t *testing.T) {
+	long := strings.Repeat("a long multi-line delegation\n", 30) + "last line, no newline"
+	file := filepath.Join(t.TempDir(), "handoff.md")
+	if err := os.WriteFile(file, []byte(long+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		flags  sendFlags
+		stdin  string
+		want   string
+		byRef  bool
+		errHas string
+	}{
+		{"file, its trailing newline kept", sendFlags{payloadFile: file, payloadFileSet: true}, "", long + "\n", true, ""},
+		{"stdin, no trailing newline", sendFlags{inline: "-", inlineSet: true}, long, long, true, ""},
+		{"stdin, CRLF kept", sendFlags{inline: "-", inlineSet: true}, "one\r\ntwo\r\n", "one\r\ntwo\r\n", true, ""},
+		{"control: inline", sendFlags{inline: "short and single-line", inlineSet: true}, "", "short and single-line", false, ""},
+		{"missing file", sendFlags{payloadFile: file + ".gone", payloadFileSet: true}, "", "", false, file + ".gone"},
+		{"two sources", sendFlags{inline: "inline too", inlineSet: true, payloadFile: file, payloadFileSet: true}, "", "", false, "give the payload once"},
+		{"no source", sendFlags{}, "", "", false, "payload is required"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, byRef, err := resolvePayload(c.flags, strings.NewReader(c.stdin))
+			if c.errHas != "" {
+				if err == nil || !strings.Contains(err.Error(), c.errHas) || got != "" {
+					t.Fatalf("got %q, err %v — want an error naming %q", got, err, c.errHas)
+				}
+				return
+			}
+			if err != nil || got != c.want || byRef != c.byRef {
+				t.Errorf("got %q byRef=%v err=%v, want %q byRef=%v", got, byRef, err, c.want, c.byRef)
+			}
+		})
+	}
+}
+
+// MUX-010 Phase 3: the warning is one prefixed block naming each cause, the
+// consequence and both remedies — every line prefixed, so none reads as
+// ordinary output.
+func TestPayloadWarningBlock(t *testing.T) {
+	for _, c := range []struct {
+		name, payload string
+		causes        []string
+	}{
+		{"newline", "line one\nline two", []string{"payload contains newlines"}},
+		{"long", strings.Repeat("x", 501), []string{"payload is 501 chars (>500)"}},
+		{"both", strings.Repeat("x", 300) + "\n" + strings.Repeat("y", 300), []string{"payload contains newlines", "payload is 601 chars (>500)"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			block := payloadWarningBlock(validatePayload(c.payload))
+			for _, line := range strings.Split(strings.TrimSuffix(block, "\n"), "\n") {
+				if !strings.HasPrefix(line, "!! ") {
+					t.Errorf("unprefixed line %q in:\n%s", line, block)
+				}
+			}
+			want := append([]string{"WARNING", "Bash(muxcode *) permission glob", "--payload-file <path>", "/tmp/<name>.md", sendStrictEnv}, c.causes...)
+			for _, w := range want {
+				if !strings.Contains(block, w) {
+					t.Errorf("block does not name %q:\n%s", w, block)
+				}
+			}
+		})
+	}
+}
+
+// MUXCODE_SEND_STRICT's off spellings read as off; anything else is on.
+func TestSendStrict(t *testing.T) {
+	for v, want := range map[string]bool{
+		"": false, "0": false, "false": false, "FALSE": false, " no ": false, "Off": false,
+		"1": true, "true": true, "yes": true, "on": true,
+	} {
+		t.Setenv(sendStrictEnv, v)
+		if got := sendStrict(); got != want {
+			t.Errorf("%s=%q: strict = %v, want %v", sendStrictEnv, v, got, want)
+		}
+	}
+}
+
+// MUX-010 Phase 3: the real send's stderr and outcome. A payload the warning
+// names — too long, or carrying a newline — prints the warning block, before
+// the refusal when MUXCODE_SEND_STRICT is set: NOT SENT, exit 1, written to
+// neither inbox nor log. With strict off (unset or 0) the same payload prints
+// the block and is delivered as before. Control: a compliant payload prints
+// no block and is delivered, under either setting.
+func TestSendCLI_StrictRefusesWhatTheWarningNames(t *testing.T) {
+	for _, c := range []struct {
+		name, strict, payload string
+		sent, warned          bool
+	}{
+		{"strict: too long", "1", strings.Repeat("x", 501), false, true},
+		{"strict: newline", "1", "line one\nline two", false, true},
+		{"strict off: warned and sent", "", strings.Repeat("x", 501), true, true},
+		{"strict=0: warned and sent", "0", "line one\nline two", true, true},
+		{"strict=false: warned and sent", "false", "line one\nline two", true, true},
+		{"strict=true: refused", "true", strings.Repeat("x", 501), false, true},
+		{"control: compliant under strict", "1", "short and single-line", true, false},
+		{"control: compliant, strict off", "", "short and single-line", true, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			session := setupDedupSession(t)
+			t.Setenv(sendStrictEnv, c.strict)
+			out, errOut, code := runSendCapture(t, "edit", "plan", "notify", c.payload, "--type", "event", "--no-notify")
+			if warned := strings.Contains(errOut, "!! muxcode send: WARNING"); warned != c.warned {
+				t.Errorf("warning block printed = %v, want %v; stderr %q", warned, c.warned, errOut)
+			}
+			if strings.Contains(out, "!! ") {
+				t.Errorf("the warning reached stdout: %q", out)
+			}
+
+			logged, _ := os.ReadFile(filepath.Join(bus.BusDir(session), "log.jsonl"))
+			inLog := strings.Contains(string(logged), `"action":"notify"`)
+			if c.sent {
+				if code != 0 || inboxPayloadCount(t, session, "plan", c.payload) != 1 || !inLog {
+					t.Errorf("exit %d, inbox %d, logged %v — want delivered; out %q", code, inboxPayloadCount(t, session, "plan", c.payload), inLog, out)
+				}
+				return
+			}
+			if code != 1 || !strings.Contains(out, "NOT SENT") || !strings.Contains(out, sendStrictEnv) {
+				t.Errorf("exit %d, out %q — want NOT SENT naming %s, exit 1", code, out, sendStrictEnv)
+			}
+			if n := inboxPayloadCount(t, session, "plan", c.payload); n != 0 || inLog {
+				t.Errorf("a refused send wrote inbox %d, log %v", n, inLog)
+			}
+		})
+	}
+}
+
+// MUX-010 Phase 2 review: --payload-file is given once, with a path. A repeat
+// once kept the last path silently and an empty path vanished beside an
+// inline payload; both are now refused at the parser, before any send, as are
+// the existing malformed lines. Control: a well-formed line parses its flags.
+func TestParseSendFlags(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		args   []string
+		errHas string
+	}{
+		{"--payload-file twice", []string{"--payload-file", "a.md", "--payload-file", "b.md"}, "--payload-file given twice"},
+		{"empty path", []string{"--payload-file", ""}, "non-empty path"},
+		{"empty path beside an inline payload", []string{"inline", "--payload-file", ""}, "non-empty path"},
+		{"path missing", []string{"--payload-file"}, "--payload-file requires a path"},
+		{"unknown flag", []string{"x", "--bogus"}, "Unknown flag: --bogus"},
+		{"second inline argument", []string{"x", "y"}, "Unexpected argument: y"},
+		{"--wait with --track", []string{"x", "--wait", "--track"}, "mutually exclusive"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := parseSendFlags(c.args); err == nil || !strings.Contains(err.Error(), c.errHas) {
+				t.Errorf("parseSendFlags(%q) = %v, want an error naming %q", c.args, err, c.errHas)
+			}
+		})
+	}
+	f, err := parseSendFlags([]string{"--payload-file", "h.md", "--type", "response", "--reply-to", "1-edit-a", "--force"})
+	if err != nil || f.payloadFile != "h.md" || !f.payloadFileSet || f.inlineSet || f.msgType != "response" || f.replyTo != "1-edit-a" || !f.force {
+		t.Errorf("control: parsed %+v (%v)", f, err)
+	}
+}
+
+// A by-reference payload is the same message to the bus: at the inbox cap it
+// is refused like any other, with nothing appended.
+func TestResolvedPayloadIsStillCapped(t *testing.T) {
+	bus.SetBusDirBase(t.TempDir())
+	t.Cleanup(bus.ResetBusDirBase)
+	session := "test-payload-cap"
+	if err := bus.Init(session, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < bus.InboxCap; i++ {
+		if err := bus.SendNoCC(session, bus.NewMessage("edit", "plan", "event", "fill", "x", "")); err != nil {
+			t.Fatalf("filling the inbox: %v", err)
+		}
+	}
+	payload, byRef, err := resolvePayload(sendFlags{inline: "-", inlineSet: true}, strings.NewReader("line one\nline two\n"))
+	if err != nil || !byRef {
+		t.Fatalf("resolvePayload: %q %v %v", payload, byRef, err)
+	}
+	if err := bus.Send(session, bus.NewMessage("edit", "plan", "request", "plan", payload, "")); !errors.Is(err, bus.ErrInboxFull) {
+		t.Errorf("send at the cap = %v, want ErrInboxFull", err)
+	}
+	if msgs, _ := bus.Peek(session, "plan"); len(msgs) != bus.InboxCap {
+		t.Errorf("inbox holds %d, want %d — nothing appended", len(msgs), bus.InboxCap)
+	}
+}
+
 // TestResponseAnswers pins --wait correlation. The chrome case is the
 // 2026-09-14 defect verbatim: a `response:notify` from the target closed four
 // build and test waits and was printed as their result.
@@ -416,6 +609,65 @@ func TestWaitForResponsePrimaryBranch(t *testing.T) {
 	}
 	if !inboxHas(t, session, "edit", chrome.ID) {
 		t.Error("unrelated chrome must be left in the inbox, not drained")
+	}
+}
+
+// MUX-010 Phase 4: --wait's heartbeat. With the interval shortened, a reply
+// that lands after several intervals is preceded by at least one
+// `still waiting on build (Ns elapsed)` line on the heartbeat writer (stderr in
+// production) and none on stdout, which still carries the answer. Control: a
+// reply already waiting is returned with no heartbeat at all.
+func TestWaitForResponseHeartbeat(t *testing.T) {
+	saved, savedOut := waitHeartbeatEvery, waitHeartbeatOut
+	t.Cleanup(func() { waitHeartbeatEvery, waitHeartbeatOut = saved, savedOut })
+	waitHeartbeatEvery = 300 * time.Millisecond
+
+	for _, c := range []struct {
+		name       string
+		delay      time.Duration
+		heartbeats bool
+	}{
+		{"late reply", 1600 * time.Millisecond, true},
+		{"control: reply already waiting", 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			session, req, _ := setupWaitSession(t, "build")
+			var beats strings.Builder
+			waitHeartbeatOut = &beats
+			answer := func() {
+				a := bus.NewMessage("build", "edit", "response", "build", "exit 0", req.ID)
+				if err := bus.AppendToInbox(session, "edit", a); err == nil {
+					bus.MarkResponded(session, req.ID, a.ID)
+				}
+			}
+			if c.delay == 0 {
+				answer()
+			} else {
+				time.AfterFunc(c.delay, answer)
+			}
+
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			savedStdout := os.Stdout
+			os.Stdout = w
+			ok, payload := waitForResponse(session, "edit", "build", "build", req.ID, 10)
+			os.Stdout = savedStdout
+			w.Close()
+			stdout, _ := io.ReadAll(r)
+
+			if !ok || payload != "exit 0" {
+				t.Fatalf("wait = %v %q, want the answer", ok, payload)
+			}
+			got := strings.Count(beats.String(), "still waiting on build (")
+			if c.heartbeats && got < 1 || !c.heartbeats && got != 0 {
+				t.Errorf("heartbeats = %d (%q), want at least one: %v", got, beats.String(), c.heartbeats)
+			}
+			if strings.Contains(string(stdout), "still waiting") || !strings.Contains(string(stdout), "exit 0") {
+				t.Errorf("stdout %q: want the answer and no heartbeat", stdout)
+			}
+		})
 	}
 }
 

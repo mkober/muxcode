@@ -2,7 +2,7 @@
 
 **Tracking:** [mkober/muxcode#255](https://github.com/mkober/muxcode/issues/255)
 
-**Split from:** [MUX-010](./MUX-010-delegation-message-hygiene.md) on the user's decision of
+**Split from:** [MUX-010](../completed/MUX-010-delegation-message-hygiene.md) on the user's decision of
 2026-11-24, relayed by edit. This is MUX-010's primary goal, moved whole. **Parked at filing:** the
 signal that tells a frozen agent from a busy one is undesigned.
 

@@ -886,7 +886,7 @@ func (p *CodexProvider) SendWakeUp(session, role string, force bool) error {
 		if NormalizeBusRole(msg.From) == role {
 			continue
 		}
-		text := msg.Payload
+		text := redriveNewlines.Replace(msg.Payload)
 		if text == "" {
 			text = fmt.Sprintf("[%s request from %s]", msg.Action, msg.From)
 		}
