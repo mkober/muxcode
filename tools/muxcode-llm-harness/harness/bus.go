@@ -107,6 +107,16 @@ func (b *BusClient) Send(to, action, payload, msgType, replyTo string) error {
 	return nil
 }
 
+// LogLifecycle writes a lifecycle row for this session through the bus CLI
+// (`muxcode lifecycle log`), with source "harness".
+func (b *BusClient) LogLifecycle(level, event, detail string) error {
+	out, err := b.run("lifecycle", "log", b.Session, level, "harness", event, "--detail", detail)
+	if err != nil {
+		return fmt.Errorf("lifecycle log: %w: %s", err, out)
+	}
+	return nil
+}
+
 // Lock marks this role as busy.
 func (b *BusClient) Lock() error {
 	out, err := b.run("lock", b.Role)

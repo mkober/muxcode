@@ -861,6 +861,42 @@ func TestPreLaunchSetup_AutoStartupMessage(t *testing.T) {
 	}
 }
 
+// MUX-110 Phase 2: a local-model role's launch seeds the closed-form startup
+// — one command, one deliverable, a stated end — while a Claude role's keeps
+// the unchanged startupRestorePayload (the control). Both open with the words
+// the agent definitions key on.
+func TestPreLaunchSetup_LocalRoleGetsClosedFormStartup(t *testing.T) {
+	for _, c := range []struct {
+		cli, want string
+	}{
+		{"local", localStartupRestorePayload},
+		{"claude", startupRestorePayload},
+	} {
+		t.Run(c.cli, func(t *testing.T) {
+			dir := useTempBusDir(t)
+			session := "test-prelaunch-" + c.cli
+			Init(session, dir)
+			t.Setenv(RoleCLIEnvVar("build"), c.cli)
+
+			PreLaunchSetup("build", session, "muxcode-llm-harness", LaunchReasonRestart)
+
+			msgs, err := Peek(session, "build")
+			if err != nil || len(msgs) != 1 {
+				t.Fatalf("build inbox = %v (%v), want one startup", msgs, err)
+			}
+			if msgs[0].Payload != c.want || msgs[0].Type != "request" || msgs[0].Action != "startup" {
+				t.Errorf("startup = %s/%s %q, want request/startup %q", msgs[0].Type, msgs[0].Action, msgs[0].Payload, c.want)
+			}
+			if !strings.HasPrefix(msgs[0].Payload, "Session started —") {
+				t.Errorf("startup %q no longer opens with the words the definitions key on", msgs[0].Payload)
+			}
+		})
+	}
+	if !strings.Contains(localStartupRestorePayload, "muxcode memory context") || !strings.Contains(localStartupRestorePayload, "finishes this task") {
+		t.Errorf("closed-form startup %q must name its one command and its end", localStartupRestorePayload)
+	}
+}
+
 func TestPreLaunchSetup_EditStartupMessage(t *testing.T) {
 	dir := useTempBusDir(t)
 	session := "test-prelaunch-edit"

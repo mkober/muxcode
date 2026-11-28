@@ -897,6 +897,53 @@ Build and test roles are designated as "single-shot" via `isSingleShotRole()`. A
 
 Flow: tool executes → single-shot detected → loop breaks → summary call (no tools) → response sent.
 
+### Startup contract
+
+A local-model role is given a startup message with a stated end
+([MUX-110](requirements/completed/MUX-110-harness-startup-tool-loop-exhaustion.md)). `PreLaunchSetup`
+(`bus/launch.go`) seeds it by provider:
+
+| Role's provider | Startup `request:startup` payload | Constant (`bus/launch_reason.go`) |
+|-----------------|-----------------------------------|-----------------------------------|
+| `LocalProvider` — the LLM harness or `muxcode agent` | "Session started — run `muxcode memory context` once, then reply with one sentence summarizing what it shows. That reply finishes this task: run nothing else." | `localStartupRestorePayload` |
+| Every other provider (Claude, Codex, OpenCode) | "Session started — review last saved context from memory to restore session state." | `startupRestorePayload` |
+
+- **Why.** The open-ended text has no completion predicate. A large model infers the stopping
+  point; a small one treated it as a task with no end and spent its whole turn budget on it without
+  answering (2026-08-26, build and test on `qwen3:4b`). The closed form names one command, one
+  deliverable and the point at which the task is done.
+- **What is unchanged.** Both texts open with "Session started —", the words the agent definitions
+  key on. The auto agent's user-initiated Jira task still replaces either.
+- **What is proven.** That the launch seeds the closed-form text for a local role and the
+  unchanged text for a Claude role (`TestPreLaunchSetup_LocalRoleGetsClosedFormStartup`). **Not
+  proven:** that a small model stops on it — no model run has checked the wording;
+  [MUX-249](requirements/backlog/MUX-249-verify-closed-form-startup-bounded-against-live-local-model.md)
+  carries that.
+- **Do not raise `MaxTurns` as a fix.** A bigger budget for a task with no stopping condition buys
+  a longer loop, not a completion.
+
+### Tool-loop exhaustion
+
+A batch that reaches its send with no response is **terminal and visible**:
+
+| What happens | Detail |
+|--------------|--------|
+| Each request in the batch is answered | With `(no response generated — tool loop exhausted)`, as that request's own reply under its own id — so the request is responded and nothing re-drives it |
+| One lifecycle row is written | `harness-tool-loop-exhausted`, level `warn`, source `harness`: `<role>: request <ids> answered with the exhaustion text after <used> of its <budget> turns` (`no request` for a batch holding none) |
+| The batch counts as failed | For the [circuit breaker](#circuit-breaker)'s cross-batch count — every batch that falls back to the exhaustion text, including one whose model answered empty text, which before MUX-110 counted as a success and reset the breaker |
+
+Read it with `muxcode lifecycle show --event harness-tool-loop-exhausted`. Before MUX-110 the
+condition was visible only in the harness pane.
+
+- The row is written whenever the response is empty at the send, not only when the budget is
+  spent — a model answering empty text, or a single-shot summary call that fails, sends the same
+  exhaustion text. That is why it names the turns used rather than claiming the budget ran out.
+- A batch that spends every turn and then answers the tool-less summary call is an answered batch
+  and writes no row.
+- Harness only: `muxcode agent` does not write this row. Code: `logExhaustion` (`harness/loop.go`),
+  `BusClient.LogLifecycle` (`harness/bus.go`, through `muxcode lifecycle log`); pinned by
+  `TestProcessBatch_ExhaustionIsTerminalAndLogged`.
+
 ### False-success guard
 
 A small model will sometimes report success for a command that was **refused**. Two captured live on 2026-08-27, minutes apart, from `qwen3:4b` on the prompt role:
