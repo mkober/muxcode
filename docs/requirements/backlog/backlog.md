@@ -75,7 +75,7 @@ criteria and phases rewritten to them:
 | [`MUX-143`](../completed/MUX-143-run-carries-two-phase-identities.md) | closed 2026-11-27 at 33/33 | Split in two: Defect A blesses `### Deferred` as the deferral mechanism, landing with MUX-130; Defect B warns, never refuses, when launch intent and derived phase disagree |
 | [`MUX-130`](../completed/MUX-130-spec-phase-parsing-semantics.md) | closed 2026-11-27 at 55/55 | Phases are `### Phase N` under `## Implementation` only; duplicate phase numbers warn at dispatch; a deliberately open item holds the loop and the gate text says so. Phase 4 rewritten around MUX-183. Added by the user 2026-11-27: a spec with no implementation section is never commit-ready |
 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | 4/24 | Width overflow wraps in step order with no line wider than the pane, header included; the flat fallback is pinned through height overflow |
-| [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | 0/31 | Each request in a batch gets its own reply; self-messages filtered. The script skips its model section without Ollama |
+| [`MUX-111`](../completed/MUX-111-harness-reply-miscorrelation.md) | closed 2026-11-28 at 31/31 | Each request in a batch gets its own reply; self-messages filtered. The script skips its model section without Ollama. As shipped one conversation answers the batch and the same text goes to each request; the startup bootstrap is exempt from the filter on edit's call; the model section has never run |
 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | 0/26 | Exhaustion terminal state and its lifecycle event ship now; harness roles get a closed-form startup message, wording validated where Ollama runs |
 | [`MUX-008`](../completed/MUX-008-unverified-daemon-auto-restart.md) | closed 2026-11-27 at 24/24 | Orphan detection dropped; the scope was verifying old-process exit and post-launch readiness inside `scrapeAndRelaunch`, a failure returning an error. Edit stays resume-only. As shipped the waits run inside the daemon's poll loop under a keepalive heartbeat |
 | [`MUX-190`](../completed/MUX-190-codex-agent-drops-a-consumed-request-after-a-guard-denial.md) | closed 2026-11-27 at 22/22 | Re-drive once per task with the guard-denial text, refused on a working pane; else alert edit naming task and node. As shipped a Codex or OpenCode agent always takes the alert: the re-drive road reaches Claude only |
@@ -124,23 +124,22 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | # | T | ID | Defect | Sev | Depends on |
 |---|---|----|--------|-----|------------|
 | 1 | 0 | [`MUX-215`](./MUX-215-non-reproducible-test-sh-failures-and-lost-failing-output.md) | `./test.sh` fails, passes on rerun, and nothing recorded which test failed | High | — · ⇄ [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) |
-| 2 | 6 | [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness reply correlates to the batch's last message | High | — |
-| 3 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
-| 4 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
-| 5 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | A long or multi-line delegation is only warned about, and has no first-class road | Medium | — |
-| 6 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
-| 7 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
-| 8 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 9 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
-| 10 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
-| 11 | 6 | [`MUX-240`](./MUX-240-idle-task-rescue-acts-on-a-role-with-live-background-work.md) | Idle-task rescue re-queues and times out a task whose role has live background work | Medium | — |
-| 12 | 6 | [`MUX-239`](./MUX-239-validate-accepts-a-review-node-with-no-failure-route.md) | `Validate()` accepts a graph whose review node has no failure route | Medium | — |
-| 13 | 6 | [`MUX-238`](./MUX-238-nothing-fails-when-a-test-binds-a-socket.md) | Nothing fails when a test binds a socket | Low | — |
-| 14 | 6 | [`MUX-241`](./MUX-241-no-watchdog-recovers-a-frozen-but-alive-agent.md) | No watchdog recovers a frozen-but-alive agent | Medium | — |
-| 15 | 6 | [`MUX-243`](./MUX-243-a-halt-that-halts.md) | A halt request does not stop an agent's work, and a reload brings it back | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 16 | 6 | [`MUX-244`](./MUX-244-negative-control-deletion-is-not-checked.md) | Deleting or inverting a negative control leaves the suite green | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 17 | 6 | [`MUX-245`](./MUX-245-a-worker-certifies-its-own-change.md) | Nothing says whose verdict counts when a worker certifies its own change | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
-| 18 | 6 | [`MUX-247`](./MUX-247-bus-suite-fails-under-codex-workspace-write-sandbox.md) | The bus suite fails under Codex's opt-in `workspace-write` sandbox | Medium | — |
+| 2 | 6 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness startup message exhausts the tool loop | High | — |
+| 3 | 6 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-agent turn budget exhaustion | High | — |
+| 4 | 6 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | A long or multi-line delegation is only warned about, and has no first-class road | Medium | — |
+| 5 | 6 | [`MUX-151`](./MUX-151-display-width-runes-not-cells.md) | Display width is measured in runes, not terminal cells | Low | — |
+| 6 | 6 | [`MUX-173`](./MUX-173-prompt-profile-no-discovery-affordance.md) | The `prompt` profile has no discovery affordance | Low | — |
+| 7 | 6 | [`MUX-197`](./MUX-197-guard-and-allowlist-bypassable-by-command-shape.md) | Guard rules and the local-LLM allowlist are bypassable by command shape | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 8 | 6 | [`MUX-210`](./MUX-210-graph-tui-script-narrow-pane-flat-fallback-and-failed-first-order-fail.md) | `test-graph-tui.sh` fails: a narrow pane renders no flat fallback, a failed node lists after a done one | Medium | — |
+| 9 | 6 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` strands a live session: its monitor and listeners exit | Medium | — |
+| 10 | 6 | [`MUX-240`](./MUX-240-idle-task-rescue-acts-on-a-role-with-live-background-work.md) | Idle-task rescue re-queues and times out a task whose role has live background work | Medium | — |
+| 11 | 6 | [`MUX-239`](./MUX-239-validate-accepts-a-review-node-with-no-failure-route.md) | `Validate()` accepts a graph whose review node has no failure route | Medium | — |
+| 12 | 6 | [`MUX-238`](./MUX-238-nothing-fails-when-a-test-binds-a-socket.md) | Nothing fails when a test binds a socket | Low | — |
+| 13 | 6 | [`MUX-241`](./MUX-241-no-watchdog-recovers-a-frozen-but-alive-agent.md) | No watchdog recovers a frozen-but-alive agent | Medium | — |
+| 14 | 6 | [`MUX-243`](./MUX-243-a-halt-that-halts.md) | A halt request does not stop an agent's work, and a reload brings it back | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 15 | 6 | [`MUX-244`](./MUX-244-negative-control-deletion-is-not-checked.md) | Deleting or inverting a negative control leaves the suite green | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 16 | 6 | [`MUX-245`](./MUX-245-a-worker-certifies-its-own-change.md) | Nothing says whose verdict counts when a worker certifies its own change | Medium | ⇄ [MUX-157](../completed/MUX-157-role-boundary-an-agent-can-ignore.md) |
+| 17 | 6 | [`MUX-247`](./MUX-247-bus-suite-fails-under-codex-workspace-write-sandbox.md) | The bus suite fails under Codex's opt-in `workspace-write` sandbox | Medium | — |
 
 ### Reliability & observability
 
@@ -154,7 +153,6 @@ asked for. Its "Decisions (user, 2026-11-24)" section says what overtook it and 
 | [`MUX-231`](./MUX-231-rename-session-strands-a-live-session.md) | `tmux rename-session` Strands a Live Session — Its Monitor and Listeners Exit | Medium | — |
 | [`MUX-125`](./MUX-125-usage-and-billing-modal.md) | Usage and Billing Modal | Medium | — |
 | [`MUX-122`](./MUX-122-prompt-agent-turn-attribution-and-fix.md) | Prompt-Agent Turn Budget — Attribute, Then Fix | High | — |
-| [`MUX-111`](./MUX-111-harness-reply-miscorrelation.md) | Harness Reply Correlates to the Batch's Last Message, Not the Request | High | — |
 | [`MUX-110`](./MUX-110-harness-startup-tool-loop-exhaustion.md) | Harness Startup Message Exhausts the Tool Loop | High | — |
 | [`MUX-010`](./MUX-010-delegation-message-hygiene.md) | Delegation Message Hygiene | Medium | — |
 | [`MUX-012`](./MUX-012-remove-gated-pane-scrape-delivery.md) | Remove gated pane-scrape delivery machinery | Low | — |
@@ -417,6 +415,7 @@ Delivered specs. Ids stay claimed permanently; MUX-028–MUX-099 are retroactive
 | [`MUX-248`](../completed/MUX-248-analyze-hook-test-writes-the-real-tmp-trigger.md) | An Analyze-Hook Test Writes the Real `/tmp` Trigger on Every Suite Run |
 | [`MUX-008`](../completed/MUX-008-unverified-daemon-auto-restart.md) | Unverified Daemon Auto-Restart |
 | [`MUX-194`](../completed/MUX-194-stale-reload-marker-cleanup-breaks-exclusive-lock.md) | Stale Reload-Marker Cleanup Can Delete a Live Exclusive Lock |
+| [`MUX-111`](../completed/MUX-111-harness-reply-miscorrelation.md) | Harness Reply Correlates to the Batch's Last Message, Not the Request |
 
 ## Ideas without specs
 

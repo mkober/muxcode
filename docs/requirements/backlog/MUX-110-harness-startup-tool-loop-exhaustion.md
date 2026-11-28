@@ -38,7 +38,7 @@ model because a large model infers the stopping point. Small models need the sto
 ### Why it repeats rather than failing once
 
 An exhausted batch produces no usable response, so the request is never answered and never
-receipted — which is [MUX-111](./MUX-111-harness-reply-miscorrelation.md)'s territory. The delivery
+receipted — which is [MUX-111](../completed/MUX-111-harness-reply-miscorrelation.md)'s territory. The delivery
 backstop then re-drives the same startup message forever.
 
 **The two defects multiply.** MUX-111 makes the retry infinite; MUX-110 makes each retry cost a full
@@ -105,7 +105,7 @@ Needs no model and no decision beyond the above — ships first.
 - [ ] An exhausted batch is reported once and is not re-driven indefinitely — the request it could not answer ends in a state the delivery backstop does not chase
 - [ ] Emit a lifecycle event on exhaustion naming the role, the request id and the turn budget
 - [ ] Negative control: a batch that answers within its budget writes no exhaustion event and is receipted as today
-- [ ] Re-check the interaction with [MUX-111](./MUX-111-harness-reply-miscorrelation.md) once either lands, and record it here
+- [ ] Re-check the interaction with [MUX-111](../completed/MUX-111-harness-reply-miscorrelation.md) once either lands, and record it here
 
 ### Phase 2: The closed-form startup message
 

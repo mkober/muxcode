@@ -1398,6 +1398,17 @@ A daemon backstop, **`checkPollHealth`**, watches for a growing **receipt gap** 
 
 **What counts as received.** "Un-receipted" is decided by one read-side predicate, `hasReceipt()` (`bus/delivery.go`): `AckedAt > 0` **or** `Status == responded`. A reply implies receipt, and is strictly stronger evidence than a consume-ack — the agent did not just read the message, it finished the work and answered. The second clause exists because `MarkResponded()` records a response without setting `AckedAt`; without it an answered-but-never-consumed request read as un-receipted forever, the gap counted it permanently, and the backstop re-drove delivery for work already done — observed live as ~21 hours of repeated re-drives and duplicate LGTM echoes from a single review request. `MarkResponded()` is also the single choke point that drains the answered row from the responder's inbox (`ConsumeByID`), resolving the recipient from the original request's `To` so a stale correlation still drains the right inbox, and covering the `--wait` fallback where a response is correlated with no `ReplyTo`. While the cutover is on, the daemon's `checkIdleAgents` / `checkParkedInput` / `checkPaneSweep` are bypassed — the machinery MUX-012 above tracks removing.
 
+**Correlation is the responder's job.** The bus advances a request to `responded` only for the id a reply names (`--reply-to`); handed the wrong id it marks the wrong message and the request stays `acked`, its sender's tracked task in flight until the timeout. The local LLM harness consumes a whole inbox batch at once, so it is the one that must choose ([MUX-111](requirements/completed/MUX-111-harness-reply-miscorrelation.md)):
+
+| Batch | What the harness sends |
+|-------|------------------------|
+| One request, with or without responses and events around it | One reply — recipient (`ReplyTarget()`, so a chain request's `ReplyRole` is honoured), action and `--reply-to` id all taken from that request |
+| Several requests | The batch runs as **one** conversation, and its answer is sent to **each** request as that request's own reply, in arrival order |
+| No request | Processed, no reply |
+| A message the role sent itself | Dropped at consume (`dropSelfSends`, `harness/bus.go`), except the launch-time `request:startup` bootstrap — the bus's own rule, which `muxcode inbox` already applies; the harness repeats it for an inbox the CLI did not filter |
+
+Before, a single reply took all three fields from whichever message arrived last: a `[request, response]` batch answered the response, and of several requests only the last was answered. Core code: `harness/loop.go` (`batchRequests`, `processBatch`).
+
 **Who consumed it.** A receipt names the process that wrote it: `acked_pid`, and `acked_parent_alive` — false when that process had already been reparented to pid 1 (`WriteReceipt`, `bus/delivery.go`; MUX-156). The role alone made a live listener and an orphaned one indistinguishable after the fact. Both fields are absent on receipts written before they existed, and a Linux subreaper adopting an orphan is not detected — it reads as a live parent.
 
 ### Edit inbox polling (`--wait`)
