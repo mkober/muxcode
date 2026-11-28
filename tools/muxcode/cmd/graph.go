@@ -192,6 +192,9 @@ func graphRun(args []string) {
 	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
 		fmt.Printf("Warning: %s\n", w)
 	}
+	if w := bus.PhaseIdentityWarning(bus.BusSession(), intent); w != "" {
+		fmt.Printf("Warning: %s\n", w)
+	}
 }
 
 // requireIntent stops a run whose template interpolates ${spec} or

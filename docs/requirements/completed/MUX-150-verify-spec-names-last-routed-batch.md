@@ -93,6 +93,16 @@ review a graph run dispatched sends no daemon `verify-spec` and leaves the movem
 unwritten, so "the last verification" is the last one the daemon itself fired — Phase 2 records
 what the list then covers.
 
+## Decision (user, 2026-11-27)
+
+Relayed by edit, after this spec closed. Plan had flagged a side effect of Decision 1 as built: the
+analyze role receives no event for a documentation edit
+([Findings for Phase 3](#findings-for-phase-3)).
+
+| Question | Decision |
+|----------|----------|
+| Should the analyze role still hear about `docs/` edits? | **No — analyze does not need them.** Decision 1 stands as built: a write under `docs/` writes no trigger and moves no workflow state. Nothing is to be changed |
+
 ## Requirements
 
 ### Acceptance criteria

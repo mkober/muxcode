@@ -135,7 +135,7 @@ the outcome depend on timing: a run that completed a second before the relaunch 
 **Rejected — make the run carry its own spec path.** Sound for `spec_phases_remaining` alone, but
 `plan-verify`, `phase-check` (`phaseCommitReady`) and the close-out guard all read the pointer; a
 second copy inside `run.json` is two sources that can disagree
-([MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)'s class). The pointer stays the single
+([MUX-143](../completed/MUX-143-run-carries-two-phase-identities.md)'s class). The pointer stays the single
 record; the fix is that it survives.
 
 ### Key files
@@ -210,7 +210,7 @@ script is not executable in the tree (`-rw-r--r--`) and was run as `bash scripts
   `ReconcileActiveSpec`, the pointer-honesty principle this extends one layer down);
   [MUX-121](../completed/MUX-121-multi-phase-sequential-graph.md) (the termination
   semantics that make a vanished pointer look like a finished spec); [MUX-124](./MUX-124-lifecycle-since-truncated-by-limit.md)
-  (why the window was invisible at first); [MUX-143](../backlog/MUX-143-run-carries-two-phase-identities.md)
+  (why the window was invisible at first); [MUX-143](../completed/MUX-143-run-carries-two-phase-identities.md)
   (why the run must not carry a second copy); [MUX-167](../completed/MUX-167-spec-to-pr-commit-gate-before-phase-check.md)
   (the fail-closed `phase-check` path a vanished pointer would take).
 

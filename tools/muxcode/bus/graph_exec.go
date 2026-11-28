@@ -482,9 +482,16 @@ func specCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 // intent, or no active spec, passes through — the guard scopes a ship to
 // what the run claimed to deliver, nothing more (user decision
 // 2026-08-28: a full-spec guard would block every partial-phase ship).
+// A pass on the intent's phase while the spec's lowest open phase is
+// another is still a pass, but logs graph-guard-phase-mismatch: the worker
+// was handed that other phase (MUX-143 Defect B, warn not refuse).
 func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
-	phase := IntentPhase(run.Intent)
+	phase, named := intentPhaseNumber(run.Intent)
+	if !named {
+		return true
+	}
 	if phase == 0 {
+		logPhaseZeroPassThrough(session, run, n)
 		return true
 	}
 	path, ok, transient, refused := activeSpecFile(session)
@@ -510,7 +517,28 @@ func phaseCompleteGuardAllows(session string, run *GraphRun, n *Node) bool {
 			phase, count, summarizeOpenItems(names, 5)))
 		return false
 	}
+	if current, found, err := SpecCurrentPhase(path); err == nil && found && current.Number != phase {
+		LogLifecycle(session, "warn", "daemon", "graph-guard-phase-mismatch",
+			fmt.Sprintf("%s: %s — phase-complete guard passed on the intent's Phase %d while the spec's lowest open phase is %q, the phase the worker was given",
+				run.ID, n.ID, phase, current.Title))
+	}
 	return true
+}
+
+// logPhaseZeroPassThrough records, as graph-guard-phase-mismatch, a
+// phase-complete guard passing a Phase 0 intent through unchecked while the
+// spec's lowest open phase is another — the pass-through is the guard's
+// policy for Phase 0, so the row claims no item check (MUX-143).
+func logPhaseZeroPassThrough(session string, run *GraphRun, n *Node) {
+	path, ok, _, _ := activeSpecFile(session)
+	if !ok {
+		return
+	}
+	if current, found, err := SpecCurrentPhase(path); err == nil && found && current.Number != 0 {
+		LogLifecycle(session, "warn", "daemon", "graph-guard-phase-mismatch",
+			fmt.Sprintf("%s: %s — phase-complete guard passed the intent's Phase 0 through unchecked while the spec's lowest open phase is %q, the phase the worker was given",
+				run.ID, n.ID, current.Title))
+	}
 }
 
 // phaseProgressGuardAllows blocks a per-phase commit that would ship no

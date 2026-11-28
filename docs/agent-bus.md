@@ -2029,6 +2029,25 @@ The `phase-progress` guard's decline carries the same hold sentence, so a declin
 
 A `map` node runs its items **serially on the run's single worker** by default ([MUX-195](requirements/completed/MUX-195-graph-runs-never-reuse-idle-workers.md) Decision 3); `"workers": N` on the node opts into N lanes, each taking the next item when its worker answers, capped by `MUXCODE_SPAWN_MAX_WORKERS` (fewer lanes, not a failure). A negative `workers` fails `graph validate`. Results are recorded in item order whatever the lane count, and the queue is persisted before any worker is seeded, so a daemon restart mid-dispatch neither loses nor double-runs an item.
 
+**Launch warnings.** `muxcode graph run` prints these after `Started run …`, and the run browser shows the same text as a `⚠` notice — one shared function each, so the two surfaces cannot drift. Neither refuses the launch or adds a gate.
+
+| Warning | When | What it means |
+|---------|------|---------------|
+| `Warning: node "<id>" has a phase-complete guard but the intent names no phase ("Phase N") — the guard will pass through and the commit ships unchecked` — or, for an intent naming Phase 0, `… the intent names Phase 0, which the guard does not check — it passes through and the commit ships unchecked` (`bus.UnscopedPhaseGuardWarning`) | The graph carries a `phase-complete` guard and the intent names no phase, or names Phase 0 | The guard scopes to the phase the intent names. With none it checks nothing, and it passes a named Phase 0 through the same way — Phase 0 is a real phase everywhere else, and this guard still does not check it |
+| `Warning: the intent names Phase N but the active spec's lowest open phase is "<title>" — dispatches will name Phase M, while a phase-complete guard checks Phase N` — ending `… passes Phase 0 through unchecked` when N is 0 (`bus.PhaseIdentityWarning`, [MUX-143](requirements/completed/MUX-143-run-carries-two-phase-identities.md)) | The intent names a phase, the active spec has an open phase, and the two differ — whatever the graph | The run carries two phase identities: the intent's, frozen at launch, and the spec's lowest open phase, read fresh at every dispatch. Workers are handed the second; a `phase-complete` guard reads the first. On 2026-09-03 a run labelled Phase 5 handed its worker Phase 2 |
+
+The second also leaves a record, since a run an agent launches has nobody reading the terminal: `CreateGraphRun` logs a `graph-phase-identity-mismatch` warn row naming the run. And when a `phase-complete` guard later **passes** on the intent's phase while the spec's lowest open phase is another, it logs `graph-guard-phase-mismatch` — still a pass (the decision is warn, not refuse), no longer a silent one; for a Phase 0 intent the row says the guard passed it through unchecked rather than claim a check.
+
+| Intent | Warnings at launch |
+|--------|--------------------|
+| Names no phase | The first only, and only if the graph carries the guard |
+| Names Phase N ≥ 1, and the spec agrees | None |
+| Names Phase N ≥ 1, and the spec's lowest open phase is another | The second |
+| Names Phase 0, and the spec agrees | The first, if the graph carries the guard — agreeing does not make Phase 0 checked |
+| Names Phase 0, and the spec's lowest open phase is another | Both, if the graph carries the guard; the run browser shows them together |
+
+No builtin template uses the `phase-complete` guard — `50-spec-to-pr` commits under `phase-progress`, which reads HEAD, not the intent — so the guard half matters to a user or project template that sets it.
+
 ```bash
 # Start a run from a built-in template, with intent interpolated into node messages
 muxcode graph run 50-spec-to-pr "implement PBP1-4915"

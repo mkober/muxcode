@@ -993,7 +993,7 @@ is empty, not done, and boxes under a `####` subheading count for their phase. T
 
 **What a phase is, what holds the loop, and which predicate answers what**
 ([MUX-130](requirements/completed/MUX-130-spec-phase-parsing-semantics.md), with
-[MUX-143](requirements/backlog/MUX-143-run-carries-two-phase-identities.md)). The run's idea of a
+[MUX-143](requirements/completed/MUX-143-run-carries-two-phase-identities.md)). The run's idea of a
 phase is read from the spec on every use (`parseSpecPhases` over `scanSpecPhases`,
 `bus/spec_items.go`), never stored.
 

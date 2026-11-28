@@ -1445,8 +1445,14 @@ func (ui *GraphUI) launchGraph(g *bus.Graph, template, intent string) {
 	ui.nodeFollow = true
 	ui.parkedState = ""
 	ui.dagScroll = 0
-	if w := bus.UnscopedPhaseGuardWarning(g, intent); w != "" {
-		ui.notice = "⚠ " + w
+	var warnings []string
+	for _, w := range []string{bus.UnscopedPhaseGuardWarning(g, intent), bus.PhaseIdentityWarning(ui.session, intent)} {
+		if w != "" {
+			warnings = append(warnings, w)
+		}
+	}
+	if len(warnings) > 0 {
+		ui.notice = "⚠ " + strings.Join(warnings, " · ")
 	} else if pick.Path != "" {
 		ui.notice = "Active spec set: " + pick.Path
 	}
