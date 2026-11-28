@@ -17,7 +17,7 @@ Relayed by edit. The spec is split by defect, and both questions it left for the
 
 | Defect | Decision |
 |--------|----------|
-| A — a parked checkbox pins derivation | **Bless `### Deferred`.** A non-`Phase` `###` heading is the way to park an item: boxes under it belong to no phase, so they cannot hold `SpecCurrentPhase`. No item-level syntax is added. Delivered as a test and a doc line, **landing with [MUX-130](./MUX-130-spec-phase-parsing-semantics.md)'s Phase 3 scoping** — one change to the heading rule in `parseSpecPhases` |
+| A — a parked checkbox pins derivation | **Bless `### Deferred`.** A non-`Phase` `###` heading is the way to park an item: boxes under it belong to no phase, so they cannot hold `SpecCurrentPhase`. No item-level syntax is added. Delivered as a test and a doc line, **landing with [MUX-130](../completed/MUX-130-spec-phase-parsing-semantics.md)'s Phase 3 scoping** — one change to the heading rule in `parseSpecPhases` |
 | B — intent phase and derived phase disagree | **Warn, do not refuse.** When the launch intent names a phase and the live derivation names another, the launch warns. No new blocking gate is added to the ship path |
 
 The two defects stay in this one spec, as separate phases. Defect A's phase is done when MUX-130's
@@ -121,7 +121,7 @@ single-surface property rather than adding a third place a warning can go missin
 
 | Spec | Relationship |
 |------|--------------|
-| [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) | **Adjacent, and a dependency.** MUX-130 covers phase *parsing* semantics — how headings are read. This is **not** a parsing bug: parsing is correct in the observed case (Phase 2 genuinely has an open box). The defect is **semantic** — two correct parses of two different things, used as if they were the same thing. Kept as a separate spec, but Defect A's `### Deferred` rule lives in the heading rule MUX-130's Phase 3 rewrites, so it lands with that phase. |
+| [`MUX-130`](../completed/MUX-130-spec-phase-parsing-semantics.md) | **Adjacent, and a dependency.** MUX-130 covers phase *parsing* semantics — how headings are read. This is **not** a parsing bug: parsing is correct in the observed case (Phase 2 genuinely has an open box). The defect is **semantic** — two correct parses of two different things, used as if they were the same thing. Kept as a separate spec, but Defect A's `### Deferred` rule lives in the heading rule MUX-130's Phase 3 rewrites, so it lands with that phase. |
 | [`MUX-142`](../completed/MUX-142-spawn-worker-delegates-into-wrong-tree.md) | Same family: a graph worker given a **wrong picture of what it is working on**. MUX-142 is the wrong *tree*; this is the wrong *phase*. Independent mechanisms, shared consequence — a worker proceeds confidently on a false premise. |
 | [`MUX-121`](../completed/MUX-121-multi-phase-sequential-graph.md) | Owns the stateless-derivation decision this spec must not regress. Defect A's fix cannot reintroduce stored phase state. |
 
@@ -204,7 +204,7 @@ Independent of MUX-130; may land first.
 
 ### Phase 3: Bless `### Deferred` (Defect A)
 
-**Lands with [MUX-130](./MUX-130-spec-phase-parsing-semantics.md)'s Phase 3**, which rewrites the
+**Lands with [MUX-130](../completed/MUX-130-spec-phase-parsing-semantics.md)'s Phase 3**, which rewrites the
 heading rule this depends on. Do not land it against the unscoped parser and then again against the
 scoped one.
 
@@ -257,4 +257,4 @@ Unparked 2026-11-24 on the user's decisions, relayed by edit and recorded in
 [Decisions](#decisions-user-2026-11-24): Defect A is `### Deferred`, landing with MUX-130's Phase 3;
 Defect B warns and does not refuse. The three questions this section used to ask — warn or refuse,
 which mechanism, split or keep — are answered there: warn, `### Deferred`, one spec with a phase per
-defect. Depends on [MUX-130](./MUX-130-spec-phase-parsing-semantics.md) for Phase 3 only.
+defect. Depends on [MUX-130](../completed/MUX-130-spec-phase-parsing-semantics.md) for Phase 3 only.

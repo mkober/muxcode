@@ -299,7 +299,7 @@ Option 1 or 2 also fixes the workflow-state churn; option 3 alone does not.
 Added 2026-09-01. Phases 1–2 closed the **refire** loop; this phase closes the **changed-files** defect,
 which is separate and untouched by that work. It exists as a phase — rather than as loose criteria —
 because unscoped items are invisible to every phase predicate, so the graph machinery cannot drive
-them ([`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md) Defect E).
+them ([`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) Defect E).
 
 - [x] **Scope changed-files to the repository.** A path outside the repo working tree is never
       presented to the verifier as a repo file. This is the fix for impact item 8, where an echo named

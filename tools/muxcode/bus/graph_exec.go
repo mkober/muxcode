@@ -534,9 +534,16 @@ func phaseProgressGuardAllows(session string, run *GraphRun, n *Node) bool {
 		finishNode(session, run, n, OutcomeFailure,
 			fmt.Sprintf("phase-progress guard: cannot read active spec: %v", v.readErr))
 		return false
+	case v.unscoped:
+		declineGuard(session, run, n, "phase-progress guard declined: a spec read unscoped is never commit-ready. "+SpecPhasesUnscopedWarning)
+		return false
 	case !v.ready:
-		declineGuard(session, run, n, fmt.Sprintf(
-			"phase-progress guard declined: %d phases complete in the tree, %d at HEAD — no uncommitted phase is complete, this commit's phase is still open", v.completed, v.atHead))
+		text := fmt.Sprintf(
+			"phase-progress guard declined: %d phases complete in the tree, %d at HEAD — no uncommitted phase is complete, this commit's phase is still open", v.completed, v.atHead)
+		if v.hasOpen {
+			text += " " + phaseHoldSentence(v.open)
+		}
+		declineGuard(session, run, n, text)
 		return false
 	}
 	return true
@@ -554,6 +561,9 @@ type phaseCommitVerdict struct {
 	completed int       // phases complete in the working tree
 	atHead    int       // phases complete in HEAD's copy of the spec
 	phase     SpecPhase // lowest phase complete in the tree but not at HEAD
+	unscoped  bool      // the tree's phases were read with no implementation section
+	open      SpecPhase // the tree's lowest open phase, when hasOpen
+	hasOpen   bool
 }
 
 // phaseCommitReady is the one predicate behind the phase-progress guard,
@@ -569,6 +579,17 @@ type phaseCommitVerdict struct {
 // asked to commit "Phase 1" while the run worked on Phase 2 (MUX-183; seen
 // again 2026-09-24 on MUX-182 Phase 3). HEAD is the frame that means
 // "committed", so the answer needs no run state.
+//
+// It answers "does a commit ship a phase, and which" — every caller asking
+// that must use it, never a phase count. A phase is what parseSpecPhases
+// reads — a `### Phase N` under `## Implementation` (MUX-130 decision 2a).
+// A spec read unscoped is never commit-ready (the user, 2026-11-27): it is
+// still read document-wide for display, but no heading outside an
+// implementation section may ship a commit, and the decline gives
+// SpecPhasesUnscopedWarning as the reason. A
+// phase complete behind an open earlier phase is committable: an
+// open box holds the loop through SpecCurrentPhase, not the commit (MUX-130
+// decision 1, as MUX-183 left it).
 func phaseCommitReady(session string) phaseCommitVerdict {
 	var v phaseCommitVerdict
 	path, ok, transient, refused := activeSpecFile(session)
@@ -580,11 +601,14 @@ func phaseCommitReady(session string) phaseCommitVerdict {
 		v.noSpec = true
 		return v
 	}
-	tree, err := SpecPhases(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		v.readErr = err
 		return v
 	}
+	tree, unscoped := scanSpecPhases(string(data))
+	v.unscoped = unscoped
+	v.open, v.hasOpen = currentSpecPhase(tree)
 	headContent, err := specAtHEADFn(SessionRepoDir(session), path)
 	if err != nil {
 		v.readErr = fmt.Errorf("read HEAD's copy of the spec: %w", err)
@@ -592,6 +616,9 @@ func phaseCommitReady(session string) phaseCommitVerdict {
 	}
 	head := parseSpecPhases(headContent)
 	v.completed, v.atHead = completedPhaseCount(tree), completedPhaseCount(head)
+	if v.unscoped {
+		return v
+	}
 	if newly := newlyCompletedPhases(tree, head); len(newly) > 0 {
 		v.ready, v.phase = true, newly[0]
 	}
@@ -710,6 +737,10 @@ func interpolateGraphMessage(session string, run *GraphRun, msg, item string) st
 	if item != "" {
 		msg = strings.ReplaceAll(msg, "${item}", item)
 	}
+	namesPhase := strings.Contains(msg, "${current_phase}") || strings.Contains(msg, "${completed_phase}") || strings.Contains(msg, "${phase_hold}")
+	if strings.Contains(msg, "${phase_hold}") {
+		msg = strings.ReplaceAll(msg, "${phase_hold}", resolvePhaseHoldText(session))
+	}
 	if strings.Contains(msg, "${current_phase}") {
 		msg = strings.ReplaceAll(msg, "${current_phase}", resolveCurrentPhaseText(session))
 	}
@@ -719,7 +750,24 @@ func interpolateGraphMessage(session string, run *GraphRun, msg, item string) st
 	if strings.Contains(msg, "${output:") {
 		msg = expandNodeOutputRefs(session, run, msg)
 	}
+	if namesPhase && activeSpecUnscoped(session) {
+		msg += " " + SpecPhasesUnscopedWarning
+	}
+	if namesPhase {
+		if warning := phaseNumberWarning(session); warning != "" {
+			msg += " " + warning
+		}
+	}
 	return msg
+}
+
+// activeSpecUnscoped reports whether the active spec's phases are read
+// without an implementation section (SpecPhasesUnscoped). A message naming a
+// phase then carries SpecPhasesUnscopedWarning as a sentence of its own,
+// never spliced into the phase name (MUX-130).
+func activeSpecUnscoped(session string) bool {
+	path, ok, _, _ := activeSpecFile(session)
+	return ok && SpecPhasesUnscoped(path)
 }
 
 // expandFailureReport replaces ${failure_report} in a node's message with
@@ -729,8 +777,9 @@ func interpolateGraphMessage(session string, run *GraphRun, msg, item string) st
 // of them is stale on a lap another failed — and without the report the
 // worker is told to fix a failure nobody described to it.
 func expandFailureReport(session string, run *GraphRun, g *Graph, n *Node) string {
-	if !strings.Contains(n.Message, "${failure_report}") {
-		return n.Message
+	msg := nodeMessage(session, n)
+	if !strings.Contains(msg, "${failure_report}") {
+		return msg
 	}
 	report := "(no failing upstream node recorded)"
 	if statuses, err := ReadAllNodeStatuses(session, run.ID); err != nil {
@@ -749,7 +798,7 @@ func expandFailureReport(session string, run *GraphRun, g *Graph, n *Node) strin
 			report = e.From + " reported: " + truncateAtRune(st.Output, maxInterpolatedOutput)
 		}
 	}
-	return strings.ReplaceAll(n.Message, "${failure_report}", report)
+	return strings.ReplaceAll(msg, "${failure_report}", report)
 }
 
 // nodeOutputRefRe matches ${output:<node-id>}. The id is anything up to
@@ -1007,11 +1056,95 @@ func resolveCurrentPhaseText(session string) string {
 		// refused folds in: a pointer outside the repo yields no phase text.
 		return "(no open phase)"
 	}
-	p, err := SpecCurrentPhase(path)
-	if err != nil || p.Number == 0 {
+	p, found, err := SpecCurrentPhase(path)
+	if err != nil || !found {
 		return "(no open phase)"
 	}
 	return p.Title
+}
+
+// activeSpecHasNoOpenPhase reports, positively, that the active spec was read
+// and no phase in it has an open item — false when the pointer is transient,
+// refused or unset, or the spec unreadable, so nothing unknown swaps a
+// message for its no-phase form.
+func activeSpecHasNoOpenPhase(session string) bool {
+	path, ok, transient, _ := activeSpecFile(session)
+	if transient || !ok {
+		return false
+	}
+	_, found, err := SpecCurrentPhase(path)
+	return err == nil && !found
+}
+
+// nodeMessage is the message template a node dispatches: its
+// message_no_open_phase when it has one, names ${current_phase} and the active
+// spec has no open phase, else its message. Chosen before any substitution,
+// so the no-phase case gets a sentence of its own rather than a "no phase"
+// sentinel interpolated where a phase name belongs (MUX-130 Defect E, as on
+// 2026-09-02's "steps of (no open phase)").
+func nodeMessage(session string, n *Node) string {
+	if n.MessageNoOpenPhase != "" && strings.Contains(n.Message, "${current_phase}") && activeSpecHasNoOpenPhase(session) {
+		return n.MessageNoOpenPhase
+	}
+	return n.Message
+}
+
+// phaseHoldSentence says why the loop holds on p (MUX-130 decision 4): the
+// phase and its open items, and that an item left open on purpose holds it.
+func phaseHoldSentence(p SpecPhase) string {
+	return fmt.Sprintf("%s still has %d open item(s): %s — an item left open on purpose holds the loop on this phase until it is ticked or moved under ### Deferred.",
+		p.Title, len(p.Items), summarizeOpenItems(p.Items, 5))
+}
+
+// resolvePhaseHoldText expands ${phase_hold}: phaseHoldSentence for the
+// lowest open phase; with none, whether items remain open outside the phases
+// — a message must never imply completeness while SpecOpenItems is non-zero —
+// or, honestly, that nothing in the spec is open.
+func resolvePhaseHoldText(session string) string {
+	path, ok, transient, _ := activeSpecFile(session)
+	switch {
+	case transient:
+		return "(phase hold unresolved — repo dir unavailable this tick)"
+	case !ok:
+		return "(no active spec to name a phase from)"
+	}
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return "(phase hold unresolved — the active spec cannot be read)"
+	}
+	if p, found := currentSpecPhase(phases); found {
+		return phaseHoldSentence(p)
+	}
+	if n, names, err := SpecOpenItems(path); err == nil && n > 0 {
+		return fmt.Sprintf("No implementation phase has an open item, but %d item(s) remain open outside the phases: %s.", n, summarizeOpenItems(names, 5))
+	}
+	return "Nothing in the spec is open."
+}
+
+// phaseNumberWarning is the dispatch line for duplicate or out-of-order phase
+// numbers in the active spec (MUX-130 decision 3b: a warning, never a
+// refusal), logging one spec-phase-numbers row each time it is produced; ""
+// for a clean spec.
+func phaseNumberWarning(session string) string {
+	path, ok, _, _ := activeSpecFile(session)
+	if !ok {
+		return ""
+	}
+	phases, err := SpecPhases(path)
+	if err != nil {
+		return ""
+	}
+	issues := phaseNumberIssues(phases)
+	if len(issues) == 0 {
+		return ""
+	}
+	nums := make([]string, len(issues))
+	for i, n := range issues {
+		nums[i] = strconv.Itoa(n)
+	}
+	LogLifecycle(session, "warn", "daemon", "spec-phase-numbers",
+		fmt.Sprintf("%s: phase number(s) %s repeat or are out of order", path, strings.Join(nums, ", ")))
+	return fmt.Sprintf("Warning: phase number(s) %s repeat or are out of order in the spec — phases are read in file order and keyed by number.", strings.Join(nums, ", "))
 }
 
 // purgeStaleApproval removes a gate's approved marker left by a previous
@@ -1369,7 +1502,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 		finishNode(session, run, n, OutcomeSuccess, "")
 
 	case NodeWaitHuman:
-		prompt := interpolateGraphMessage(session, run, n.Message, "")
+		prompt := interpolateGraphMessage(session, run, nodeMessage(session, n), "")
 		if err := purgeStaleApproval(session, run.ID, n.ID); err != nil {
 			finishNode(session, run, n, OutcomeFailure,
 				fmt.Sprintf("cannot purge stale approval for gate %q: %v", n.ID, err))
@@ -1402,7 +1535,7 @@ func dispatchNode(session string, run *GraphRun, g *Graph, n *Node, st *GraphNod
 
 // graphSendMessage builds a send node's dispatch, carrying its run and node.
 func graphSendMessage(session string, run *GraphRun, n *Node) Message {
-	msg := seedVerdictToken(n.Action, interpolateGraphMessage(session, run, n.Message, ""))
+	msg := seedVerdictToken(n.Action, interpolateGraphMessage(session, run, nodeMessage(session, n), ""))
 	m := NewMessage(graphSender, n.Role, "request", n.Action, msg, "")
 	m.GraphRun, m.GraphNode = run.ID, n.ID
 	return m
@@ -1849,7 +1982,7 @@ func mapLaneCount(n *Node, items int) int {
 }
 
 func mapItemTask(session string, run *GraphRun, g *Graph, n *Node, item string) string {
-	return graphWorkerTask(g, run.ID, n.ID, interpolateGraphMessage(session, run, n.Message, item))
+	return graphWorkerTask(g, run.ID, n.ID, interpolateGraphMessage(session, run, nodeMessage(session, n), item))
 }
 
 // advanceMapLanes runs a map node's work queue (MUX-195 Decision 3): each

@@ -64,7 +64,7 @@ func TestPhaseCommitReadyAnchorsOnHEAD(t *testing.T) {
 	run := createTestRun(t, g)
 	ctx := &ChainContext{Session: runTestSession, GraphRun: run, Graph: g}
 	cond := map[string]any{"spec_phase_committable": "commit"}
-	committed := "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n"
+	committed := "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n"
 
 	writeSpecFixture(t, committed)
 	stubSpecAtHEAD(t, committed)
@@ -75,7 +75,7 @@ func TestPhaseCommitReadyAnchorsOnHEAD(t *testing.T) {
 		t.Errorf("the gate must not name the shipped Phase 1, got %q", got)
 	}
 
-	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
 	if ok, res := EvaluateConditions(cond, ctx); !ok {
 		t.Errorf("Phase 2 complete in the tree and open at HEAD must pass, got %+v", res)
 	}
@@ -141,7 +141,7 @@ func TestSpecAtHEADFollowsAMovedSpec(t *testing.T) {
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
 	old := filepath.Join(repo, "docs", "backlog", "MUX-9-x.md")
 	moved := filepath.Join(repo, "docs", "drafts", "MUX-9-x.md")
-	spec := "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n"
+	spec := "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n"
 	writeFile(t, old, spec)
 	git("add", "docs")
 	git("commit", "-q", "-m", "spec")
@@ -156,7 +156,7 @@ func TestSpecAtHEADFollowsAMovedSpec(t *testing.T) {
 	if v := phaseCommitReady(runTestSession); v.readErr != nil || v.ready {
 		t.Errorf("a moved spec must keep its committed Phase 1, got %+v", v)
 	}
-	writeFile(t, moved, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
+	writeFile(t, moved, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
 	if v := phaseCommitReady(runTestSession); !v.ready || v.phase.Number != 2 {
 		t.Errorf("Phase 2 completing under the new path must be committable, got %+v", v)
 	}

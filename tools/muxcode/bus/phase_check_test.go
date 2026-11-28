@@ -65,17 +65,17 @@ func TestSpecPhaseCommittableCondition(t *testing.T) {
 	ctx := &ChainContext{Session: runTestSession, GraphRun: run, Graph: g}
 	cond := map[string]any{"spec_phase_committable": "commit"}
 
-	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
 	if ok, res := EvaluateConditions(cond, ctx); !ok {
 		t.Errorf("first commit with its phase complete must pass, got %+v", res)
 	}
 
-	stubSpecAtHEAD(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	stubSpecAtHEAD(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
 	if ok, res := EvaluateConditions(cond, ctx); ok || !strings.Contains(res[0].Detail, "1 phases complete in the tree, 1 at HEAD") {
 		t.Errorf("Phase 1 committed, Phase 2 open: nothing to ship, must fail with counts, got %+v", res)
 	}
 
-	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [x] b\n")
 	if ok, _ := EvaluateConditions(cond, ctx); !ok {
 		t.Error("Phase 2 complete in the tree, open at HEAD: the next phase is committable")
 	}
@@ -149,7 +149,7 @@ func TestExecPhaseCheckRoutesOpenPhaseToStuckGate(t *testing.T) {
 	}
 
 	run := createTestRun(t, graph())
-	writeSpecFixture(t, "### Phase 1: A\n- [ ] open\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [ ] open\n")
 	step(t, runTestSession, run.ID)
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "stuck"); s != GraphNodeWaiting {
@@ -160,7 +160,7 @@ func TestExecPhaseCheckRoutesOpenPhaseToStuckGate(t *testing.T) {
 	}
 
 	run2 := createTestRun(t, graph())
-	writeSpecFixture(t, "### Phase 1: A\n- [x] done\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [x] done\n")
 	step(t, runTestSession, run2.ID)
 	step(t, runTestSession, run2.ID)
 	if s := nodeState(t, runTestSession, run2.ID, "gate"); s != GraphNodeWaiting {
@@ -174,7 +174,7 @@ func TestExecPhaseCheckRoutesOpenPhaseToStuckGate(t *testing.T) {
 	// approved gate releases the commit, whose guard asks the same predicate
 	// again and must decline toward the stuck gate — the check removes the
 	// double prompt, not the guard.
-	writeSpecFixture(t, "### Phase 1: A\n- [ ] reopened\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [ ] reopened\n")
 	if err := ApproveGraphGate(runTestSession, run2.ID, "gate"); err != nil {
 		t.Fatal(err)
 	}

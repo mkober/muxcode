@@ -2010,11 +2010,22 @@ edge cap 2, `${failure_report}`); past a cap the run fails.
 |-------------|------------|
 | `${spec}`, `${intent}` | The run's intent as recorded at launch — for a spec run, `<key> <title> — <first open phase>` (`describeSpecIntent`, `bus/intent.go`), so phase nodes know where the run started |
 | `${spec_title}` | `${spec}` with its launch-time ` — Phase …` suffix cut (`specTitle`): `<key> <title>`, for whatever names the whole spec. `push-pr` titles the PR with it — `${spec}` carried the phase the run *started* on, so PRs #104 and #105 were titled after their Phase 1 (fixed 2026-10-03) |
-| `${current_phase}` | The active spec's first phase with an open box, read fresh from the file at dispatch |
+| `${current_phase}` | The active spec's lowest-numbered phase with an open box, read fresh from the file at dispatch — a `### Phase N` inside the spec's `## Implementation` section (MUX-130). A Phase 0 can be it. With no open phase it expands to `(no open phase)`, which is why a node naming it should also set `message_no_open_phase` (below) |
 | `${completed_phase}` | The last phase complete in the tree and not at HEAD — the phase the commit ships (`phaseCommitReady`) |
+| `${phase_hold}` | Why the run is held, as one sentence (`resolvePhaseHoldText`): the lowest open phase, how many items it has open and their names (the first five), and that an item left open on purpose holds the loop on that phase until it is ticked or moved under `### Deferred`. With no open phase: `No implementation phase has an open item, but N item(s) remain open outside the phases: …` — or, when nothing at all is open, `Nothing in the spec is open.` `50-spec-to-pr`'s `stuck-gate` carries it |
 | `${failure_report}` | The latest failure edge's reply, verbatim (`expandFailureReport`) |
 | `${output:<node>}` | A named upstream node's reply (`expandNodeOutputRefs`) |
 | `${item}` | The current element of a `map` fan-out |
+
+**Phase-naming messages** ([MUX-130](requirements/completed/MUX-130-spec-phase-parsing-semantics.md)). Three things apply to any message that names a phase — one holding `${current_phase}`, `${completed_phase}` or `${phase_hold}`:
+
+| Rule | Behaviour |
+|------|-----------|
+| `message_no_open_phase` (node field) | An alternative template. A node whose `message` names `${current_phase}` dispatches this one instead when the active spec was read and no phase in it has an open box (`nodeMessage`). It is chosen **before** any substitution, so the no-phase case gets a sentence of its own rather than `(no open phase)` set where a phase name belongs — on 2026-09-02 a dispatch read "check off … steps of (no open phase)". An unset, unreadable or unresolved spec never triggers the swap. The five builtin nodes naming `${current_phase}` each have one: `implement`, `fix` and `update-spec` in `50-spec-to-pr`, `implement` and `fix` in `55-defect-backlog-loop` |
+| Duplicate or out-of-order phase numbers | The message gains a closing line, `Warning: phase number(s) N repeat or are out of order in the spec — phases are read in file order and keyed by number.`, and a `spec-phase-numbers` warn row is logged each time. A warning only: the run is never refused |
+| A spec whose phases cannot be scoped | When no `### Phase N` sits inside a `## Implementation` section the spec is read document-wide **for display** and the message gains `SpecPhasesUnscopedWarning` as a sentence of its own. Such a spec is **never commit-ready**: the `phase-progress` guard declines and the `spec_phase_committable` condition fails, both naming the warning as the reason — so a `50-spec-to-pr` run on it parks at the stuck gate until its phases are moved under `## Implementation` |
+
+The `phase-progress` guard's decline carries the same hold sentence, so a declined commit says which phase and which items hold it; on an unscoped spec it says that instead.
 
 A `map` node runs its items **serially on the run's single worker** by default ([MUX-195](requirements/completed/MUX-195-graph-runs-never-reuse-idle-workers.md) Decision 3); `"workers": N` on the node opts into N lanes, each taking the next item when its worker answers, capped by `MUXCODE_SPAWN_MAX_WORKERS` (fewer lanes, not a failure). A negative `workers` fails `graph validate`. Results are recorded in item order whatever the lane count, and the queue is persisted before any worker is seeded, so a daemon restart mid-dispatch neither loses nor double-runs an item.
 
