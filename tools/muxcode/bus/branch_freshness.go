@@ -355,7 +355,8 @@ func SpecNamedFiles(specPath string) ([]string, error) {
 			}
 		}
 	}
-	for _, item := range currentSpecPhase(parseSpecPhases(string(data))).Items {
+	current, _ := currentSpecPhase(parseSpecPhases(string(data)))
+	for _, item := range current.Items {
 		add(item)
 	}
 	return out, nil

@@ -292,6 +292,8 @@ write_spec() {
   cat > "$SPEC_FILE" <<EOF
 # Fixture Spec
 
+## Implementation
+
 ### Phase 1: First
 - [$1] step one
 
@@ -538,6 +540,8 @@ fi
 write_spawn_spec() {
   cat > "$SPEC_FILE" <<EOF
 # Fixture Spec
+
+## Implementation
 
 ### Phase 1: First
 - [$1] step one

@@ -991,6 +991,38 @@ item and none open* (`SpecPhase.Complete()`), so a stub or narrative `### Phase 
 is empty, not done, and boxes under a `####` subheading count for their phase. The guard, the
 `phase-check` condition and the `${completed_phase}` label all read the one predicate.
 
+**What a phase is, what holds the loop, and which predicate answers what**
+([MUX-130](requirements/completed/MUX-130-spec-phase-parsing-semantics.md), with
+[MUX-143](requirements/backlog/MUX-143-run-carries-two-phase-identities.md)). The run's idea of a
+phase is read from the spec on every use (`parseSpecPhases` over `scanSpecPhases`,
+`bus/spec_items.go`), never stored.
+
+| Statement | Rule |
+|-----------|------|
+| What a phase is | A `### Phase N` heading **inside the spec's `## Implementation` section**, and the checkboxes under it (MUX-130, decision 2a). The section is any `##` heading whose text begins `Implementation`, so `## Implementation phases` counts, and it ends at the next `##` or `#` heading. Boxes under a `####` or deeper subheading belong to the enclosing phase; any other heading ends it. A `### Phase N` in `## Verification notes`, `## Design` or `## Acceptance criteria` is no phase, with or without boxes — before, ticking a box under one made a commit ready on that heading alone |
+| A spec with phase headings and none to scope | If no implementation section exists, or it holds no phase heading, the spec is read **unscoped** (`SpecPhasesUnscoped`). Two things follow, and they differ on purpose. **For display** it is not read as having zero phases — that would end a run at once and give the loop cap nothing to count: every `### Phase N` in the file is listed, and every dispatch or gate message naming a phase carries `SpecPhasesUnscopedWarning` as a sentence of its own. **For a commit it is refused** (the user, 2026-11-27): `phaseCommitReady` reports it not ready whatever is ticked, so the `phase-progress` guard declines — "a spec read unscoped is never commit-ready", with the warning as the reason — and the `spec_phase_committable` pre-gate condition fails with the same detail. No heading outside an implementation section can ship a commit. The remedy is in the spec: put its phases under a `## Implementation` heading |
+| What holds the loop | An open box **inside** a phase holds the run on that phase, on purpose, until it is ticked or moved out. To park an item without holding the loop, put it under a non-`Phase` `###` heading — `### Deferred` is the blessed one: that heading ends the phase, so its boxes belong to no phase and never hold the loop |
+| What still stops the close | A box under `### Deferred`, or anywhere else outside the phases, still counts for `SpecOpenItems`, so the spec cannot close while it is open |
+
+| Question | Predicate | Never use it for |
+|----------|-----------|------------------|
+| Which phase is the work on? | `SpecCurrentPhase` — the lowest-numbered phase with an open box | "Is a commit ready" or "is anything open": boxes outside every phase are invisible to it |
+| Does a commit ship a phase, and which? | `phaseCommitReady` — complete in the tree, not complete at HEAD | A phase count. A phase complete behind an open earlier phase **is** committable: an open box holds the loop through `SpecCurrentPhase`, not the commit |
+| Is anything open at all? | `SpecOpenItems` — the close-spec guard's question | Naming a phase |
+
+What a run says about it (MUX-130, Phase 4):
+
+| Situation | What the run shows |
+|-----------|--------------------|
+| A phase is held by an open box | `${phase_hold}` (`resolvePhaseHoldText`) names the lowest open phase, its open items, and that an item left open on purpose holds the loop until it is ticked or moved under `### Deferred`. `50-spec-to-pr`'s `stuck-gate` carries it, and so does the `phase-progress` guard's decline |
+| No phase is open, but boxes remain outside the phases | The same placeholder says so and names them — a message never implies the spec is finished while `SpecOpenItems` is non-zero |
+| Nothing is open | `Nothing in the spec is open.` |
+| A node names `${current_phase}` and no phase is open | The node's `message_no_open_phase` template is dispatched instead, chosen before substitution (`nodeMessage`), so a "no phase" sentinel is never set where a phase name belongs |
+| Phase numbers repeat or run out of order | A warning line on every phase-naming dispatch and a `spec-phase-numbers` warn row; the run is not refused. Phases are read in file order and keyed by number |
+| The spec numbers phases from 0 | `SpecCurrentPhase` returns an explicit *found* result, so an open Phase 0 is the current phase while a later one is also open. Before, `Number 0` doubled as "none found" |
+
+Placeholders and the node field are in [Agent Bus CLI → `muxcode graph`](agent-bus.md#muxcode-graph).
+
 **Branch freshness is a gate, not a note (MUX-166).** On 2026-09-09 run `1788966543`
 (is-advising-gateway, PROMGT-623) implemented two phases on a branch cut on July 10, eight
 squash-merges behind `main`, writing into `query_builder.py`, which `main` had deleted; build and

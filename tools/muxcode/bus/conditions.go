@@ -523,7 +523,7 @@ func evalSpecPhasesRemaining(value any, ctx *ChainContext) ConditionResult {
 	path, okSpec, transient, _ := activeSpecFile(ctx.Session)
 	has := transient
 	if okSpec {
-		if p, err := SpecCurrentPhase(path); err == nil && p.Number != 0 {
+		if _, found, err := SpecCurrentPhase(path); err == nil && found {
 			has = true
 		}
 	}
@@ -569,6 +569,8 @@ func evalSpecPhaseCommittable(value any, ctx *ChainContext) ConditionResult {
 		result.Detail = "no active spec to verify the phase against"
 	case v.readErr != nil:
 		result.Detail = fmt.Sprintf("cannot read active spec: %v", v.readErr)
+	case v.unscoped:
+		result.Detail = "a spec read unscoped is never commit-ready — " + SpecPhasesUnscopedWarning
 	default:
 		result.Passed = v.ready
 		result.Detail = fmt.Sprintf("%d phases complete in the tree, %d at HEAD — guarded commit %s", v.completed, v.atHead, nodeID)

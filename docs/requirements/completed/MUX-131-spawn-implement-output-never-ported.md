@@ -418,7 +418,7 @@ refusal itself is a known cost until the blob-hash guard lands.
 Added 2026-09-01. Phases 0–4 are complete, but two acceptance criteria remained **unscoped** — they sit
 under `## Requirements`, an `##` heading, so `SpecPhases` assigns them to no phase and the graph
 machinery cannot drive them. `SpecCurrentPhase` was returning `(no open phase)` while the close-spec
-guard still counted 2. That is [`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md) Defect E,
+guard still counted 2. That is [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md) Defect E,
 and this phase is the same remedy applied to MUX-131 that Phase 3 was for MUX-007.
 
 - [x] **Exercise `story-lifecycle` end-to-end** with the work reaching the branch. `req-code-pr` is — 10 dedicated checks in `scripts/test-multi-phase-graph.sh`

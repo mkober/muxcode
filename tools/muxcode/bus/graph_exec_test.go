@@ -3637,7 +3637,7 @@ func phaseGuardGraph() *Graph {
 // OTHER phases are open (the discriminator against spec-complete); no
 // phase in the intent passes through.
 func TestExecPhaseGuard(t *testing.T) {
-	spec := "# S\n### Phase 1: Now\n- [ ] open one\n### Phase 2: Later\n- [ ] later work\n"
+	spec := "# S\n## Implementation\n### Phase 1: Now\n- [ ] open one\n### Phase 2: Later\n- [ ] later work\n"
 
 	run := createTestRun(t, phaseGuardGraph())
 	writeSpecFixture(t, spec)
@@ -3652,7 +3652,7 @@ func TestExecPhaseGuard(t *testing.T) {
 	}
 
 	run2 := createTestRun(t, phaseGuardGraph())
-	writeSpecFixture(t, "# S\n### Phase 1: Now\n- [x] done\n### Phase 2: Later\n- [ ] later work\n")
+	writeSpecFixture(t, "# S\n## Implementation\n### Phase 1: Now\n- [x] done\n### Phase 2: Later\n- [ ] later work\n")
 	mutateRunIntent(t, run2.ID, "Ship — Phase 1: Now")
 	step(t, runTestSession, run2.ID)
 	if s := nodeState(t, runTestSession, run2.ID, "ship"); s != GraphNodeRunning {
@@ -3680,7 +3680,7 @@ func TestExecCurrentPhaseInterpolation(t *testing.T) {
 			Message: "Implement ${current_phase}"}},
 	}
 	run := createTestRun(t, g)
-	writeSpecFixture(t, "# S\n### Phase 1: Done\n- [x] a\n### Phase 2: Attribution\n- [ ] b\n")
+	writeSpecFixture(t, "# S\n## Implementation\n### Phase 1: Done\n- [x] a\n### Phase 2: Attribution\n- [ ] b\n")
 	mutateRunIntent(t, run.ID, "MUX-115 — Phase 1: Turn trace")
 
 	step(t, runTestSession, run.ID)
@@ -4045,7 +4045,7 @@ func TestSpecPhasesRemainingCondition(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv("MUXCODE_SESSION_REPO_DIR", repo)
 	spec := filepath.Join(repo, "spec.md")
-	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [ ] open\n"), 0644); err != nil {
+	if err := os.WriteFile(spec, []byte("## Implementation\n### Phase 1: A\n- [ ] open\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteActiveSpec(runTestSession, spec); err != nil {
@@ -4060,7 +4060,7 @@ func TestSpecPhasesRemainingCondition(t *testing.T) {
 		t.Error("open phase: remaining=false must fail (negative control)")
 	}
 
-	if err := os.WriteFile(spec, []byte("### Phase 1: A\n- [x] done\n"), 0644); err != nil {
+	if err := os.WriteFile(spec, []byte("## Implementation\n### Phase 1: A\n- [x] done\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if ok, _ := EvaluateConditions(map[string]any{"spec_phases_remaining": false}, ctx); !ok {
@@ -4093,7 +4093,7 @@ func TestSpecToPRLoopCheckSurvivesReInit(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, filepath.Dir(spec)), 0755); err != nil {
 		t.Fatal(err)
 	}
-	body := "### Phase 1: A\n- [x] done\n\n### Phase 2: B\n- [ ] open\n"
+	body := "## Implementation\n### Phase 1: A\n- [x] done\n\n### Phase 2: B\n- [ ] open\n"
 	if err := os.WriteFile(filepath.Join(repo, spec), []byte(body), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -4168,7 +4168,7 @@ func TestExecPhaseProgressGuard(t *testing.T) {
 	// First commit, one phase complete — ships, and heavy fix-loop fires
 	// must not inflate the requirement (the review-found bug).
 	run := createTestRun(t, guardGraph())
-	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
 	seedFires(run.ID, map[string]int{"fix->build:success": 3})
 	step(t, runTestSession, run.ID)
 	if s := nodeState(t, runTestSession, run.ID, "commit"); s != GraphNodeRunning {
@@ -4178,8 +4178,8 @@ func TestExecPhaseProgressGuard(t *testing.T) {
 	// Phase 1 already committed at HEAD and Phase 2 open: a fresh run with no
 	// fires of its own must still decline, naming the counts (MUX-183).
 	run2 := createTestRun(t, guardGraph())
-	writeSpecFixture(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
-	stubSpecAtHEAD(t, "### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	writeSpecFixture(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
+	stubSpecAtHEAD(t, "## Implementation\n### Phase 1: A\n- [x] a\n### Phase 2: B\n- [ ] b\n")
 	step(t, runTestSession, run2.ID)
 	st, err := ReadNodeStatus(runTestSession, run2.ID, "commit")
 	if err != nil {

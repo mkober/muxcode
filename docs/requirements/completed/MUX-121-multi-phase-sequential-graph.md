@@ -259,13 +259,13 @@ spec's can disagree.** The run had looped past its Phase 4 work (`implement` run
 
 - [x] Confirm whether the `phase-progress` guard fires when the loop advances past a phase the spec
       still shows open — this is the case it exists for — **deferred to
-      [MUX-130](../backlog/MUX-130-spec-phase-parsing-semantics.md), not done here**
+      [MUX-130](./MUX-130-spec-phase-parsing-semantics.md), not done here**
 - [x] Decide the intended semantics when the two disagree: does the graph defer to the spec, or is a
       deliberately-open item a legitimate reason to hold the loop? — **deferred to
-      [MUX-130](../backlog/MUX-130-spec-phase-parsing-semantics.md), not done here**
+      [MUX-130](./MUX-130-spec-phase-parsing-semantics.md), not done here**
 - [x] If they may legitimately diverge, the gate message should say so rather than naming a phase
       number that reads as a mistake — **deferred to
-      [MUX-130](../backlog/MUX-130-spec-phase-parsing-semantics.md), not done here**
+      [MUX-130](./MUX-130-spec-phase-parsing-semantics.md), not done here**
 
 Checked off 2026-09-18 under the deferred-item rule (a step handed to another backlog spec is ticked
 with a "deferred to" annotation): a tick here means *moved*, not *done* — the work is MUX-130's.
@@ -273,7 +273,7 @@ with a "deferred to" annotation): a tick here means *moved*, not *done* — the 
 Recorded here rather than as a new defect spec because the reported symptom is correct behaviour;
 the underlying question belongs to this spec's loop semantics.
 
-**Tracked 2026-08-31 as [`MUX-130`](../backlog/MUX-130-spec-phase-parsing-semantics.md).** The three
+**Tracked 2026-08-31 as [`MUX-130`](./MUX-130-spec-phase-parsing-semantics.md).** The three
 items above were living only inside a spec marked Complete, so nothing surfaced them. Investigating
 them found the divergence is **not** the authority judgement this note assumed: `SpecCompletedPhaseCount`
 and `SpecJustCompletedPhase` define "complete" incompatibly, and phase headings are matched

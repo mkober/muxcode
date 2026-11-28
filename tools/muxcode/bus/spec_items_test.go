@@ -145,26 +145,26 @@ func TestSpecCurrentPhase(t *testing.T) {
 		t.Fatalf("phases = %d, want 3 (fenced heading must not count): %+v", len(phases), phases)
 	}
 
-	cur, err := SpecCurrentPhase(path)
+	cur, found, err := SpecCurrentPhase(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Lowest OPEN phase wins even when headings are out of file order.
-	if cur.Number != 2 || !strings.Contains(cur.Title, "Phase 2: Next") {
-		t.Errorf("current = %+v, want Phase 2 (never the completed Phase 1)", cur)
+	if !found || cur.Number != 2 || !strings.Contains(cur.Title, "Phase 2: Next") {
+		t.Errorf("current = %+v found=%v, want Phase 2 (never the completed Phase 1)", cur, found)
 	}
 
 	if done := completedPhaseCount(phases); done != 1 {
 		t.Errorf("completed phases = %d, want 1", done)
 	}
 
-	// All phases complete derives the zero phase.
+	// All phases complete: no current phase, said by found, not by Number.
 	if err := os.WriteFile(path, []byte("### Phase 1: X\n- [x] a\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cur, err = SpecCurrentPhase(path)
-	if err != nil || cur.Number != 0 {
-		t.Errorf("fully-complete spec must derive phase 0, got %+v err %v", cur, err)
+	cur, found, err = SpecCurrentPhase(path)
+	if err != nil || found {
+		t.Errorf("fully-complete spec must find no current phase, got %+v found=%v err %v", cur, found, err)
 	}
 }
 

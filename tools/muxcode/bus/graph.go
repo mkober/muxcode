@@ -50,6 +50,10 @@ type Node struct {
 	Event      string         `json:"event,omitempty"`      // wait_event: bus event name to wait for
 	Guard      string         `json:"guard,omitempty"`      // send/spawn: dispatch-time predicate evaluated by the daemon (see knownNodeGuards)
 	TimeoutSec int            `json:"timeout_secs,omitempty"`
+
+	// MessageNoOpenPhase replaces a Message naming ${current_phase} when the
+	// active spec has no open phase (nodeMessage, MUX-130).
+	MessageNoOpenPhase string `json:"message_no_open_phase,omitempty"`
 }
 
 // knownNodeGuards lists the dispatch-time predicates a send/spawn node may
