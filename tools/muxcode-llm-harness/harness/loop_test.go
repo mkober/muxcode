@@ -57,6 +57,140 @@ func TestProcessBatch_SimpleResponse(t *testing.T) {
 	// If we got here without panic, the conversation loop worked
 }
 
+// recordingBus is a BusClient whose binary is a script appending each call's
+// argv, one argument per line, to a log; sends returns the `send` calls.
+func recordingBus(t *testing.T, role string) (*BusClient, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls.log")
+	bin := filepath.Join(dir, "muxcode")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >> '" + log + "'; done\nprintf -- '--end--\\n' >> '" + log + "'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sends := func() [][]string {
+		data, _ := os.ReadFile(log)
+		var calls [][]string
+		for _, call := range strings.Split(strings.TrimSuffix(string(data), "--end--\n"), "--end--\n") {
+			if args := strings.Split(strings.TrimSuffix(call, "\n"), "\n"); len(args) > 0 && args[0] == "send" {
+				calls = append(calls, args)
+			}
+		}
+		return calls
+	}
+	return &BusClient{BusDir: dir, Role: role, BinPath: bin}, sends
+}
+
+// textModel is a stub model endpoint answering every turn with plain text.
+func textModel(t *testing.T) *OllamaClient {
+	t.Helper()
+	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(ChatResponse{Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: "Done. EXIT=0"}}}})
+	}))
+	t.Cleanup(server.Close)
+	ollama := NewOllamaClient(server.URL, "test-model")
+	ollama.HTTP = server.Client()
+	return ollama
+}
+
+// MUX-111: every reply's recipient, action and correlation id come from one
+// request, never from whichever message arrived last (Phase 2), and each
+// request in the batch gets its own reply (Phase 4) — from two senders, from
+// one sender twice (MUX-222's case), and beside the startup bootstrap, which
+// as the batch's last request once took the only reply. A request's
+// ReplyRole still names the recipient (MUX-213); a batch holding no request
+// gets no reply. Negative control: a lone request is answered exactly as
+// before — the fix is not "never reply".
+func TestProcessBatch_ReplyCorrelatesToTheRequest(t *testing.T) {
+	request := Message{ID: "R1", From: "edit", To: "commit", Type: "request", Action: "commit", Payload: "Commit the change"}
+	response := Message{ID: "P1", From: "build", To: "commit", Type: "response", Action: "build", Payload: "Build OK"}
+	for _, c := range []struct {
+		name string
+		msgs []Message
+		want [][3]string // per reply, in order: to, action, reply-to id; empty = no reply
+	}{
+		{"control: a lone request", []Message{request}, [][3]string{{"edit", "commit", "R1"}}},
+		{"[request, response]: answers the request", []Message{request, response}, [][3]string{{"edit", "commit", "R1"}}},
+		{"[response, request]: answers the request", []Message{response, request}, [][3]string{{"edit", "commit", "R1"}}},
+		{"a request's ReplyRole names the recipient",
+			[]Message{{ID: "R2", From: "test", To: "commit", Type: "request", Action: "review", ReplyRole: "edit", Payload: "Review"}, response},
+			[][3]string{{"edit", "review", "R2"}}},
+		{"no request in the batch: no reply", []Message{response, {ID: "E1", From: "daemon", To: "commit", Type: "event", Action: "notify", Payload: "fyi"}}, nil},
+		{"two requests from two senders: one reply each",
+			[]Message{request, response, {ID: "R3", From: "plan", To: "commit", Type: "request", Action: "pr-read", Payload: "Read the PR"}},
+			[][3]string{{"edit", "commit", "R1"}, {"plan", "pr-read", "R3"}}},
+		{"two requests from one sender: each answered once",
+			[]Message{request, {ID: "R4", From: "edit", To: "commit", Type: "request", Action: "commit", Payload: "And push"}},
+			[][3]string{{"edit", "commit", "R1"}, {"edit", "commit", "R4"}}},
+		{"[request, startup bootstrap]: the request is still answered",
+			[]Message{request, {ID: "B1", From: "commit", To: "commit", Type: "request", Action: "startup", Payload: "bootstrap"}},
+			[][3]string{{"edit", "commit", "R1"}, {"commit", "startup", "B1"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bus, sends := recordingBus(t, "commit")
+			cfg := Config{Role: "commit", Session: "test", BusDir: bus.BusDir, MaxTurns: 3}
+			processBatch(context.Background(), cfg, bus, textModel(t), NewExecutor(nil), BuildToolDefs(nil), "system prompt", NewFilter("commit"), c.msgs, &mockEventSink{}, nil)
+
+			calls := sends()
+			if len(calls) != len(c.want) {
+				t.Fatalf("send calls = %v, want %d", calls, len(c.want))
+			}
+			for i, got := range calls {
+				w := c.want[i]
+				if n := len(got); n < 7 || got[1] != w[0] || got[2] != w[1] || got[n-2] != "--reply-to" || got[n-1] != w[2] {
+					t.Errorf("reply %d = %q, want to=%s action=%s --reply-to %s", i, got, w[0], w[1], w[2])
+				}
+			}
+		})
+	}
+}
+
+// MUX-111 Phase 3: an inbox the CLI did not filter — an older binary's,
+// played here by a bus script printing the raw rows — holds the agent's own
+// response; ConsumeInbox drops it, and the batch's reply goes to edit, never
+// to the agent itself. Control: the launch-time request:startup bootstrap is
+// self-addressed by design and is kept, so it can still be answered.
+func TestConsumeInbox_SelfAddressedNeverAnsweredToSelf(t *testing.T) {
+	dir := t.TempDir()
+	rows := `{"id":"R1","from":"edit","to":"commit","type":"request","action":"commit","payload":"Commit it"}
+{"id":"S1","from":"commit","to":"commit","type":"response","action":"commit","payload":"my own earlier reply"}
+{"id":"B1","from":"commit","to":"commit","type":"request","action":"startup","payload":"bootstrap"}
+`
+	inbox := filepath.Join(dir, "rows.jsonl")
+	if err := os.WriteFile(inbox, []byte(rows), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(dir, "calls.log")
+	bin := filepath.Join(dir, "muxcode")
+	script := "#!/bin/sh\nif [ \"$1\" = inbox ]; then cat '" + inbox + "'; exit 0; fi\nprintf '%s\\n' \"$@\" >> '" + log + "'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bus := &BusClient{BusDir: dir, Role: "commit", BinPath: bin}
+
+	msgs, err := bus.ConsumeInbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	if strings.Join(ids, ",") != "R1,B1" {
+		t.Fatalf("consumed %v, want R1 and the startup bootstrap B1 — the self-addressed response S1 dropped", ids)
+	}
+
+	cfg := Config{Role: "commit", Session: "test", BusDir: dir, MaxTurns: 3}
+	processBatch(context.Background(), cfg, bus, textModel(t), NewExecutor(nil), BuildToolDefs(nil), "system prompt", NewFilter("commit"), msgs[:1], &mockEventSink{}, nil)
+	sent, _ := os.ReadFile(log)
+	if lines := strings.Split(string(sent), "\n"); len(lines) < 2 || lines[0] != "send" || lines[1] != "edit" {
+		t.Errorf("reply argv = %q, want a send to edit", sent)
+	}
+	if strings.Contains(string(sent), "S1") {
+		t.Errorf("the reply references the agent's own response: %q", sent)
+	}
+}
+
 func TestProcessBatch_WithToolCall(t *testing.T) {
 	callCount := 0
 	server := newPipeServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

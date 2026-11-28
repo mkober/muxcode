@@ -68,7 +68,27 @@ func (b *BusClient) ConsumeInbox() ([]Message, error) {
 	if out == "" || strings.Contains(out, "No messages") {
 		return nil, nil
 	}
-	return ParseMessages(out)
+	msgs, err := ParseMessages(out)
+	if err != nil {
+		return nil, err
+	}
+	return dropSelfSends(msgs, b.Role), nil
+}
+
+// dropSelfSends removes the messages role sent itself, except the launch-time
+// `request:startup` bootstrap — the bus's own rule (isLoopingSelfSend,
+// FilterLoopingSelfSends), applied again here so an inbox the CLI did not
+// filter — an older binary's, or a hand-edited one — never leads the harness
+// to answer itself (MUX-111).
+func dropSelfSends(msgs []Message, role string) []Message {
+	kept := msgs[:0]
+	for _, m := range msgs {
+		if m.From == role && !(m.Type == "request" && m.Action == "startup") {
+			continue
+		}
+		kept = append(kept, m)
+	}
+	return kept
 }
 
 // Send sends a message via the bus CLI.

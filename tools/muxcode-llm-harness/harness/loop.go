@@ -309,8 +309,8 @@ func Run(ctx context.Context, cfg Config, sink EventSink) error {
 // Returns true if the batch produced a meaningful response, false if it exhausted
 // turns, timed out, or was blocked — used for cross-batch stuck detection.
 func processBatch(ctx context.Context, cfg Config, bus *BusClient, ollama *OllamaClient, executor *Executor, tools []ToolDef, systemPrompt string, filter *Filter, msgs []Message, sink EventSink, tracer *TurnTracer) bool {
-	// Find last message for reply routing
-	lastMsg := msgs[len(msgs)-1]
+	answered := batchRequests(msgs)
+	lastMsg := msgs[len(msgs)-1] // display and trace labels only — never reply routing
 
 	// Build structured task content
 	taskContent := FormatTask(msgs)
@@ -562,14 +562,37 @@ sendResponse:
 		finalResponse = finalResponse[:4000] + "\n... [truncated]"
 	}
 
-	sink.Emit(Event{Kind: EventBatchComplete, Time: time.Now(), Message: fmt.Sprintf("Response (%d bytes, success=%v) → %s", len(finalResponse), batchSuccess, lastMsg.ReplyTarget())})
 	tracer.BatchEnd(batchSuccess, fmt.Sprintf("response_bytes=%d", len(finalResponse)))
-
-	if err := bus.Send(lastMsg.ReplyTarget(), lastMsg.Action, finalResponse, "response", lastMsg.ID); err != nil {
-		sink.Emit(Event{Kind: EventError, Time: time.Now(), Message: fmt.Sprintf("send error: %v", err)})
+	if len(answered) == 0 {
+		sink.Emit(Event{Kind: EventBatchComplete, Time: time.Now(), Message: fmt.Sprintf("Done (%d bytes, success=%v) — no request in the batch, no reply sent", len(finalResponse), batchSuccess)})
+		return batchSuccess
+	}
+	for _, req := range answered {
+		sink.Emit(Event{Kind: EventBatchComplete, Time: time.Now(), Message: fmt.Sprintf("Response (%d bytes, success=%v) → %s for %s", len(finalResponse), batchSuccess, req.ReplyTarget(), req.ID)})
+		if err := bus.Send(req.ReplyTarget(), req.Action, finalResponse, "response", req.ID); err != nil {
+			sink.Emit(Event{Kind: EventError, Time: time.Now(), Message: fmt.Sprintf("send error for %s: %v", req.ID, err)})
+		}
 	}
 
 	return batchSuccess
+}
+
+// batchRequests lists the requests a batch's answer is sent to, in arrival
+// order: the batch runs as one conversation, and its answer goes to each
+// request as that request's own reply — recipient, action and correlation id
+// all taken from it, so they cannot disagree (MUX-111). Before, one reply took
+// all three from whichever message arrived last: a [request, response] batch
+// answered the response, and of several requests only the last was answered,
+// each other left never responded and its sender's tracked task in flight. A
+// batch holding no request gets no reply.
+func batchRequests(msgs []Message) []Message {
+	var reqs []Message
+	for _, m := range msgs {
+		if m.Type == "request" {
+			reqs = append(reqs, m)
+		}
+	}
+	return reqs
 }
 
 // filterFileChangeNotify removes "File changed:" notify events from the message
