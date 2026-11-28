@@ -334,6 +334,24 @@ The daemon uses a two-phase approach to coalesce burst edits:
 
 This means rapid consecutive edits (e.g. Claude writing multiple files) are coalesced into a single analyst event containing all affected file paths, rather than firing once per edit.
 
+### Verified agent restart
+
+A relaunch is verified, not assumed ([MUX-008](requirements/completed/MUX-008-unverified-daemon-auto-restart.md)). `scrapeAndRelaunch` (`bus/health.go`) is the one road for the daemon's health restart (`restartDeadAgent`, `daemon/daemon.go`), `muxcode resume` and the operator restart, and it waits twice:
+
+| Wait | Bound | Evidence | Past the bound |
+|------|-------|----------|----------------|
+| The old process has exited | `restartExitWait`, 5 s, polled every 250 ms after `C-c` | tmux names the pane's foreground process as a shell (`#{pane_current_command}`, `isShellCommand`: `$SHELL` or a fixed list) — asked of tmux, not the screen, and needing no `ps` | `agent-relaunch-unverified` naming the foreground process, `ErrRestartUnverified`, and **no launch line typed** |
+| A started agent is in the pane | `restartReadyWait`, 20 s, after the launch line | `paneShowsStartedAgent`: a readable non-shell foreground process **and** the provider's own evidence read only below the typed launch line — Claude `resumedSessionReady`, Codex and OpenCode `ClassifyPane` other than not-ready; a local model `IsHarnessActive` | `agent-relaunch-unverified`, `ErrRestartUnverified` |
+
+A launch line typed into a dying process is swallowed, and one left unexecuted at the prompt reads alive to the liveness heuristic — so neither counts as ready. Before, a fixed 500 ms sleep typed the line regardless and returned nil.
+
+| Caller | On the error |
+|--------|--------------|
+| `restartDeadAgent` | Logs `agent-restart-failed <role> attempt N/3: <reason>` and marks the role `restartFailed`. `checkAgentHealth` then counts it alive only when `bus.AgentStarted` says so, never on the heuristic, so no `agent-recovered` follows a failed restart unless the pane positively shows a started agent. The attempt still spends one of the three. An unverified restart keeps `daemonRestarted`, so a late start still passes the definition-banner check |
+| `muxcode resume`, operator restart | Returned to the CLI, per role |
+
+The waits run inside the daemon's poll loop: a restart can hold the sweep for up to 25 s per role, in series when several agents die together. Each poll round touches the daemon's keepalive (`bus.TouchKeepaliveDaemon`), so the monitor does not read the sweep as a stalled daemon — but graph ticks and delivery wait behind it. Edit stays resume-only and the definition-unavailable banner still stops a relaunched agent; neither is changed by the waits.
+
 ### Daemon watchdogs
 
 Beyond inbox delivery, the daemon runs seven resilience watchdogs that detect and self-heal stuck or stale agents. All are opt-out via env var and emit lifecycle events for auditing.

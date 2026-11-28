@@ -284,9 +284,20 @@ func RestartOllama(ctx context.Context, ollamaURL string) error {
 	return fmt.Errorf("Ollama did not become ready within %s", OllamaRestartReadyTimeout)
 }
 
-// restartInterruptDelay is how long RestartLocalAgent waits after C-c for the
-// process to exit before typing the relaunch. Tests shorten it.
-var restartInterruptDelay = 500 * time.Millisecond
+// A relaunch's two bounded waits (MUX-008): after C-c, for the pane's
+// foreground process to be its shell again — the launch line typed any
+// earlier lands in the dying process's stdin and is swallowed — and after the
+// launch line, for a positively started agent. Tests shorten them.
+var (
+	restartExitWait     = 5 * time.Second
+	restartReadyWait    = 20 * time.Second
+	restartPollInterval = 250 * time.Millisecond
+)
+
+// ErrRestartUnverified is a relaunch whose old process did not exit, or whose
+// new agent never showed as started, within its bound. When the exit wait is
+// what failed, no launch line was typed.
+var ErrRestartUnverified = errors.New("restart unverified")
 
 // RestartLocalAgent sends C-c to interrupt a stuck agent and relaunches it.
 // Uses tmux send-keys to target the agent's pane. The relaunch command uses
@@ -306,7 +317,13 @@ var restartInterruptDelay = 500 * time.Millisecond
 // A resume-only role (ResumeOnlyRole: edit) with no resumable session returns
 // ErrResumeUnavailable with nothing typed, and MUXCODE_AUTO_RESUME_DISABLE=1
 // relaunches every role fresh without scraping (MUX-139).
-func RestartLocalAgent(session, role string) error {
+//
+// The relaunch is verified (MUX-008): a restart whose old process outlives
+// restartExitWait, or whose new agent is not started within restartReadyWait,
+// returns ErrRestartUnverified. heartbeat, when non-nil, is called on every
+// round of those waits — the daemon passes its keepalive, so a sweep spent
+// verifying restarts never reads as a stalled daemon.
+func RestartLocalAgent(session, role string, heartbeat func()) error {
 	release, err := acquireReloadMarker(session, role)
 	if err != nil {
 		return err
@@ -318,7 +335,7 @@ func RestartLocalAgent(session, role string) error {
 	} else if ResumeOnlyRole(role) {
 		mode = relaunchResumeOnly
 	}
-	_, err = scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart, mode)
+	_, err = scrapeAndRelaunch(session, role, PaneTarget(session, role), "daemon", "", LaunchReasonRestart, mode, heartbeat)
 	return err
 }
 
@@ -381,7 +398,13 @@ const (
 // `agent-resume` row naming id and source; a fresh launch is preceded by the
 // row saying why (resume-scrape-miss/-stale, resume-disabled). It returns the
 // session id it resumed, empty for a fresh launch.
-func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason, mode relaunchMode) (string, error) {
+//
+// The launch line is typed only once the pane's foreground process is its
+// shell again, and the relaunch succeeds only once the pane shows a started
+// agent (paneShowsStartedAgent); either wait passing its bound writes an
+// `agent-relaunch-unverified` row and returns ErrRestartUnverified. heartbeat,
+// when non-nil, is called on every round of both waits.
+func scrapeAndRelaunch(session, role, target, source, actor string, reason LaunchReason, mode relaunchMode, heartbeat func()) (string, error) {
 	by := ""
 	if actor != "" {
 		by = " (by " + actor + ")"
@@ -414,7 +437,18 @@ func scrapeAndRelaunch(session, role, target, source, actor string, reason Launc
 		return "", fmt.Errorf("interrupting agent %s: %w", role, err)
 	}
 
-	time.Sleep(restartInterruptDelay)
+	var lastExit string
+	if !pollUntil(restartExitWait, heartbeat, func() bool {
+		shell, cmd, err := paneForegroundIsShell(target)
+		lastExit = cmd
+		if err != nil {
+			lastExit = "unreadable: " + err.Error()
+		}
+		return shell
+	}) {
+		return "", unverifiedRelaunch(session, source, by, fmt.Sprintf(
+			"%s: old process still in the pane %s after C-c (foreground %s) — no launch line typed", role, restartExitWait, lastExit))
+	}
 
 	launchCmd := AgentLaunchCommand("muxcode", role, reason)
 	if id != "" {
@@ -425,7 +459,114 @@ func scrapeAndRelaunch(session, role, target, source, actor string, reason Launc
 	}
 	LogLifecycle(session, "info", source, "agent-relaunch", role+": "+launchCmd+by)
 
+	if !pollUntil(restartReadyWait, heartbeat, func() bool { return paneShowsStartedAgent(session, role, target) }) {
+		return id, unverifiedRelaunch(session, source, by, fmt.Sprintf(
+			"%s: no started agent in the pane %s after the launch line", role, restartReadyWait))
+	}
 	return id, nil
+}
+
+// unverifiedRelaunch writes the `agent-relaunch-unverified` row and returns
+// its ErrRestartUnverified.
+func unverifiedRelaunch(session, source, by, detail string) error {
+	LogLifecycle(session, "warn", source, "agent-relaunch-unverified", detail+by)
+	return fmt.Errorf("%w: %s", ErrRestartUnverified, detail)
+}
+
+// pollUntil calls check every restartPollInterval until it reports true or
+// wait passes, calling heartbeat, when non-nil, between rounds.
+func pollUntil(wait time.Duration, heartbeat func(), check func() bool) bool {
+	deadline := time.Now().Add(wait)
+	for !check() {
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		if heartbeat != nil {
+			heartbeat()
+		}
+		time.Sleep(restartPollInterval)
+	}
+	return true
+}
+
+// paneForegroundIsShell reports whether tmux names the pane's foreground
+// process as a shell — the exit evidence MUX-008 settled on: provider-agnostic,
+// read from tmux rather than the screen, and needing no `ps`. cmd is the name
+// tmux reported.
+func paneForegroundIsShell(target string) (shell bool, cmd string, err error) {
+	out, err := TmuxOutput("display-message", "-p", "-t", target, "#{pane_current_command}")
+	if err != nil {
+		return false, "", err
+	}
+	cmd = strings.TrimSpace(out)
+	return isShellCommand(cmd), cmd, nil
+}
+
+// isShellCommand reports whether a process name is an interactive shell: the
+// user's $SHELL, or one of the common shells. A login shell's leading "-" is
+// ignored.
+func isShellCommand(name string) bool {
+	name = strings.TrimPrefix(filepath.Base(name), "-")
+	if name == "" || name == "." {
+		return false
+	}
+	if sh := filepath.Base(os.Getenv("SHELL")); sh == name {
+		return true
+	}
+	switch name {
+	case "bash", "zsh", "sh", "dash", "fish", "ksh", "tcsh", "csh":
+		return true
+	}
+	return false
+}
+
+// paneShowsStartedAgent is MUX-008's readiness evidence. For a pane agent it
+// takes both halves: a readable foreground process that is not the shell —
+// a shell prompt drawn with ❯ would otherwise pass the composer test for a
+// launch that failed back to its prompt — and the provider's own pane
+// evidence, read only below the last typed launch line so a pane holding just
+// that line is never ready: Claude's composer by resumedSessionReady, the
+// others' ClassifyPane (any state but PaneNotReady — a startup prompt is a
+// started process its own roads answer). A local model's pane carries no
+// evidence; IsHarnessActive answers alone.
+func paneShowsStartedAgent(session, role, target string) bool {
+	provider := ResolveProvider(role)
+	if _, local := provider.(*LocalProvider); local {
+		return IsHarnessActive(session, role)
+	}
+	if shell, cmd, err := paneForegroundIsShell(target); err != nil || shell || cmd == "" {
+		return false
+	}
+	content, err := captureResumePane(target)
+	if err != nil {
+		return false
+	}
+	tail := belowLastLaunchLine(content)
+	if IsClaudeTUI(provider) {
+		return resumedSessionReady(tail)
+	}
+	return provider.ClassifyPane(tail) != PaneNotReady
+}
+
+// AgentStarted reports whether role's pane shows a started agent by the
+// evidence a verified relaunch waits for (paneShowsStartedAgent).
+func AgentStarted(session, role string) bool {
+	return paneShowsStartedAgent(session, role, PaneTarget(session, role))
+}
+
+// belowLastLaunchLine returns the capture after the line holding the last
+// typed `agent launch`, or all of it when none is visible — a TUI drawn on
+// the alternate screen has replaced it.
+func belowLastLaunchLine(content string) string {
+	i := strings.LastIndex(content, "agent launch")
+	if i < 0 {
+		return content
+	}
+	nl := strings.IndexByte(content[i:], '\n')
+	if nl < 0 {
+		return ""
+	}
+	return content[i+nl+1:]
 }
 
 // restartResumeTarget picks the session a restart resumes from a pane capture

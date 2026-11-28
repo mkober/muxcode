@@ -2,50 +2,269 @@ package bus
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const restartResumeID = "8a744341-11bf-440f-b5d2-49248447a9c0"
 
 const restartExitPane = "❯ \n\nResume this session with:\nclaude --resume " + restartResumeID + "\nuser@host muxcode $ "
 
-// stubRestartPane serves pane to capture-pane until C-c is sent, then a pane
-// whose banner the relaunch has typed over — so a scrape moved after the
-// interrupt reads no id and the resume assertions fail rather than passing
-// through the fresh fallback. Returns the ordered call log ("capture" or the
-// send-keys argv).
-func stubRestartPane(t *testing.T, pane string, captureErr error) *[][]string {
-	t.Helper()
-	var log [][]string
-	interrupted := false
+// relaunchStub is a pane for scrapeAndRelaunch: the resume scrape reads pane
+// until C-c, then a pane whose banner the relaunch has typed over — so a
+// scrape moved after the interrupt reads no id and the resume assertions fail
+// rather than passing through the fresh fallback. The foreground process names
+// the agent for liveReads reads after C-c (negative: it never exits), then the
+// shell; once the launch line is typed the pane is afterLaunch and the
+// foreground process is launchedFG (the agent, unless a test makes the launch
+// fail back to its shell). log holds the
+// ordered calls: "capture" (the scrape), "foreground", "ready" (a readiness
+// capture) or the send-keys argv.
+type relaunchStub struct {
+	log         [][]string
+	interrupted bool
+	launched    bool
+	liveReads   int
+	afterLaunch string
+	launchedFG  string
+}
 
-	origOut, origRun, origDelay := tmuxOutputRunner, tmuxRunner, restartInterruptDelay
-	t.Cleanup(func() { tmuxOutputRunner, tmuxRunner, restartInterruptDelay = origOut, origRun, origDelay })
-	restartInterruptDelay = 0
+// stubRelaunch installs a relaunchStub whose agent has already exited and whose
+// relaunch comes up, with waits short enough for a test.
+func stubRelaunch(t *testing.T, pane string, captureErr error) *relaunchStub {
+	t.Helper()
+	s := &relaunchStub{afterLaunch: "user@host muxcode $ muxcode agent launch edit --reason restart\n❯ ", launchedFG: "claude"}
+	origOut, origRun := tmuxOutputRunner, tmuxRunner
+	origExit, origReady, origPoll := restartExitWait, restartReadyWait, restartPollInterval
+	t.Cleanup(func() {
+		tmuxOutputRunner, tmuxRunner = origOut, origRun
+		restartExitWait, restartReadyWait, restartPollInterval = origExit, origReady, origPoll
+	})
+	restartExitWait, restartReadyWait, restartPollInterval = 200*time.Millisecond, 200*time.Millisecond, time.Millisecond
 
 	tmuxOutputRunner = func(args ...string) (string, error) {
-		if len(args) == 0 || args[0] != "capture-pane" {
+		switch {
+		case len(args) > 0 && args[0] == "display-message":
+			s.log = append(s.log, []string{"foreground"})
+			if s.launched {
+				return s.launchedFG, nil
+			}
+			if s.liveReads != 0 {
+				if s.liveReads > 0 {
+					s.liveReads--
+				}
+				return "claude", nil
+			}
+			return "-bash", nil
+		case len(args) == 0 || args[0] != "capture-pane":
 			return "", nil
+		case s.launched:
+			s.log = append(s.log, []string{"ready"})
+			return s.afterLaunch, nil
 		}
-		log = append(log, []string{"capture"})
+		s.log = append(s.log, []string{"capture"})
 		if captureErr != nil {
 			return "", captureErr
 		}
-		if interrupted {
+		if s.interrupted {
 			return "user@host muxcode $ muxcode agent launch edit", nil
 		}
 		return pane, nil
 	}
 	tmuxRunner = func(args ...string) error {
-		log = append(log, args)
+		s.log = append(s.log, args)
 		if slices.Contains(args, "C-c") {
-			interrupted = true
+			s.interrupted = true
+		}
+		if n := len(args); n > 0 && args[n-1] == "Enter" {
+			s.launched = true
 		}
 		return nil
 	}
-	return &log
+	return s
+}
+
+// stubRestartPane is stubRelaunch's call log alone.
+func stubRestartPane(t *testing.T, pane string, captureErr error) *[][]string {
+	t.Helper()
+	return &stubRelaunch(t, pane, captureErr).log
+}
+
+// MUX-008 Phase 2 (the Phase 1 characterization, inverted): the launch line is
+// typed only once the pane's foreground process is its shell again. A slow
+// exit is waited out; an agent that never exits gets no launch line and an
+// unverified error. Negative control: a pane already at its shell relaunches
+// at once, with no failure row.
+func TestRestartLocalAgent_WaitsForTheOldProcessToExit(t *testing.T) {
+	for _, c := range []struct {
+		name      string
+		liveReads int
+		wantErr   bool
+	}{
+		{"control: already exited", 0, false},
+		{"slow exit", 3, false},
+		{"never exits", -1, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			session := "restart-exit-wait"
+			injectionTestSession(t, session)
+			t.Setenv(RoleCLIEnvVar("build"), "claude")
+			s := stubRelaunch(t, "user@host muxcode $ ", nil)
+			s.liveReads = c.liveReads
+
+			err := RestartLocalAgent(session, "build", nil)
+			rows, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Event: "agent-relaunch-unverified"})
+			if !c.wantErr {
+				if err != nil || launchTyped(s.log) == "" || len(rows) != 0 {
+					t.Fatalf("err = %v, launch %q, unverified rows %+v — want nil, typed, none", err, launchTyped(s.log), rows)
+				}
+				launch := slices.IndexFunc(s.log, func(call []string) bool { return slices.Contains(call, "Enter") })
+				if n := strings.Count(fmt.Sprint(s.log[:launch]), "foreground"); c.liveReads > 0 && n != c.liveReads+1 {
+					t.Errorf("foreground reads before the launch line = %d, want %d", n, c.liveReads+1)
+				}
+				return
+			}
+			if !errors.Is(err, ErrRestartUnverified) {
+				t.Fatalf("err = %v, want ErrRestartUnverified", err)
+			}
+			if launchTyped(s.log) != "" {
+				t.Errorf("a launch line was typed into a process that never exited: %q", launchTyped(s.log))
+			}
+			if len(rows) != 1 || !strings.Contains(rows[0].Detail, "old process still in the pane") || !strings.Contains(rows[0].Detail, "foreground claude") {
+				t.Errorf("unverified rows = %+v, want one naming the process left running", rows)
+			}
+		})
+	}
+}
+
+// MUX-008 Phase 2: after the launch line the relaunch waits for a started
+// agent below it. A pane holding only the typed line — swallowed, never run —
+// is an unverified error naming the missing start; the started composer
+// (stubRelaunch's default) is the control.
+func TestRestartLocalAgent_SwallowedLaunchLineIsUnverified(t *testing.T) {
+	session := "restart-swallowed-line"
+	injectionTestSession(t, session)
+	t.Setenv(RoleCLIEnvVar("build"), "claude")
+	s := stubRelaunch(t, "user@host muxcode $ ", nil)
+	s.afterLaunch = "user@host muxcode $ muxcode agent launch build --reason restart"
+
+	err := RestartLocalAgent(session, "build", nil)
+	if !errors.Is(err, ErrRestartUnverified) || launchTyped(s.log) == "" {
+		t.Fatalf("err = %v, launch %q — want ErrRestartUnverified after typing the line", err, launchTyped(s.log))
+	}
+	rows, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Event: "agent-relaunch-unverified"})
+	if len(rows) != 1 || !strings.Contains(rows[0].Detail, "no started agent") {
+		t.Errorf("unverified rows = %+v, want one naming the missing start", rows)
+	}
+	if IsReloading(session, "build") {
+		t.Error("an unverified restart left its reload marker behind")
+	}
+}
+
+// PR review (MUX-008 Phase 2): a launch that fails back to a shell whose prompt
+// is drawn with ❯ leaves the same pane text as a started Claude. The
+// foreground process tells them apart: the shell's is unverified, the agent's
+// (the control) is started.
+func TestRestartLocalAgent_ShellPromptWithComposerGlyphIsUnverified(t *testing.T) {
+	for _, c := range []struct {
+		fg      string
+		wantErr bool
+	}{
+		{"zsh", true},
+		{"claude", false},
+	} {
+		t.Run(c.fg, func(t *testing.T) {
+			session := "restart-glyph-prompt"
+			injectionTestSession(t, session)
+			t.Setenv(RoleCLIEnvVar("build"), "claude")
+			s := stubRelaunch(t, "user@host muxcode $ ", nil)
+			s.afterLaunch = "❯ muxcode agent launch build --reason restart\nzsh: command not found: muxcode\n❯ "
+			s.launchedFG = c.fg
+
+			err := RestartLocalAgent(session, "build", nil)
+			if got := errors.Is(err, ErrRestartUnverified); got != c.wantErr {
+				t.Fatalf("foreground %s: err = %v, want unverified=%v", c.fg, err, c.wantErr)
+			}
+		})
+	}
+}
+
+// paneShowsStartedAgent takes both halves of the evidence: a non-shell,
+// readable foreground process and the provider's pane evidence below the last
+// launch line. The discriminating cases are the scoping — Codex text and a TUI
+// frame in scrollback above a launch line that never ran are not a start — and
+// the same started-looking pane under a shell, or an unreadable, foreground.
+func TestPaneShowsStartedAgent(t *testing.T) {
+	const launch = "user@host muxcode $ muxcode agent launch build --reason restart"
+	for _, c := range []struct {
+		name, cli, fg, pane string
+		want                bool
+	}{
+		{"claude composer below the line", "claude", "claude", launch + "\n❯ ", true},
+		{"claude: same pane, shell foreground", "claude", "zsh", launch + "\n❯ ", false},
+		{"claude: same pane, foreground unreadable", "claude", "", launch + "\n❯ ", false},
+		{"claude: only the line", "claude", "claude", launch, false},
+		{"claude: old composer above the line", "claude", "claude", "❯ \n" + launch, false},
+		{"opencode alt-screen TUI", "opencode", "opencode", "╭──────╮\n│ opencode │", true},
+		{"opencode: same TUI, shell foreground", "opencode", "bash", "╭──────╮\n│ opencode │", false},
+		{"opencode: only the line", "opencode", "opencode", launch, false},
+		{"codex TUI below the line", "codex", "codex", launch + "\n╭─ OpenAI Codex ─╮", true},
+		{"codex: scrollback above the line", "codex", "codex", "╭─ OpenAI Codex ─╮\ncodex exited\n" + launch, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv(RoleCLIEnvVar("build"), c.cli)
+			origOut := tmuxOutputRunner
+			t.Cleanup(func() { tmuxOutputRunner = origOut })
+			tmuxOutputRunner = func(args ...string) (string, error) {
+				if len(args) > 0 && args[0] == "display-message" {
+					return c.fg, nil
+				}
+				return c.pane, nil
+			}
+			if got := paneShowsStartedAgent("restart-ready", "build", "s:build.1"); got != c.want {
+				t.Errorf("paneShowsStartedAgent = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestIsShellCommand(t *testing.T) {
+	t.Setenv("SHELL", "/opt/homebrew/bin/nu")
+	for name, want := range map[string]bool{
+		"bash": true, "-zsh": true, "/bin/sh": true, "nu": true,
+		"claude": false, "node": false, "codex": false, "muxcode": false, "": false,
+	} {
+		if got := isShellCommand(name); got != want {
+			t.Errorf("isShellCommand(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// MUX-008 Phase 1: a launch line that reached the shell but never ran — its
+// Enter eaten by the dying process — leaves the pane ending in the command,
+// not a prompt, and the liveness heuristic reads that as a live agent. The
+// bare prompt left when the whole line was swallowed is the control: it reads
+// dead. OpenCode's IsAlive is the provider pinned because it captures through
+// TmuxOutput; Claude's and Codex's run tmux directly, and the same fall-through
+// to "assume alive" is read from their code.
+func TestIsAlive_UnsubmittedLaunchLineReadsAlive_Characterization(t *testing.T) {
+	origOut := tmuxOutputRunner
+	t.Cleanup(func() { tmuxOutputRunner = origOut })
+	for _, c := range []struct {
+		name, pane string
+		alive      bool
+	}{
+		{"launch line unsubmitted", "user@host muxcode $ muxcode agent launch build --reason restart", true},
+		{"control: bare prompt", "user@host muxcode $ ", false},
+	} {
+		tmuxOutputRunner = func(args ...string) (string, error) { return c.pane, nil }
+		if got := (&OpenCodeProvider{}).IsAlive("restart-swallowed", "build"); got != c.alive {
+			t.Errorf("%s: IsAlive = %v, want %v", c.name, got, c.alive)
+		}
+	}
 }
 
 // launchTyped returns the relaunch command RestartLocalAgent typed, or "".
@@ -65,7 +284,7 @@ func TestRestartLocalAgent_ScrapesBeforeInterruptAndResumes(t *testing.T) {
 	injectionTestSession(t, session)
 	log := stubRestartPane(t, restartExitPane, nil)
 
-	if err := RestartLocalAgent(session, "edit"); err != nil {
+	if err := RestartLocalAgent(session, "edit", nil); err != nil {
 		t.Fatalf("RestartLocalAgent: %v", err)
 	}
 
@@ -102,7 +321,7 @@ func TestRestartLocalAgent_RefusesWhileMarkerHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RestartLocalAgent(session, "edit"); !errors.Is(err, ErrReloadMarkerHeld) {
+	if err := RestartLocalAgent(session, "edit", nil); !errors.Is(err, ErrReloadMarkerHeld) {
 		t.Fatalf("err = %v, want ErrReloadMarkerHeld", err)
 	}
 	if len(*log) != 0 {
@@ -185,7 +404,7 @@ func TestRestartLocalAgent_FallsBackToFreshLaunch(t *testing.T) {
 			injectionTestSession(t, session)
 			log := stubRestartPane(t, c.pane, c.captureErr)
 
-			if err := RestartLocalAgent(session, "plan"); err != nil {
+			if err := RestartLocalAgent(session, "plan", nil); err != nil {
 				t.Fatalf("RestartLocalAgent: %v", err)
 			}
 			if got := launchTyped(*log); got != "muxcode agent launch plan --reason restart" {
@@ -210,7 +429,7 @@ func TestRestartLocalAgent_EditIsResumeOnly(t *testing.T) {
 			injectionTestSession(t, session)
 			log := stubRestartPane(t, c.pane, c.captureErr)
 
-			if err := RestartLocalAgent(session, "edit"); !errors.Is(err, ErrResumeUnavailable) {
+			if err := RestartLocalAgent(session, "edit", nil); !errors.Is(err, ErrResumeUnavailable) {
 				t.Fatalf("err = %v, want ErrResumeUnavailable", err)
 			}
 			for _, call := range *log {
@@ -239,7 +458,7 @@ func TestRestartLocalAgent_AutoResumeDisabled(t *testing.T) {
 	injectionTestSession(t, session)
 	log := stubRestartPane(t, restartExitPane, nil)
 
-	if err := RestartLocalAgent(session, "edit"); err != nil {
+	if err := RestartLocalAgent(session, "edit", nil); err != nil {
 		t.Fatalf("RestartLocalAgent: %v", err)
 	}
 	if got := launchTyped(*log); got != "muxcode agent launch edit --reason restart" {

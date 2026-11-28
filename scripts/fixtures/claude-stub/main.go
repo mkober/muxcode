@@ -34,6 +34,14 @@
 // dispatch can be placed inside the stop-to-relaunch window deterministically.
 // Absent, empty or 0, /exit is immediate.
 //
+// While the file named by CLAUDE_STUB_WEDGE_FILE holds "1", a SIGTERM draws
+// the teardown and a bare "$ " shell prompt but leaves the process running —
+// a pane the health sweep reads as dead with the agent still in its
+// foreground (MUX-008's scripts/test-agent-restart.sh). A Ctrl-C then exits
+// after the CLAUDE_STUB_EXIT_DELAY_FILE seconds, or never when that file holds
+// -1; lines typed meanwhile are logged (CLAUDE_STUB_TYPED_LOG) and swallowed,
+// as a dying process's stdin swallows them.
+//
 // Every typed line is appended to the file named by CLAUDE_STUB_TYPED_LOG,
 // when set (MUX-232's scripts/test-redrive-reply-route.sh). While the file
 // named by CLAUDE_STUB_REPLY_FILE holds "1", a typed line carrying a re-drive's
@@ -58,6 +66,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -114,12 +123,30 @@ func main() {
 		fmt.Println("Resume this session with: claude --resume " + bannerSessionID())
 	}
 
+	var wedged atomic.Bool
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
-		<-sig
-		teardown()
-		os.Exit(0)
+		for s := range sig {
+			switch {
+			case wedged.Load() && s == syscall.SIGINT:
+				n := exitDelaySecs()
+				if n < 0 {
+					continue
+				}
+				time.Sleep(time.Duration(n) * time.Second)
+				os.Exit(0)
+			case wedged.Load():
+				continue
+			case s == syscall.SIGTERM && fileHolds("CLAUDE_STUB_WEDGE_FILE", "1"):
+				teardown()
+				fmt.Print("$ ")
+				wedged.Store(true)
+				continue
+			}
+			teardown()
+			os.Exit(0)
+		}
 	}()
 
 	go showBusy()
@@ -127,6 +154,10 @@ func main() {
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
 		line := strings.TrimSpace(strings.TrimLeft(sc.Text(), "\x1b"))
+		if wedged.Load() {
+			logTyped(line)
+			continue
+		}
 		if line == "/exit" {
 			exitDelay()
 			teardown()
@@ -141,17 +172,12 @@ func main() {
 // handleTyped logs a typed line and, when replies are on, runs the reply
 // command a re-drive carries — see the package doc.
 func handleTyped(line string) {
-	if p := os.Getenv("CLAUDE_STUB_TYPED_LOG"); p != "" {
-		if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			fmt.Fprintln(f, line)
-			f.Close()
-		}
-	}
+	logTyped(line)
 	i := strings.LastIndex(line, "To reply: ")
 	if i < 0 {
 		return
 	}
-	if b, err := os.ReadFile(os.Getenv("CLAUDE_STUB_REPLY_FILE")); err != nil || strings.TrimSpace(string(b)) != "1" {
+	if !fileHolds("CLAUDE_STUB_REPLY_FILE", "1") {
 		return
 	}
 	cmd := line[i+len("To reply: "):]
@@ -181,13 +207,35 @@ func showBusy() {
 	}
 }
 
-// exitDelay holds a /exit — see the package doc.
-func exitDelay() {
+// logTyped appends a typed line to CLAUDE_STUB_TYPED_LOG, when set.
+func logTyped(line string) {
+	if p := os.Getenv("CLAUDE_STUB_TYPED_LOG"); p != "" {
+		if f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, line)
+			f.Close()
+		}
+	}
+}
+
+// fileHolds reports whether the file named by env var holds want, trimmed.
+func fileHolds(env, want string) bool {
+	b, err := os.ReadFile(os.Getenv(env))
+	return err == nil && strings.TrimSpace(string(b)) == want
+}
+
+// exitDelaySecs is CLAUDE_STUB_EXIT_DELAY_FILE's seconds, 0 when unset.
+func exitDelaySecs() int {
 	b, err := os.ReadFile(os.Getenv("CLAUDE_STUB_EXIT_DELAY_FILE"))
 	if err != nil {
-		return
+		return 0
 	}
-	if n, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && n > 0 {
+	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return n
+}
+
+// exitDelay holds a /exit — see the package doc.
+func exitDelay() {
+	if n := exitDelaySecs(); n > 0 {
 		time.Sleep(time.Duration(n) * time.Second)
 	}
 }
@@ -209,15 +257,20 @@ func bannerSessionID() string {
 // marker is released moments after launch and the pane looks unreachable.
 func superviseListener(mu *sync.Mutex, listener **exec.Cmd, stopped *bool) {
 	for {
+		mu.Lock()
+		if *stopped { // a teardown during the respawn gap: no new listener, no ❯ under its prompt
+			mu.Unlock()
+			return
+		}
 		cmd := exec.Command("muxcode", "inbox", "--poll", "--loop")
 		if err := cmd.Start(); err != nil {
+			mu.Unlock()
 			fmt.Printf("claude-stub: listener failed: %v\n", err)
 			return
 		}
-		mu.Lock()
 		*listener = cmd
-		mu.Unlock()
 		fmt.Printf("claude-stub: listener pid=%d\n❯ \n", cmd.Process.Pid)
+		mu.Unlock()
 		_ = cmd.Wait()
 		mu.Lock()
 		done := *stopped

@@ -164,7 +164,7 @@ on what the scratch rename shows (a hook covers only servers that loaded it).
 
 - Parked at filing, 2026-11-16, by plan, under the user's rule that a spec holding an unrecorded design decision is not worked unattended; unparked 2026-11-24 once the decision was given.
 - Severity Medium: renaming a muxcode session is rare, and nothing is lost on disk — renaming it back restores the session, apart from a daemon `upgrade-daemons` has since killed.
-- Related: [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (the reaper's rename guard; the monitor's non-positive liveness check); [MUX-156](../completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (the listener's other exit conditions); [MUX-008](./MUX-008-unverified-daemon-auto-restart.md) (a daemon left without a monitor).
+- Related: [MUX-184](../completed/MUX-184-orphaned-session-processes-never-reaped.md) (the reaper's rename guard; the monitor's non-positive liveness check); [MUX-156](../completed/MUX-156-orphaned-inbox-listener-consumes-into-the-void.md) (the listener's other exit conditions); [MUX-008](../completed/MUX-008-unverified-daemon-auto-restart.md) (a daemon left without a monitor).
 
 ## Status
 

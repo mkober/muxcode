@@ -261,7 +261,7 @@ explicit-deadline sentence; `docs/agent-bus.md` — the `warn` form of `inflight
   launch-time clearing was written to unblock; narrowing that key reduces the pressure to clear at all.
 - [MUX-162](../completed/MUX-162-pr-review-fix-node-600s-send-cap.md) — another node failed by a clock rather
   than by its work.
-- [MUX-008](../backlog/MUX-008-unverified-daemon-auto-restart.md) — the restart roads this spec must cover.
+- [MUX-008](./MUX-008-unverified-daemon-auto-restart.md) — the restart roads this spec must cover.
 
 ### Findings at activation (2026-11-17)
 

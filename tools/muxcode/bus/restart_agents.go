@@ -16,7 +16,7 @@ var (
 	restartAgentAlive  = IsAgentAlive
 	restartStopAgent   = func(session, role string) error { return GracefulStop(session, role, false) }
 	restartRelaunch    = func(session, role string, mode relaunchMode) (string, error) {
-		return scrapeAndRelaunch(session, role, ReloadTarget(session, role), "restart", "", LaunchReasonRestart, mode)
+		return scrapeAndRelaunch(session, role, ReloadTarget(session, role), "restart", "", LaunchReasonRestart, mode, nil)
 	}
 	restartReload      = ReloadAgent
 	restartAwaitVerify = awaitRestartVerification
