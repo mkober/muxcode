@@ -66,6 +66,8 @@ type AgentStateEvidence struct {
 	PaneLastLine     string `json:"pane_last_line"`
 	ResumeSessionID  string `json:"resume_session_id,omitempty"`
 	NoConsumer       bool   `json:"no_consumer"` // nothing can read the role's inbox (RoleHasConsumer, MUX-145)
+
+	ReloadMarker *ReloadMarkerState `json:"reload_marker,omitempty"` // the role's reload marker, when one is present (MUX-194)
 }
 
 // InboxStateEvidence captures inbox contents and message ages.
@@ -146,6 +148,7 @@ func CollectAgentState(session, role string) AgentStateEvidence {
 		IsAlive:         IsAgentAlive(session, role),
 		IsStopped:       IsAgentStopped(session, role),
 		IsReloading:     IsReloading(session, role),
+		ReloadMarker:    reloadMarkerEvidence(session, role),
 		Provider:        provider.Name(),
 		SupportsHooks:   provider.SupportsHooks(),
 		HasPendingInput: HasPendingInput(session, role),
@@ -928,24 +931,60 @@ func checkProviderMismatch(report *DiagnosticReport) *DiagnosticFinding {
 	}
 }
 
-// checkReloadMarkerStuck detects a stale reload marker that prevents the
-// daemon from monitoring the agent.
-func checkReloadMarkerStuck(report *DiagnosticReport) *DiagnosticFinding {
-	if !report.AgentState.IsReloading {
+// reloadMarkerEvidence is the role's marker state for the report, nil when
+// there is none.
+func reloadMarkerEvidence(session, role string) *ReloadMarkerState {
+	st, ok := ReadReloadMarker(session, role)
+	if !ok {
 		return nil
 	}
+	return &st
+}
 
+// checkReloadMarkerStuck reads the role's reload marker — a renewed lease,
+// not a flag — by the daemon cleanup's own predicate (ReloadMarkerState.Stale,
+// IsReloadMarkerStale). A fresh marker is a relaunch in progress: info, no
+// removal, the exit code untouched — before MUX-194 it was reported critical
+// with an `rm`, which would break a live holder's lock. A stale one is
+// `reload-marker-stuck`, critical, and its remediation re-checks before any
+// removal, since a new holder may acquire between the report and the
+// keypress. The hold time is printed because a renewal proves only that the
+// holder's process lives, not that the relaunch progresses.
+func checkReloadMarkerStuck(report *DiagnosticReport) *DiagnosticFinding {
+	m := report.AgentState.ReloadMarker
+	if !report.AgentState.IsReloading || m == nil {
+		return nil
+	}
+	path := ReloadMarkerPath(report.Session, report.Role)
+	held := "unknown (a legacy marker carries no acquisition time)"
+	if m.HeldSecs >= 0 {
+		held = fmt.Sprintf("%ds", m.HeldSecs)
+	}
+	evidence := []string{
+		fmt.Sprintf("Marker %s holds %q", path, m.Content),
+		fmt.Sprintf("Last renewed %ds ago; held for %s", m.RenewedSecs, held),
+		"Daemon excludes reloading roles from health monitoring",
+	}
+	if !m.Stale {
+		return &DiagnosticFinding{
+			Severity:    "info",
+			FailureMode: "relaunch-in-progress",
+			Summary:     "A relaunch holds the reload marker and is renewing it — health checks for this agent resume when it releases",
+			Evidence:    evidence,
+			Remediation: []string{
+				fmt.Sprintf("Wait for the relaunch to finish, then re-run: muxcode diagnose %s", report.Role),
+				"A hold time that keeps growing across runs far apart is a holder hung inside a live process — restart the daemon",
+			},
+		}
+	}
 	return &DiagnosticFinding{
 		Severity:    "critical",
 		FailureMode: "reload-marker-stuck",
-		Summary:     "Reload marker is present — daemon is skipping health checks for this agent",
-		Evidence: []string{
-			fmt.Sprintf("IsReloading: true for role %s", report.Role),
-			"Daemon excludes reloading roles from health monitoring",
-			"Agent may be stuck in a failed reload cycle",
-		},
+		Summary:     "Reload marker is stale — its holder stopped renewing it, and the daemon is skipping health checks for this agent",
+		Evidence:    append(evidence, "Past the 60s stale threshold: the holder died or never renewed (a legacy marker)"),
 		Remediation: []string{
-			fmt.Sprintf("Remove stale reload marker: rm %s", ReloadMarkerPath(report.Session, report.Role)),
+			"Let the daemon's cleanup reclaim it — it runs every 300s and re-checks the age before removing",
+			fmt.Sprintf("To remove it now, re-check first: muxcode diagnose %s — only if it still reports reload-marker-stuck: rm %s", report.Role, path),
 			"If the agent is down once the marker is gone: " + relaunchCommand(report, false),
 		},
 	}

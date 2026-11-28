@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -611,31 +612,84 @@ func TestCheckProviderMismatch_NotDetected_HookProvider(t *testing.T) {
 	}
 }
 
+// A stale marker is reload-marker-stuck, critical, and its remediation
+// re-checks before the rm — the negative control for the fresh case below.
 func TestCheckReloadMarkerStuck_Detected(t *testing.T) {
 	report := &DiagnosticReport{
-		Role:       "commit",
-		Session:    "muxcode",
-		AgentState: AgentStateEvidence{IsReloading: true},
+		Role:    "commit",
+		Session: "muxcode",
+		AgentState: AgentStateEvidence{IsReloading: true, ReloadMarker: &ReloadMarkerState{
+			Content: "reloading 4242-1", RenewedSecs: 95, HeldSecs: 400, Stale: true}},
 	}
 	finding := checkReloadMarkerStuck(report)
 	if finding == nil {
 		t.Fatal("expected finding for stuck reload marker")
 	}
-	if finding.FailureMode != "reload-marker-stuck" {
-		t.Errorf("expected reload-marker-stuck, got %s", finding.FailureMode)
+	if finding.FailureMode != "reload-marker-stuck" || finding.Severity != "critical" {
+		t.Errorf("finding = %s/%s, want reload-marker-stuck/critical", finding.FailureMode, finding.Severity)
 	}
-	if finding.Severity != "critical" {
-		t.Errorf("expected critical, got %s", finding.Severity)
+	rm := slices.IndexFunc(finding.Remediation, func(r string) bool { return strings.Contains(r, "rm ") })
+	if rm < 0 || !strings.Contains(finding.Remediation[rm], "re-check first: muxcode diagnose commit") {
+		t.Errorf("remediation %q: the rm must follow a re-check", finding.Remediation)
+	}
+}
+
+// MUX-194: a marker inside the stale threshold is a relaunch in progress —
+// info, no rm — and names its hold time. `muxcode diagnose` exits non-zero
+// only on a critical finding (cmd/diagnose.go), so info leaves it untouched.
+func TestCheckReloadMarkerStuck_FreshIsRelaunchInProgress(t *testing.T) {
+	report := &DiagnosticReport{
+		Role:    "commit",
+		Session: "muxcode",
+		AgentState: AgentStateEvidence{IsReloading: true, ReloadMarker: &ReloadMarkerState{
+			Content: "reloading 4242-1", RenewedSecs: 5, HeldSecs: 130}},
+	}
+	finding := checkReloadMarkerStuck(report)
+	if finding == nil || finding.FailureMode != "relaunch-in-progress" || finding.Severity != "info" {
+		t.Fatalf("finding = %+v, want relaunch-in-progress/info", finding)
+	}
+	if strings.Contains(strings.Join(finding.Remediation, "\n"), "rm ") {
+		t.Errorf("a live hold's remediation offers an rm: %q", finding.Remediation)
+	}
+	if !strings.Contains(strings.Join(finding.Evidence, "\n"), "held for 130s") {
+		t.Errorf("evidence %q does not name the hold time", finding.Evidence)
 	}
 }
 
 func TestCheckReloadMarkerStuck_NotDetected(t *testing.T) {
-	report := &DiagnosticReport{
-		AgentState: AgentStateEvidence{IsReloading: false},
+	for _, ev := range []AgentStateEvidence{
+		{IsReloading: false},
+		{IsReloading: true}, // the marker went between the two reads: released
+	} {
+		if finding := checkReloadMarkerStuck(&DiagnosticReport{AgentState: ev}); finding != nil {
+			t.Errorf("%+v: unexpected finding %s", ev, finding.FailureMode)
+		}
 	}
-	finding := checkReloadMarkerStuck(report)
-	if finding != nil {
-		t.Error("expected no finding when not reloading")
+}
+
+// The evidence is the cleanup's own predicate: a marker the cleanup would
+// keep reads fresh, one it would reclaim reads stale, and a live lease's
+// token yields its hold time.
+func TestReadReloadMarker_SharesTheCleanupPredicate(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	session := "diag-marker"
+	release, err := acquireReloadMarker(session, "build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	st, ok := ReadReloadMarker(session, "build")
+	if !ok || st.Stale || st.HeldSecs < 0 || !strings.HasPrefix(st.Content, "reloading ") {
+		t.Fatalf("held marker = %+v ok=%v, want fresh with a hold time", st, ok)
+	}
+	old := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(ReloadMarkerPath(session, "build"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = ReadReloadMarker(session, "build")
+	if st.Stale != IsReloadMarkerStale(session, "build") || !st.Stale {
+		t.Errorf("aged marker stale = %v, cleanup predicate %v — want both true", st.Stale, IsReloadMarkerStale(session, "build"))
 	}
 }
 

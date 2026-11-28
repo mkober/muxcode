@@ -320,7 +320,15 @@ user's decision of 2026-11-24, not as work done.
 - The Claude and Codex "unexecuted launch line reads alive" cases are traced, not pinned by a test;
   only OpenCode's is.
 - The integration run executed under a floor of 29, raised to 30 straight after.
-- The shared `claude-stub` fixture changed; the 14 other scripts that build it were not rerun.
+- ~~The shared `claude-stub` fixture changed; the other scripts that build it were not rerun.~~
+  **Resolved 2026-11-27 23:41, after close-out:** 14 scripts build the stub, this spec's own among
+  them; the other 13 were re-run against the final stub (last edited 23:18) — 13 passed, 0 failed
+  (`test-agent-resume`, `test-auto-startup-gating`, `test-diagnose-dead-agent`,
+  `test-edit-auto-resume`, `test-guard-denied-redrive`, `test-orphan-reaper`, `test-pane-state-env`,
+  `test-redrive-reply-route`, `test-reload-defers-dispatch`, `test-reload-hosted-role`,
+  `test-reload-keeps-dispatch`, `test-restart-definition`, `test-windowless-routing`);
+  `test-agent-restart` was left out as already run at 30/0. The limit as first written said "14
+  other", one too many.
 
 ### How it got here
 

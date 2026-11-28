@@ -2,11 +2,24 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+// writeReloadMarker writes a legacy bare `reloading` marker non-exclusively —
+// a foreign holder's marker, or one predating the owner token. Test-only: no
+// production code may write the marker except acquireReloadMarker (MUX-194).
+func writeReloadMarker(session, role string) error {
+	dir := filepath.Join(BusDir(session), "lock")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create lock dir: %w", err)
+	}
+	return os.WriteFile(ReloadMarkerPath(session, role), []byte("reloading"), 0644)
+}
 
 func TestReloadMarkerPath(t *testing.T) {
 	session := "test-session"
@@ -245,7 +258,7 @@ func TestCleanStaleReloadMarkers(t *testing.T) {
 	SetBusDirBase(baseDir)
 	defer ResetBusDirBase()
 
-	session := "test-session"
+	session := "test-clean-stale"
 
 	// Write markers for build and test, backdate build to make it stale
 	writeReloadMarker(session, "build")
@@ -269,6 +282,71 @@ func TestCleanStaleReloadMarkers(t *testing.T) {
 	// test marker should still exist (not stale)
 	if !IsReloading(session, "test") {
 		t.Error("test marker should still exist (it's fresh)")
+	}
+
+	// MUX-194: the removal, and only it, is a row naming role, age and content.
+	rows, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Event: "reload-marker-reclaimed"})
+	if len(rows) != 1 || !strings.HasPrefix(rows[0].Detail, "build: stale 1") || !strings.Contains(rows[0].Detail, `content "reloading"`) {
+		t.Errorf("reload-marker-reclaimed rows = %+v, want one naming build, its age and its content", rows)
+	}
+}
+
+// PR review (MUX-194 Phase 2): only a removal that happened is a
+// reclamation. A stale marker the cleanup cannot delete (its lock directory
+// read-only) is not counted and writes reload-marker-reclaim-failed with the
+// error, never reload-marker-reclaimed; a renewed marker is left with no row
+// at all. Control: once the directory is writable the same marker is removed,
+// counted and logged reclaimed.
+func TestCleanStaleReloadMarkers_CountsOnlyRemovals(t *testing.T) {
+	SetBusDirBase(t.TempDir())
+	defer ResetBusDirBase()
+	prev := reloadMarkerRenewEvery
+	reloadMarkerRenewEvery = 5 * time.Millisecond
+	defer func() { reloadMarkerRenewEvery = prev }()
+	session := "test-clean-checked"
+	rows := func(event string) []LifecycleEntry {
+		r, _ := FilterLifecycleLog(session, LifecycleFilterOpts{Event: event})
+		return r
+	}
+
+	release, err := acquireReloadMarker(session, "edit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ageReloadMarker(t, session, "edit")
+	for deadline := time.Now().Add(2 * time.Second); IsReloadMarkerStale(session, "edit") && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	if n := CleanStaleReloadMarkers(session); n != 0 || len(rows("reload-marker-reclaimed")) != 0 {
+		t.Fatalf("a renewed hold was reclaimed (cleaned %d, rows %+v)", n, rows("reload-marker-reclaimed"))
+	}
+	release()
+
+	if err := writeReloadMarker(session, "build"); err != nil {
+		t.Fatal(err)
+	}
+	ageReloadMarker(t, session, "build")
+	lock := filepath.Dir(ReloadMarkerPath(session, "build"))
+	if err := os.Chmod(lock, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(lock, 0o755) })
+	if n := CleanStaleReloadMarkers(session); n != 0 || !IsReloading(session, "build") {
+		t.Fatalf("a failed removal counted %d (marker present %v), want 0 and present", n, IsReloading(session, "build"))
+	}
+	if r := rows("reload-marker-reclaimed"); len(r) != 0 {
+		t.Errorf("a failed removal was logged reclaimed: %+v", r)
+	}
+	if r := rows("reload-marker-reclaim-failed"); len(r) != 1 || !strings.HasPrefix(r[0].Detail, "build: stale") || !strings.Contains(r[0].Detail, "permission denied") {
+		t.Errorf("reload-marker-reclaim-failed rows = %+v, want one naming build and the error", r)
+	}
+
+	if err := os.Chmod(lock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n := CleanStaleReloadMarkers(session); n != 1 || IsReloading(session, "build") || len(rows("reload-marker-reclaimed")) != 1 {
+		t.Errorf("control: writable removal cleaned %d, present %v, reclaimed rows %d — want 1, gone, 1",
+			n, IsReloading(session, "build"), len(rows("reload-marker-reclaimed")))
 	}
 }
 

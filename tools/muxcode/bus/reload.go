@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,15 +24,6 @@ func ReloadMarkerPath(session, role string) string {
 func IsReloading(session, role string) bool {
 	_, err := os.Stat(ReloadMarkerPath(session, role))
 	return err == nil
-}
-
-// writeReloadMarker creates a reload marker file.
-func writeReloadMarker(session, role string) error {
-	dir := filepath.Join(BusDir(session), "lock")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create lock dir: %w", err)
-	}
-	return os.WriteFile(ReloadMarkerPath(session, role), []byte("reloading"), 0644)
 }
 
 // ErrReloadMarkerHeld is returned by acquireReloadMarker when another relaunch
@@ -278,15 +271,70 @@ func IsReloadMarkerStale(session, role string) bool {
 	return time.Since(info.ModTime()) > 60*time.Second
 }
 
-// CleanStaleReloadMarkers removes reload marker files older than 60 seconds.
-// Returns the number of markers cleaned.
+// ReloadMarkerState is what a role's reload marker says about its hold:
+// Content as written (the owner token), RenewedSecs since its last renewal
+// (its mtime), HeldSecs since acquisition read from the token (-1 for a
+// legacy bare marker, which carries none), and Stale as IsReloadMarkerStale
+// judges it — the one predicate `diagnose` and the daemon's cleanup share.
+// A JSON field of `muxcode diagnose --json`.
+type ReloadMarkerState struct {
+	Content     string `json:"content"`
+	RenewedSecs int64  `json:"renewed_secs"`
+	HeldSecs    int64  `json:"held_secs"`
+	Stale       bool   `json:"stale"`
+}
+
+// ReadReloadMarker returns the role's reload marker state; ok is false when
+// there is no readable marker.
+func ReadReloadMarker(session, role string) (ReloadMarkerState, bool) {
+	path := ReloadMarkerPath(session, role)
+	info, err := os.Stat(path)
+	if err != nil {
+		return ReloadMarkerState{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ReloadMarkerState{}, false
+	}
+	st := ReloadMarkerState{
+		Content:     string(data),
+		RenewedSecs: int64(time.Since(info.ModTime()).Seconds()),
+		HeldSecs:    -1,
+		Stale:       IsReloadMarkerStale(session, role),
+	}
+	if f := strings.Fields(st.Content); len(f) == 2 {
+		if i := strings.LastIndexByte(f[1], '-'); i >= 0 {
+			if nanos, err := strconv.ParseInt(f[1][i+1:], 10, 64); err == nil {
+				st.HeldSecs = int64(time.Since(time.Unix(0, nanos)).Seconds())
+			}
+		}
+	}
+	return st, true
+}
+
+// CleanStaleReloadMarkers removes reload marker files older than 60 seconds,
+// judged on one read of each marker (ReadReloadMarker), and returns the number
+// actually removed. Each removal writes one `reload-marker-reclaimed` row
+// naming the role, the marker's age since its last renewal and its content
+// (the token names the holder's pid); a removal that fails writes
+// `reload-marker-reclaim-failed` with the error instead and is not counted —
+// the marker still stands, so nothing was reclaimed.
 func CleanStaleReloadMarkers(session string) int {
 	cleaned := 0
 	for _, role := range KnownRoles {
-		if IsReloadMarkerStale(session, role) {
-			clearReloadMarker(session, role)
-			cleaned++
+		st, ok := ReadReloadMarker(session, role)
+		if !ok || !st.Stale {
+			continue
 		}
+		detail := fmt.Sprintf("%s: stale %ds since its last renewal, content %q", role, st.RenewedSecs, st.Content)
+		if err := os.Remove(ReloadMarkerPath(session, role)); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				LogLifecycle(session, "warn", "daemon", "reload-marker-reclaim-failed", detail+": "+err.Error())
+			}
+			continue
+		}
+		LogLifecycle(session, "warn", "daemon", "reload-marker-reclaimed", detail)
+		cleaned++
 	}
 	return cleaned
 }
