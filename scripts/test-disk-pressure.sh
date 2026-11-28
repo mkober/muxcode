@@ -19,6 +19,20 @@
 #     precisely so "fires once, not every cycle" is testable without cleanup
 # The script also proves the destructive path stays inert under --dry-run.
 #
+# MUX-160 (spec MUX-160-tmp-go-cache-leak-unclearable-pressure.md under docs/requirements/)
+# adds the ladder's accounting on the same safe road: a cycle is ineffective
+# when it freed no byte, the stale stage's included, so `stale=12 … freed=0 B`
+# can no longer read effective; three such cycles log disk-pressure-unclearable
+# once and hold the ladder until the footprint moves. checkDiskPressure is
+# driven end to end through its filesystem seams (checkDiskPressureFn,
+# tmpPressureFn), and CleanupStale's byte count and live-session guard run
+# under the scratch-tmp override — never the real /tmp. Its Phase 4 /tmp
+# Go-cache stage was not built (its Phase 3 measured no such caches), so
+# nothing here covers one.
+#
+# A coverage floor counts passes plus the one legitimate skip (a machine
+# genuinely low on headroom), so a section that silently stops running fails.
+#
 # Usage: bash scripts/test-disk-pressure.sh
 set -uo pipefail
 
@@ -30,7 +44,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE="$REPO/tools/muxcode"
 
 GREEN=$'\033[0;32m'; RED=$'\033[0;31m'; YELLOW=$'\033[0;33m'; NC=$'\033[0m'
-pass=0; fail=0
+pass=0; fail=0; skipped=0
+EXPECTED=16
 ok()  { echo "  ${GREEN}PASS${NC}  $*"; pass=$((pass+1)); }
 bad() { echo "  ${RED}FAIL${NC}  $*"; fail=$((fail+1)); }
 
@@ -122,7 +137,27 @@ if [ -n "${FREE_KB:-}" ] && [ "$FREE_KB" -gt 2097152 ]; then   # > 2 GiB, the de
   ok "real /tmp has $((FREE_KB/1024/1024))Gi free at ${PCT}% used — high percent-used alone must not alert"
 else
   echo "  ${YELLOW}SKIP${NC}  machine genuinely low on /tmp headroom (${FREE_KB:-?}KB) — pressure here would be a true positive"
+  skipped=$((skipped+1))
 fi
+
+# --- 3b. MUX-160: the ladder's accounting and back-off --------------------
+echo ""
+echo "-- MUX-160 byte-based accounting --"
+
+gotest "stale=N with freed=0 reads ineffective; every stage's bytes, stale included, sum into freed" \
+  'TestDiskPressureFreed_StaleCountWithoutBytesFreesNothing' 1 './daemon/'
+gotest "CleanupStale reports the bytes it removed and spares a live session's bus dir (scratch override)" \
+  'TestCleanupStaleReportsBytesFreedAndSparesALiveSession' 1 './bus/'
+gotest "the pressure row's top paths are the largest counted entries" \
+  'TestLargestFootprintEntriesNamesTheBiggestCountedPaths' 1 './bus/'
+
+echo ""
+echo "-- MUX-160 back-off --"
+
+gotest "three zero-byte cycles through checkDiskPressure: one disk-pressure-unclearable, the ladder then held; a footprint move runs it again" \
+  'TestCheckDiskPressure_RepeatedRemovalErrorsBecomeUnclearableThenHold|TestDiskPressureBackoff_ThirdZeroCycleIsUnclearableOnceThenHolds|TestDiskPressureBackoff_FootprintMoveRunsTheLadder' 3 './daemon/'
+gotest "negative controls: a freeing cycle leaves no back-off; MUXCODE_DISK_PRESSURE_BACKOFF=0 never holds" \
+  'TestDiskPressureBackoff_FreedBytesReset|TestDiskPressureBackoff_CeilingZeroDisablesTheHold' 2 './daemon/'
 
 # --- 4. The destructive path stays inert under --dry-run ------------------
 # CleanupStale is what makes forcing a real breach unsafe. Prove --dry-run
@@ -157,5 +192,9 @@ fi
 gotest "lifecycle log override is honored" 'TestLifecycleLogDir_HonorsOverride' 1 './bus/'
 
 echo ""
-echo "=== $pass passed, $fail failed ==="
+echo "=== $pass passed, $fail failed, $skipped skipped (floor $EXPECTED) ==="
+if [ "$((pass + skipped))" -ne "$EXPECTED" ]; then
+  echo "  ${RED}FAIL${NC}  coverage floor: $pass passed + $skipped skipped, want $EXPECTED — a section was skipped or double-counted"
+  exit 1
+fi
 [ "$fail" -eq 0 ]

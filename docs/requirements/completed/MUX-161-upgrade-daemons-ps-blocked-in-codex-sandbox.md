@@ -228,7 +228,7 @@ Not shown by it: `./build.sh` itself run by a live Codex build agent in a real s
   evidence-guard work; the three builds that showed it and the 00:56 `--dry-run` are recorded there
   (Notes, side finding a).
 - [MUX-153](./MUX-153-codex-test-agent-cannot-run-the-suite.md) and
-  [MUX-160](../backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md) are the same family — a codex
+  [MUX-160](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) are the same family — a codex
   sandbox refusing something a validation role's job requires — and this is the smallest member.
 - `docs/upgrade-daemons` semantics otherwise unchanged: version-aware skip (`Info.SameBuild`),
   `--force`, `--session`, orphan kill.

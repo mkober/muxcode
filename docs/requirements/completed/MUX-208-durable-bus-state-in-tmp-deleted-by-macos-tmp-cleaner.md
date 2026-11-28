@@ -396,7 +396,7 @@ cancel section and floor 52; re-run 15:08 the same day: **53 passed, 0 failed, f
 
 - [MUX-137](./MUX-137-test-bus-dir-leak.md) — tests leaking real bus directories into `/tmp`; the
   same namespace from the other side
-- [MUX-160](../backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md) — the `/tmp` caches the
+- [MUX-160](./MUX-160-tmp-go-cache-leak-unclearable-pressure.md) — the `/tmp` caches the
   disk-pressure sweep counts; what stays in `/tmp` after this spec
 - [MUX-168](../completed/MUX-168-reinit-purges-active-spec-graph-run-survives.md) — the active-spec pointer
   lost by another road

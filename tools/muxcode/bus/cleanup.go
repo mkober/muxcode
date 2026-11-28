@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ type CleanupResult struct {
 	LogFiles     []string // /tmp/muxcode-log-*.txt
 	Reaped       []string // processes reaped first (planned, on a dry run)
 	Held         []string // bus dirs left in place: "<dir> — <processes> still running"
+	BytesFreed   int64    // bytes the removals reclaimed, measured before each succeeded; 0 on a dry run
 }
 
 // ClaudeCleanupResult tracks Claude Code /tmp session cleanup.
@@ -169,18 +171,29 @@ func cleanupStale(logSession string, dryRun, single bool, clean func(string) boo
 		result.BusDirs, result.SpawnDirs,
 	} {
 		for _, path := range items {
+			size := dirSize(path)
 			if err := os.RemoveAll(path); err != nil {
 				errs = append(errs, fmt.Sprintf("remove %s: %v", path, err))
+				continue
 			}
+			result.BytesFreed += size
 		}
 	}
 	for _, items := range [][]string{
 		result.PreviewFiles, result.TriggerFiles, result.LogFiles,
 	} {
 		for _, path := range items {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				errs = append(errs, fmt.Sprintf("remove %s: %v", path, err))
+			var size int64
+			if info, err := os.Lstat(path); err == nil {
+				size = info.Size()
 			}
+			if err := os.Remove(path); err != nil {
+				if !os.IsNotExist(err) {
+					errs = append(errs, fmt.Sprintf("remove %s: %v", path, err))
+				}
+				continue
+			}
+			result.BytesFreed += size
 		}
 	}
 
@@ -578,6 +591,7 @@ type DiskPressureResult struct {
 	UsagePct       int                  // /tmp volume % used before cleanup (context only, not the trigger; -1 if unavailable)
 	FreeBytes      int64                // absolute free headroom that triggered the check (-1 if unavailable)
 	FootprintBytes int64                // muxcode's own /tmp footprint before cleanup
+	TopPaths       []FootprintEntry     // the three largest counted paths, before cleanup
 	StaleResult    *CleanupResult       // muxcode artifact cleanup result
 	ClaudeResult   *ClaudeCleanupResult // Claude Code session cleanup result (nil if first stage was sufficient)
 	ArtifactResult *ArtifactPurgeResult // repo build output reclaimed (nil unless the earlier stages were insufficient)
@@ -627,8 +641,43 @@ func TmpFreeBytes() (int64, error) {
 // here as /tmp/muxcode-spawn-* before they moved. Its session children carry no
 // muxcode- prefix, so the tree is sized whole.
 func MuxcodeTmpFootprint() int64 {
-	roots := []string{legacyBusDirRoot}
 	var total int64
+	for _, e := range muxcodeFootprintEntries() {
+		total += e.Bytes
+	}
+	return total
+}
+
+// FootprintEntry is one counted path of the footprint and its size.
+type FootprintEntry struct {
+	Path  string
+	Bytes int64
+}
+
+// LargestFootprintEntries returns the n largest counted paths, largest first,
+// so a pressure row can say what the footprint is made of (MUX-160).
+func LargestFootprintEntries(n int) []FootprintEntry {
+	entries := muxcodeFootprintEntries()
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Bytes > entries[j].Bytes })
+	if len(entries) > n {
+		entries = entries[:n]
+	}
+	return entries
+}
+
+// FormatFootprintEntries renders entries as "path (size), …".
+func FormatFootprintEntries(entries []FootprintEntry) string {
+	parts := make([]string, len(entries))
+	for i, e := range entries {
+		parts[i] = fmt.Sprintf("%s (%s)", e.Path, formatBytes(e.Bytes))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// muxcodeFootprintEntries lists every path MuxcodeTmpFootprint counts.
+func muxcodeFootprintEntries() []FootprintEntry {
+	roots := []string{legacyBusDirRoot}
+	var out []FootprintEntry
 	if busDirOverride != "" {
 		roots = []string{busDirOverride}
 	} else {
@@ -636,7 +685,8 @@ func MuxcodeTmpFootprint() int64 {
 			roots = append(roots, base)
 		}
 		if !busDirBaseOverridden() {
-			total += dirSize(filepath.Join(StateDir(), "spawn"))
+			spawn := filepath.Join(StateDir(), "spawn")
+			out = append(out, FootprintEntry{spawn, dirSize(spawn)})
 		}
 	}
 	for _, root := range roots {
@@ -646,11 +696,12 @@ func MuxcodeTmpFootprint() int64 {
 		}
 		for _, e := range entries {
 			if e.IsDir() && strings.HasPrefix(e.Name(), "muxcode-") {
-				total += dirSize(filepath.Join(root, e.Name()))
+				path := filepath.Join(root, e.Name())
+				out = append(out, FootprintEntry{path, dirSize(path)})
 			}
 		}
 	}
-	return total
+	return out
 }
 
 // TmpPressure reports whether /tmp is genuinely under pressure, and why.
@@ -717,6 +768,7 @@ func CheckDiskPressure(session string) (*DiskPressureResult, error) {
 		UsagePct:       pct,
 		FreeBytes:      free,
 		FootprintBytes: footprint,
+		TopPaths:       LargestFootprintEntries(3),
 	}
 
 	// Stage 1: stale muxcode artifacts

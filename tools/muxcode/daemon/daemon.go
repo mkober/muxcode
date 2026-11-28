@@ -56,6 +56,7 @@ type Daemon struct {
 
 	lastCleanupCheck      int64
 	lastDiskPressureCheck int64
+	diskBackoff           diskPressureBackoff // MUX-160: the ladder held after unclearable cycles
 	lastAutoClearCheck    int64
 	lastPromptAgentStart  int64
 	childMu               sync.Mutex  // guards starting a child against the shutdown handler
@@ -4448,6 +4449,12 @@ func shouldAlertDiskPressure(lastTS, now int64, seen, ineffective bool) bool {
 // Pressure is decided by bus.TmpPressure — absolute free headroom and muxcode's
 // own footprint — not by the volume's percent-used.
 // MUXCODE_TMP_CLEANUP_THRESHOLD is now only an on/off switch (0 disables).
+//
+// A cycle is ineffective when it freed no byte, the stale stage's included
+// (diskPressureFreed); its row names the three largest counted paths. Three
+// such cycles in a row log `disk-pressure-unclearable` once and hold the
+// ladder — no cleanup, row or alert — until the footprint moves or
+// MUXCODE_DISK_PRESSURE_BACKOFF passes (diskPressureBackoff, MUX-160).
 func (d *Daemon) checkDiskPressure() {
 	if bus.TmpCleanupThreshold() == 0 {
 		return
@@ -4459,15 +4466,37 @@ func (d *Daemon) checkDiskPressure() {
 	}
 	d.lastDiskPressureCheck = now
 
-	result, err := bus.CheckDiskPressure(d.session)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  [disk] check failed: %v\n", err)
-		return
-	}
-	if result == nil {
-		return
+	ceiling := bus.DiskPressureBackoffSecs()
+	if d.diskBackoff.active {
+		pressured, _, footprint := tmpPressureFn()
+		if !pressured {
+			d.diskBackoff = diskPressureBackoff{}
+			return
+		}
+		if d.diskBackoff.holds(footprint, now, ceiling) {
+			return
+		}
 	}
 
+	result, err := checkDiskPressureFn(d.session)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  [disk] check failed: %v\n", err)
+	}
+	if result == nil {
+		if err == nil {
+			d.diskBackoff = diskPressureBackoff{}
+		}
+		return
+	}
+	d.handleDiskPressureResult(result, now, ceiling)
+}
+
+// handleDiskPressureResult accounts one pressure cycle — row, back-off,
+// unclearable event, alert. It takes a partial result too: a stage that fails
+// to remove something returns what it did alongside its error, and dropping
+// that cycle let a persistent removal error retry every 60 s without ever
+// reading as unclearable (MUX-160 review).
+func (d *Daemon) handleDiskPressureResult(result *bus.DiskPressureResult, now, ceiling int64) {
 	ts := time.Now().Format("15:04:05")
 
 	staleCleaned := 0
@@ -4475,24 +4504,19 @@ func (d *Daemon) checkDiskPressure() {
 		staleCleaned = result.StaleResult.TotalItems()
 	}
 	claudeCleaned := 0
-	claudeFreed := int64(0)
 	if result.ClaudeResult != nil {
 		claudeCleaned = len(result.ClaudeResult.Sessions)
-		claudeFreed = result.ClaudeResult.BytesFreed
 	}
 	artifactCleaned := 0
-	artifactFreed := int64(0)
 	if result.ArtifactResult != nil {
 		artifactCleaned = len(result.ArtifactResult.Paths)
-		artifactFreed = result.ArtifactResult.BytesFreed
 	}
 	goCacheCleaned := 0
-	goCacheFreed := int64(0)
 	if result.GoCacheResult != nil {
 		goCacheCleaned = len(result.GoCacheResult.Paths)
-		goCacheFreed = result.GoCacheResult.BytesFreed
 	}
-	totalFreed := claudeFreed + artifactFreed + goCacheFreed
+	totalFreed := diskPressureFreed(result)
+	top := bus.FormatFootprintEntries(result.TopPaths)
 
 	fmt.Printf("  %s  Disk pressure: /tmp free %s, muxcode footprint %s (volume %d%%) — cleaned %d stale, %d Claude sessions, %d build artifact(s), %d Go cache (%s)\n",
 		ts, formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
@@ -4500,7 +4524,7 @@ func (d *Daemon) checkDiskPressure() {
 		formatDaemonBytes(totalFreed))
 
 	alertKey := "disk-pressure:/tmp"
-	ineffective := staleCleaned == 0 && claudeCleaned == 0 && artifactCleaned == 0 && goCacheCleaned == 0
+	ineffective := totalFreed == 0
 	lastTS, seen := d.lastAlertKey[alertKey]
 	alerting := shouldAlertDiskPressure(lastTS, now, seen, ineffective)
 
@@ -4510,10 +4534,15 @@ func (d *Daemon) checkDiskPressure() {
 	// the very history needed to diagnose overnight incidents.
 	if alerting || !ineffective {
 		bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure",
-			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d artifacts=%d gocache=%d freed=%s",
+			fmt.Sprintf("/tmp free=%s footprint=%s volume=%d%% stale=%d claude=%d artifacts=%d gocache=%d freed=%s top=%s",
 				formatDaemonBytes(result.FreeBytes), formatDaemonBytes(result.FootprintBytes),
 				result.UsagePct, staleCleaned, claudeCleaned, artifactCleaned, goCacheCleaned,
-				formatDaemonBytes(totalFreed)))
+				formatDaemonBytes(totalFreed), top))
+	}
+	if d.diskBackoff.record(totalFreed, result.FootprintBytes, now) {
+		bus.LogLifecycle(d.session, "warn", "daemon", "disk-pressure-unclearable",
+			fmt.Sprintf("%d cycles under pressure freed 0 B; footprint=%s top=%s — cleanup held until the footprint moves, re-checked every %ds",
+				unclearableCycles, formatDaemonBytes(result.FootprintBytes), top, ceiling))
 	}
 
 	if alerting {

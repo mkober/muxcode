@@ -1216,7 +1216,7 @@ to `muxcode bus-dir`.
 | Spawn worktrees | `StateDir()/spawn/{session}` (`muxcode-spawn-{session}` beside the bus on an overridden base); existing worktrees keep the path in their spawn entry | They hold uncommitted work, and macOS sweeps `$TMPDIR` too |
 | Analyze trigger | `/tmp/muxcode-analyze-{session}.trigger` | Rewritten on every edit |
 | Preview temp file | `/tmp/muxcode-preview-{session}.tmp` | Rewritten on every preview |
-| Codex package caches | `/tmp/muxcode-cache-<uid>` | A cache ([MUX-160](requirements/backlog/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)) |
+| Codex package caches | `/tmp/muxcode-cache-<uid>` | A cache ([MUX-160](requirements/completed/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)) |
 
 `DiscoverSessions` follows the base (a missing base is no sessions). `CleanupStale` scans the bus
 base, plus `/tmp` on the default base — preview files, triggers and legacy buses not yet migrated —
@@ -1884,6 +1884,45 @@ A leftover integration-test tmux server, `tmux -L escabs-<pid>`, is not session-
 | The daemon's own exit on TERM or INT | Its harness only — stopped before the daemon exits (`daemon-stopped`). An in-place re-exec for `upgrade-daemons` sends no signal, so the harness keeps running under the same daemon pid |
 
 **A launch can be refused.** `PrepareSessionLaunch` replaced `killStaleProcesses`, which killed any `muxcode watch <name>` by name. After the sweep, if a daemon or monitor of the name being launched is still alive — one on another tmux server, one that recorded no socket, one whose monitor could not be killed — the launch stops with `ErrLaunchBlocked` and a `launch-blocked` row naming each survivor's pid and why. Under `MUXCODE_ORPHAN_REAP=0` nothing is reaped, so any surviving same-name daemon blocks the launch. A daemon started by a binary older than MUX-184 recorded no socket; `muxcode upgrade-daemons` restarts live daemons, which then record one.
+
+### Disk-pressure cleanup
+
+Every 60 s the daemon (`checkDiskPressure`) asks `bus.TmpPressure` whether `/tmp` is under pressure —
+free space below a floor, or muxcode's own footprint above a limit, never the volume's percent-used —
+and, if so, runs `bus.CheckDiskPressure`, a ladder that stops as soon as pressure lifts:
+
+| Stage | Removes | Note |
+|-------|---------|------|
+| 1 | Stale muxcode artifacts of dead sessions (`CleanupStale`) | The current session is preserved; a live session's bus directory is never swept |
+| 2 | Claude Code `/tmp` session directories older than 7 days | |
+| 3 | The session repo's regenerable build output (`PurgeSessionArtifacts`) | |
+| 4 | The Go build cache (`PurgeGoBuildCache`) | Last, and only when it shares a filesystem with `/tmp` (`GoCacheRelievesTmp`) |
+
+**Accounting is by bytes** ([MUX-160](requirements/completed/MUX-160-tmp-go-cache-leak-unclearable-pressure.md)).
+`CleanupStale` reports `BytesFreed` — each removal sized before it and counted only if it succeeded,
+`0` on a dry run — and the daemon's `freed` is every stage's bytes (`diskPressureFreed`,
+`daemon/disk_pressure.go`). A cycle is ineffective when `freed == 0`. Before, the stale stage reported
+only an item count and a non-zero count read a zero-byte cycle as effective: on 2026-09-08 fourteen
+rows read `stale=12 … freed=0 B` while the footprint climbed past four times its limit, each one
+logged on the short cooldown. A partial result returned beside a stage error is accounted too
+(`handleDiskPressureResult`), so removals that keep failing are not retried every minute unrecorded.
+The `disk-pressure` row names the three largest counted paths (`LargestFootprintEntries`), so it says
+what the footprint is made of.
+
+**Back-off** (`diskPressureBackoff`). The third consecutive zero-byte cycle logs
+`disk-pressure-unclearable` once and holds the ladder:
+
+| While held | Behaviour |
+|------------|-----------|
+| Each 60 s check | Measures only (`TmpPressure`): no cleanup, no row, no alert |
+| The hold ends when | The footprint moves by at least 1 % **and** at least 1 MiB — live bus directories grow by kilobytes a minute, so an any-byte change would never hold — or `MUXCODE_DISK_PRESSURE_BACKOFF` (default 1800 s) passes |
+| A re-check that still frees nothing | Restarts the hold, with no second event |
+| Cleared by | A cycle that frees bytes, or pressure lifting |
+
+`MUXCODE_DISK_PRESSURE_BACKOFF=0` disables the hold. Two things the ladder does not do, measured and
+left as they are: it removes no per-agent Go cache under `/tmp` (none is created any more — MUX-160
+Phase 3), and the footprint sums apparent bytes, not allocated blocks. Variables and rows are in
+[Configuration → Disk pressure](configuration.md#disk-pressure).
 
 ## Workflow state machine
 
