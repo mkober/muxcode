@@ -314,6 +314,9 @@ EOF
 # The raw changed-files signal carries writes from anywhere on disk: a
 # credentials-shaped config, a spawn-worktree copy of a file the repo also
 # contains (census B1), and the repo's own copy of that same relative path.
+# Since MUX-150 the list is the repo's git status, not that signal, so the
+# repo's copy is edited after the base commit — dirty, and so the one presented.
+printf 'package bus\n\n// edited after base\n' > "$REPO/bus/pane_test.go"
 mkdir -p "$WORK/outside" "$WORK/spawnwt/bus"
 printf 'JIRA_API_TOKEN=fake\n' > "$WORK/outside/muxcode-config"
 printf 'package bus\n' > "$WORK/spawnwt/bus/pane_test.go"

@@ -52,14 +52,14 @@ verify-spec"); a graph suppression needs a detail that reads differently, or its
 - Two requests for one piece of work invite two edits of the same checkboxes. Plan has so far
   noticed the pair and answered the second without re-editing; nothing enforces that.
 - The daemon's request carries no worker report and names only the last routed batch's files
-  ([MUX-150](../backlog/MUX-150-verify-spec-names-last-routed-batch.md)), so when it arrives first plan
+  ([MUX-150](./MUX-150-verify-spec-names-last-routed-batch.md)), so when it arrives first plan
   verifies with less than the graph's request would have given it.
 
 ### Family
 
 - [MUX-213](../completed/MUX-213-unrequested-test-runs-fire-review-chain-and-reviews-answer-twice.md) — graph ownership suppressing a hook chain, and every review answered twice.
 - [MUX-172](../completed/MUX-172-plan-verify-gate-hardcodes-success.md) — the gate this fire already passes through.
-- [MUX-150](../backlog/MUX-150-verify-spec-names-last-routed-batch.md) — what the daemon's request names.
+- [MUX-150](./MUX-150-verify-spec-names-last-routed-batch.md) — what the daemon's request names.
 
 ## Requirements
 
@@ -281,7 +281,7 @@ What each criterion rests on:
 
 ## Out of scope
 
-- What the daemon's request names as changed files — [MUX-150](../backlog/MUX-150-verify-spec-names-last-routed-batch.md).
+- What the daemon's request names as changed files — [MUX-150](./MUX-150-verify-spec-names-last-routed-batch.md).
 - Whether plan should refuse a second verification of the same review on its own.
 
 ### Findings at activation (2026-11-17)

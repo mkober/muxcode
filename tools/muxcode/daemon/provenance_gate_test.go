@@ -80,19 +80,35 @@ func planVerifyContents(t *testing.T, session string) []string {
 	return contents
 }
 
+// TestNotifyPlan_OutOfRepoPathsNeverPresented seeds the workflow's raw
+// changed-files signal with writes from anywhere on disk — a
+// credentials-shaped config, a spawn-worktree copy of a repo file (census B1)
+// and the repo's own copy of that same relative path. Since MUX-150 the list
+// is the repo's own git status, so only the repo's copy, dirty in the
+// checkout, can be named. bus/ holds a tracked file so git reports the new
+// file itself, not its directory.
 func TestNotifyPlan_OutOfRepoPathsNeverPresented(t *testing.T) {
 	t.Setenv("MUXCODE_DEDUP_WINDOW", "0")
 	session := testSession(t)
 	repo := seedRepoSpec(t, session)
 	d := New(session, 5, 2)
 
-	// The raw changed-files signal carries writes from anywhere on disk:
-	// a credentials-shaped config, a spawn-worktree copy of a repo file
-	// (census B1), and the repo's own copy of that same relative path.
 	outside := t.TempDir()
 	credentials := filepath.Join(outside, "config")
 	spawnCopy := filepath.Join(outside, "muxcode-spawn", "spawn-abc", "bus", "pane_test.go")
 	repoCopy := filepath.Join(repo, "bus", "pane_test.go")
+	if err := os.MkdirAll(filepath.Dir(repoCopy), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "bus", "pane.go"), []byte("package bus\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "init", "-q")
+	gitIn(t, repo, "add", "-A")
+	gitIn(t, repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "base")
+	if err := os.WriteFile(repoCopy, []byte("package bus\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	bus.TransitionWorkflow(session, bus.StateEditing, "test:seed",
 		bus.WithFiles([]string{credentials, spawnCopy, repoCopy}))
 

@@ -624,6 +624,16 @@ func graphOwnedReview(session string, reply bus.Message) (run, node string, owne
 	return "", "", false
 }
 
+// notifyPlanOnReview sends plan the verify-spec for a review completion. Its
+// "Changed files" are the code files whose content differs from the last
+// daemon-fired verification's — dirty now, or committed since its HEAD
+// (bus.ChangedSinceVerification over bus.CodeChangeState, stored beside the
+// movement marker) — every dirty non-docs file when none is on record,
+// uncapped. Before MUX-150 it was the workflow's
+// LastFiles — the last ≤ 5 paths of whichever write batch ran last — and on
+// 2026-09-08 it named plan's own spec write and none of eight dirty Go files.
+// A graph-owned review writes neither marker nor state (MUX-219), so the next
+// daemon-fired list also covers what that run's own verification saw.
 func (d *Daemon) notifyPlanOnReview(reviewID, outcome, evidence string) {
 	if outcome == "" {
 		bus.LogLifecycle(d.session, "warn", "daemon", "plan-verify-withheld",
@@ -660,8 +670,8 @@ func (d *Daemon) notifyPlanOnReview(reviewID, outcome, evidence string) {
 		return
 	}
 
-	wf := bus.ReadWorkflowState(d.session)
-	files := strings.Join(bus.RepoScopedFiles(repoDir, wf.LastFiles), ", ")
+	state := bus.CodeChangeState(repoDir)
+	files := strings.Join(bus.ChangedSinceVerification(repoDir, state, bus.ReadVerifyChangeState(d.session)), ", ")
 	if files == "" {
 		files = "(none verified in the repo working tree)"
 	}
@@ -692,6 +702,11 @@ func (d *Daemon) notifyPlanOnReview(reviewID, outcome, evidence string) {
 		if err := bus.WriteVerifyMovementMarker(d.session, fp); err != nil {
 			// fire anyway — see WriteVerifyMovementMarker
 			fmt.Fprintf(os.Stderr, "  [daemon] verify-movement marker write failed: %v\n", err)
+		}
+	}
+	if state != nil {
+		if err := bus.WriteVerifyChangeState(d.session, state); err != nil {
+			fmt.Fprintf(os.Stderr, "  [daemon] verify change-state write failed: %v\n", err)
 		}
 	}
 
