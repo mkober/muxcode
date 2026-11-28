@@ -791,7 +791,7 @@ Daemon-integrated liveness detection for agent processes. The daemon probes agen
 - **Excluded roles**: `edit` (user session), `webhook` (PID-managed), `spawn-*` (own lifecycle)
 - **Intentional stop**: `muxcode agent-health --stop <role>` writes a `{role}.stopped` marker, suppressing auto-restart. `--start` removes it.
 - **Restart cap**: max 3 per role per session — after cap, alerts only (no more restarts)
-- **Recovery detection**: when a previously-down agent passes a probe, sends `agent-recovered` event
+- **Recovery detection**: when a previously-down agent passes a probe, sends `agent-recovered` event. After a restart that could not be verified (`agent-restart-failed`), the probe is the pane showing a started agent, not the heuristic above — see [Verified agent restart](architecture.md#verified-agent-restart)
 - **System action exclusion**: `agent-down`, `agent-restarting`, `agent-recovered` registered in `isSystemAction()`
 
 ### Daemon self-monitoring
@@ -809,7 +809,7 @@ Daemon-integrated health monitoring detects stuck Ollama instances (process aliv
 - **Agent failure tracking**: `agentState.consecutiveFailures` counter — after 3 consecutive `ChatComplete` failures, writes sentinel file at `lock/{role}.ollama-fail`; cleared on success
 - **Detection timeline**: 30s first probe failure → 60s `ollama-down` alert to edit → 90s restart attempted → ~105s agents relaunched → ~135s recovery confirmed
 - **Restart mechanism**: `RestartOllama()` kills via `pkill -f "ollama serve"`, starts detached, polls `/api/tags` for readiness (500ms intervals, 15s timeout)
-- **Agent restart**: `RestartLocalAgent()` sends `C-c` via tmux, waits 500ms, relaunches `muxcode agent launch {role} --reason restart` — a restart reason never seeds the auto agent's story search ([MUX-141](requirements/completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md))
+- **Agent restart**: `RestartLocalAgent()` sends `C-c` via tmux, waits up to 5 s for the pane's foreground process to be its shell, relaunches `muxcode agent launch {role} --reason restart`, then waits up to 20 s for a started agent — either wait failing returns `ErrRestartUnverified` ([Verified agent restart](architecture.md#verified-agent-restart)) — a restart reason never seeds the auto agent's story search ([MUX-141](requirements/completed/MUX-141-auto-agent-restart-relaunches-graph-runs.md))
 - **Restart cap**: max 3 automatic restarts per session — after cap, periodic alerts only (manual intervention required)
 - **Alert dedup**: `ollama-down`, `ollama-recovered`, `ollama-restarting` events deduped via `lastAlertKey` with 600s cooldown
 - **System action exclusion**: registered in `isSystemAction()` to prevent false loop detection

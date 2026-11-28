@@ -61,7 +61,7 @@ The stronger driver was a request `build` had already fulfilled: a `make build` 
 
 ### Design consideration
 
-Fourth instance in one day of the same root pattern — the non-hook wake-up path injecting content the hook path already learned not to: (1) unbounded wake-up argv (fixed — `BoundWakeUpBatch`), (2) unbounded `compact-recommended` accumulation (fixed — `HasPendingAction`), (3) unverified auto-restart (filed — [`unverified-daemon-auto-restart`](../backlog/MUX-008-unverified-daemon-auto-restart.md)), (4) this. Consider a single explicit policy for "what may become a prompt" in the non-hook wake-up path rather than continuing to patch cases individually.
+Fourth instance in one day of the same root pattern — the non-hook wake-up path injecting content the hook path already learned not to: (1) unbounded wake-up argv (fixed — `BoundWakeUpBatch`), (2) unbounded `compact-recommended` accumulation (fixed — `HasPendingAction`), (3) unverified auto-restart (filed — [`unverified-daemon-auto-restart`](./MUX-008-unverified-daemon-auto-restart.md)), (4) this. Consider a single explicit policy for "what may become a prompt" in the non-hook wake-up path rather than continuing to patch cases individually.
 
 ## Implementation
 

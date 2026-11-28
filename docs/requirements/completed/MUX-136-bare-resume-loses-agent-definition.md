@@ -117,7 +117,7 @@ This is a **third** distinct way the restart story breaks, and it is not covered
 | Spec | Path | What is lost | Would it catch this? |
 |------|------|--------------|----------------------|
 | [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) | `edit`, manual bare `claude --resume` | **all** launch flags | **Yes, partly** — *revised 2026-09-02*: same path (bare resume), different agent. MUX-126 scopes its fix to `edit`, so it would not have covered `plan` as written |
-| [`MUX-008`](../backlog/MUX-008-unverified-daemon-auto-restart.md) | daemon restart, unverified | the agent may not come up at all | No — the agent **did** come up, alive and in-pane; only its restrictions were missing |
+| [`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) | daemon restart, unverified | the agent may not come up at all | No — the agent **did** come up, alive and in-pane; only its restrictions were missing |
 | **This spec** | ~~daemon restart~~ **bare `claude --resume` in the `plan` pane** (*revised 2026-09-02*) | the **definition only**, silently | — |
 
 Two consequences worth carrying into the work:
@@ -666,7 +666,7 @@ dead. Both are the spec's own theme — *the system reporting health it does not
 
 **Pid-based liveness — what the definition probe already does — has neither gap.** That is the shape of
 the fix, and it is a follow-up rather than something to change here: it touches
-[`MUX-008`](../backlog/MUX-008-unverified-daemon-auto-restart.md)'s territory (verifying a restart *actually*
+[`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md)'s territory (verifying a restart *actually*
 restored something) and would want its own negative controls. Filing it is the user's call.
 
 Two operational notes also worth carrying, both discovered the hard way during the iterations:
@@ -806,7 +806,7 @@ Three consequences:
   scope*, never to amend its daemon-restart row.
 
 Distinctness from the siblings is unchanged and still holds:
-[`MUX-008`](../backlog/MUX-008-unverified-daemon-auto-restart.md) covers a restart that may not come up at all
+[`MUX-008`](./MUX-008-unverified-daemon-auto-restart.md) covers a restart that may not come up at all
 and its liveness check would pass a live, responsive, unconstrained agent.
 [`MUX-126`](./MUX-126-edit-resume-aware-auto-restart.md) is now the **near** sibling, not a distant
 one — its fix is scoped to `edit`, and this incident is the same failure on a role whose entire safety

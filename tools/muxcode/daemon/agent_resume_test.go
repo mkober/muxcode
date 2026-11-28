@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,6 +19,9 @@ type resumeHarness struct {
 	restarts []string
 	stops    []string
 	hint     map[string]bool
+
+	restartErr error           // every restart's result
+	started    map[string]bool // agentStarted's answer per role
 }
 
 func newResumeHarness(t *testing.T, dead string) *resumeHarness {
@@ -29,7 +33,7 @@ func newResumeHarness(t *testing.T, dead string) *resumeHarness {
 	t.Setenv("MUXCODE_RESUME_FIRST_SIGHTING", "")
 	t.Setenv("MUXCODE_EDIT_AUTO_RESTART_DISABLE", "")
 
-	h := &resumeHarness{hint: map[string]bool{}}
+	h := &resumeHarness{hint: map[string]bool{}, started: map[string]bool{}}
 	d := New(testSession(t), 5, 8)
 	d.agentAlive = func(_, role string) bool { return role != dead }
 	d.windowNames = ownWindows
@@ -42,10 +46,11 @@ func newResumeHarness(t *testing.T, dead string) *resumeHarness {
 		}
 		return "", false
 	}
-	d.restartAgent = func(_, role string) error {
+	d.restartAgent = func(_, role string, _ func()) error {
 		h.restarts = append(h.restarts, role)
-		return nil
+		return h.restartErr
 	}
+	d.agentStarted = func(_, role string) bool { return h.started[role] }
 	d.stopAgent = func(_, role string) error {
 		h.stops = append(h.stops, role)
 		return nil
@@ -188,6 +193,73 @@ func TestCheckAgentHealth_RestartedWithoutDefinitionIsStopped(t *testing.T) {
 	}
 	if n := len(lifecycleDetails(t, h.d.session, "agent-resume-unrestricted")); n != 1 {
 		t.Errorf("agent-resume-unrestricted rows = %d, want 1", n)
+	}
+}
+
+// MUX-008 Phase 2: an unverified restart is logged failed with its attempt and
+// reason, and a pane the liveness heuristic then reads alive — a launch line
+// left unexecuted at the prompt — is not announced recovered until it shows a
+// started agent. Negative control: a verified restart recovers on the next
+// sweep with no failure row, as before.
+func TestCheckAgentHealth_UnverifiedRestartIsNotRecovered(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		restartErr error
+	}{
+		{"unverified", fmt.Errorf("%w: plan: no started agent in the pane 20s after the launch line", bus.ErrRestartUnverified)},
+		{"control: verified", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newResumeHarness(t, "plan")
+			h.hint["plan"] = true
+			h.restartErr = c.restartErr
+			h.sweep(1)
+			h.hint["plan"] = false
+
+			failed := lifecycleDetails(t, h.d.session, "agent-restart-failed")
+			h.d.agentAlive = func(_, _ string) bool { return true }
+			h.sweep(1)
+			recovered := len(lifecycleDetails(t, h.d.session, "agent-recovered"))
+
+			if c.restartErr == nil {
+				if len(failed) != 0 || recovered != 1 {
+					t.Fatalf("verified restart: failed rows %q, recovered %d — want none and 1", failed, recovered)
+				}
+				return
+			}
+			if len(failed) != 1 || !strings.Contains(failed[0], "plan attempt 1/3: restart unverified: plan: no started agent") {
+				t.Fatalf("agent-restart-failed rows = %q, want one naming attempt and reason", failed)
+			}
+			if recovered != 0 {
+				t.Fatalf("an unverified restart was announced recovered on the heuristic alone (%d rows)", recovered)
+			}
+			h.started["plan"] = true
+			h.sweep(1)
+			if n := len(lifecycleDetails(t, h.d.session, "agent-recovered")); n != 1 {
+				t.Errorf("agent-recovered rows once started = %d, want 1", n)
+			}
+		})
+	}
+}
+
+// The definition-unavailable stop still fires for an agent whose unverified
+// restart came up late: an unverified relaunch keeps daemonRestarted.
+func TestCheckAgentHealth_LateStartWithoutDefinitionIsStopped(t *testing.T) {
+	h := newResumeHarness(t, "plan")
+	h.hint["plan"] = true
+	h.restartErr = fmt.Errorf("%w: late", bus.ErrRestartUnverified)
+	h.sweep(1)
+
+	h.d.agentAlive = func(_, _ string) bool { return true }
+	h.started["plan"] = true
+	h.d.capturePane = func(string, int) (string, error) { return definitionlessPane, nil }
+	h.sweep(1)
+
+	if len(h.stops) != 1 || h.stops[0] != "plan" {
+		t.Fatalf("stops = %v, want [plan]", h.stops)
+	}
+	if n := len(lifecycleDetails(t, h.d.session, "agent-recovered")); n != 0 {
+		t.Errorf("an unrestricted late start was announced recovered (%d rows)", n)
 	}
 }
 

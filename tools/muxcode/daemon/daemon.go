@@ -176,7 +176,8 @@ type Daemon struct {
 	reloadSafe        func(session, role string) (bool, string)
 	sandboxPrints     sandboxProbe
 	snapshotAgentDown func(session, role string) (string, error)
-	restartAgent      func(session, role string) error
+	restartAgent      func(session, role string, heartbeat func()) error
+	agentStarted      func(session, role string) bool
 	paneResumeID      func(session, role string) (string, bool)
 	stopAgent         func(session, role string) error
 	recordAgentExit   func(session, role string, at int64) error
@@ -184,6 +185,7 @@ type Daemon struct {
 
 	daemonRestarted map[string]bool // role → relaunched by checkAgentHealth, not yet verified
 	pendingStop     map[string]bool // role → refused as unrestricted, termination not yet confirmed
+	restartFailed   map[string]bool // role → last restart unverified (MUX-008); alive only by bus.AgentStarted
 
 	lastBranchTick      int64
 	lastBranch          string // branch the pending seconds belong to
@@ -303,6 +305,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		sandboxPrints:     backgroundProbe(bus.SandboxFingerprinter(time.Duration(autoReloadCooldownSecs) * time.Second)),
 		snapshotAgentDown: bus.SnapshotAgentDown,
 		restartAgent:      bus.RestartLocalAgent,
+		agentStarted:      bus.AgentStarted,
 		paneResumeID:      bus.PaneResumeID,
 		recordAgentExit:   bus.RecordAgentExit,
 		recentAgentExits:  defaultRecentAgentExits,
@@ -311,6 +314,7 @@ func New(session string, pollSecs, debounceSecs int) *Daemon {
 		},
 		daemonRestarted: make(map[string]bool),
 		pendingStop:     make(map[string]bool),
+		restartFailed:   make(map[string]bool),
 	}
 }
 
@@ -2111,7 +2115,7 @@ func (d *Daemon) checkOllama() {
 				fmt.Printf("  %s  Restarting headless prompt-agent\n", ts)
 				continue
 			}
-			if restartErr := bus.RestartLocalAgent(d.session, role); restartErr != nil {
+			if restartErr := bus.RestartLocalAgent(d.session, role, func() { bus.TouchKeepaliveDaemon(d.session) }); restartErr != nil {
 				fmt.Fprintf(os.Stderr, "  [ollama] failed to restart agent %s: %v\n", role, restartErr)
 			} else {
 				fmt.Printf("  %s  Relaunched agent: %s\n", ts, role)
@@ -2161,6 +2165,11 @@ func agentHealthCheckSecs() int64 {
 // mass-exit check and the held agent-down alerts go out (flushDownAlerts),
 // and only then are the dead restarted — so deaths seen in one sweep can fold
 // into one mass-agent-exit, and no alert waits behind a slow relaunch.
+//
+// A role whose last restart was unverified (restartFailed, MUX-008) counts as
+// alive only when its pane shows a started agent (agentStarted), not by the
+// liveness heuristic: that reads a launch line left unexecuted at the prompt
+// as alive, which once recorded agent-recovered for a pane with no agent.
 func (d *Daemon) checkAgentHealth() {
 	now := time.Now().Unix()
 	if now-d.lastAgentHealthCheck < agentHealthCheckSecs() {
@@ -2215,8 +2224,12 @@ func (d *Daemon) checkAgentHealth() {
 		}
 
 		alive := d.agentAlive(d.session, role)
+		if alive && d.restartFailed[role] {
+			alive = d.agentStarted(d.session, role) // see checkAgentHealth's doc comment
+		}
 
 		if alive {
+			delete(d.restartFailed, role)
 			// Recovery detection
 			if d.agentWasDown[role] {
 				if d.daemonRestarted[role] && !d.verifyRestricted(role) {
@@ -2345,6 +2358,12 @@ func (d *Daemon) markAgentDown(role string, now int64) {
 // A resume-only role (bus.ResumeOnlyRole: edit) with no resumable session is
 // left down and alerted rather than relaunched: a fresh edit discards the
 // conversation the user was in. That costs no restart attempt.
+//
+// A restart that returns an error is logged `agent-restart-failed` with its
+// attempt and reason and marks the role restartFailed, so no agent-recovered
+// follows it on the liveness heuristic alone (MUX-008). The waits inside the
+// restart beat the daemon's keepalive, so a sweep spent verifying restarts is
+// never read as a stalled daemon.
 func (d *Daemon) restartDeadAgent(role string, now int64, ts string, hinted bool) {
 	defer func() { d.agentFailCounts[role] = 0 }()
 
@@ -2388,14 +2407,21 @@ func (d *Daemon) restartDeadAgent(role string, now int64, ts string, hinted bool
 		d.refreshInboxSizes()
 	}
 
-	err := d.restartAgent(d.session, role)
+	err := d.restartAgent(d.session, role, func() { bus.TouchKeepaliveDaemon(d.session) })
 	switch {
 	case errors.Is(err, bus.ErrResumeUnavailable):
 		d.alertResumeUnavailable(role, now)
 	case err != nil:
 		fmt.Fprintf(os.Stderr, "  [agent-health] failed to restart %s: %v\n", role, err)
+		bus.LogLifecycle(d.session, "warn", "daemon", "agent-restart-failed",
+			fmt.Sprintf("%s attempt %d/3: %v", role, attempt, err))
+		d.restartFailed[role] = true
+		if errors.Is(err, bus.ErrRestartUnverified) {
+			d.daemonRestarted[role] = true // a late start still passes verifyRestricted
+		}
 	default:
 		fmt.Printf("  %s  Agent %s restarted successfully\n", ts, role)
+		delete(d.restartFailed, role)
 		d.daemonRestarted[role] = true
 		// checkIdleAgents re-notifies the new agent about pending messages.
 		bus.ClearNotifiedIDs(d.session, role)

@@ -56,7 +56,7 @@ case — settled as the heartbeat, see [Decisions](#decisions-user-2026-11-24).
 
 ### Family
 
-The restart/resume family in the defects table — [MUX-008](./MUX-008-unverified-daemon-auto-restart.md),
+The restart/resume family in the defects table — [MUX-008](../completed/MUX-008-unverified-daemon-auto-restart.md),
 [MUX-126](../completed/MUX-126-edit-resume-aware-auto-restart.md),
 [MUX-136](../completed/MUX-136-bare-resume-loses-agent-definition.md): *restart and resume restore an
 agent incompletely*. This one is the lock those paths share.
