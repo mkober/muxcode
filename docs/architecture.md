@@ -137,6 +137,28 @@ The F1 window also hosts a **research agent** via mode cycling (same mechanism a
 
 When the build→test→review chain finishes successfully and an active spec is set (`muxcode spec set <path>`), the daemon's `notifyPlanOnReview()` (`daemon/daemon.go`) sends the plan agent a `verify-spec` request naming the spec, the changed files, and — when the current branch is not on the branch-time ignore list — the branch to record time for. Gated by `NotifyPlanOn` in the review `EventChain` config (default `["success"]`).
 
+**"Changed files" is the code that moved since the last verification**
+([MUX-150](requirements/completed/MUX-150-verify-spec-names-last-routed-batch.md)). The list is
+`bus.ChangedSinceVerification` over `bus.CodeChangeState` (`bus/provenance.go`), read from `git status`
+of the session repo — sorted, uncapped, and never a `docs/` path:
+
+| Piece | What it is |
+|-------|------------|
+| State recorded at each daemon-fired `verify-spec` | The HEAD it saw and each dirty non-docs file's content hash, in `verify-movement.files.json` beside the movement marker. Untracked files are named one by one (`--untracked-files=all`) |
+| A file is listed when | It is dirty now and new or changed since that state; or it is clean now, was dirty then or was committed since that HEAD, and its content no longer matches what that verification saw |
+| So | Committing content already verified is no change; reverting it is; a file clean then and committed since always appears |
+| No state on record, or a stored HEAD that no longer resolves | Every dirty non-docs file |
+| Nothing to list | `(none verified in the repo working tree)` |
+| After a graph-owned review (below) | That review writes neither marker nor state, so the next daemon-fired list is measured from the last *daemon* verification and also names what the run verified — more than strictly new, never less |
+
+The movement fingerprint that decides *whether* to fire is unchanged — same git call, same value — so
+MUX-007's once-per-completion gate did not move. Before MUX-150 the list was the workflow entry's
+`LastFiles`: the last five paths at most of whichever write batch ran last, from whichever agent. On
+2026-09-08 three requests in four minutes each named one file while five to eight Go files were
+dirty, and the third named the spec plan had just written. `LastFiles` is again only what the
+workflow display renders as `last: …`. Covered by `daemon/verify_spec_files_test.go` and
+`scripts/test-verify-spec-files.sh`.
+
 **"Successfully" is the review's own verdict** ([MUX-172](requirements/completed/MUX-172-plan-verify-gate-hardcodes-success.md)). When a new review→edit reply arrives, `checkInboxes` writes the reviewed marker and moves the workflow to `reviewed` — always, whatever the verdict, because that is the workflow state — and then asks `bus.ReviewReplyOutcome(reply)` (`bus/review_verdict.go`) what the review decided before calling `notifyPlanOnReview(reply.ID, outcome, evidence)`:
 
 | The reply carries | Outcome | What happens |
@@ -146,7 +168,7 @@ When the build→test→review chain finishes successfully and an active spec is
 | No `EXIT=` sentinel | unknown | Withheld — `unknown verdict: the reply carries no EXIT sentinel` |
 | `EXIT=0` while its first non-blank line counts a must-fix | unknown | Withheld — `conflicting verdict: EXIT=0 beside a must-fix count` |
 
-A withheld fire writes a `plan-verify-withheld` lifecycle row — `<outcome> <review-id> (<evidence>)` at info, or `unknown <review-id> (<reason>)` at warn — and leaves the movement marker unwritten, so a later passing review still fires. A verdict the gate admits then passes the three MUX-007 controls (pointer resolution, the movement gate, repo-scoped changed files) as before. `ChainShouldNotifyPlan` did not change; it now receives the real outcome, which is what makes `NotifyPlanOn` mean something: `["success"]` withholds a failing review and fires a passing one, `["*"]` fires both, `[]` fires neither.
+A withheld fire writes a `plan-verify-withheld` lifecycle row — `<outcome> <review-id> (<evidence>)` at info, or `unknown <review-id> (<reason>)` at warn — and leaves the movement marker unwritten, so a later passing review still fires. A verdict the gate admits then passes the MUX-007 controls (pointer resolution, the movement gate) as before, and its file list is the git-derived change set above — which, being the session repo's own status, cannot carry an out-of-repo path. `ChainShouldNotifyPlan` did not change; it now receives the real outcome, which is what makes `NotifyPlanOn` mean something: `["success"]` withholds a failing review and fires a passing one, `["*"]` fires both, `[]` fires neither.
 
 **A review a graph run dispatched is the run's to verify, not the daemon's** ([MUX-219](requirements/completed/MUX-219-graph-run-review-fires-verify-spec-twice.md)). Before any of the above, the review branch asks whether the reply answers a request stamped with a graph run (`graphOwnedReview`, `daemon/daemon.go`): the reply's `--reply-to` is resolved through the bus log, else the request's task record, to a dispatch carrying `GraphRun`. If it does, the daemon sends plan nothing — whatever the verdict — and writes one `plan-verify-graph-owned` row naming the review id, the run and the node; the movement marker stays unwritten, so a later review outside the run still fires. The run verifies it itself: its `update-spec` node on a passing review, its `fix` node otherwise. The reviewed marker and the `reviewed` transition are unchanged.
 
@@ -204,6 +226,23 @@ Note: preview commands (`cdk diff`, `terraform plan`, `pulumi preview`) are logg
 6. Bus daemon detects trigger file changes
 7. After debounce, daemon sends aggregate analyze event to analyst
 ```
+
+**A write under `docs/` stops at step 2** (MUX-150). `ProcessAnalyzeHook` asks `inCheckoutDocs`
+whether the path is under the `docs/` directory at the root of the written file's own git checkout —
+an absolute path is resolved against `git rev-parse --show-toplevel`, a relative one is cleaned and
+read as repo-relative — and for such a path it writes no trigger and makes no workflow transition,
+whichever window wrote it. The edit window's diff cleanup (step 5) still runs.
+
+| Write | Trigger and `editing` transition |
+|-------|----------------------------------|
+| `docs/requirements/drafts/x.md`, `docs/media/x.svg`, from any window | Skipped |
+| A code file, root `CLAUDE.md` or `README.md` | As before |
+| `tools/gen/docs/render.go` — a code directory merely named `docs` | As before |
+
+The plan agent writes docs on every verification — ticks, status, time tracking — and each such
+write used to regress the workflow `reviewed → editing`, ping the analyze role and become the next
+`verify-spec`'s file list. The consequence to know: the analyze role now receives no event for a
+documentation edit.
 
 ### Agent Spawn Flow
 

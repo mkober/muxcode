@@ -29,7 +29,7 @@ carried two must-fix findings and the suite had not been run at all.
 | 17:07:13 | plan dispatched. Twenty seconds later `./test.sh` returned **exit 1** — so this fire preceded a red suite as well as a failed review | lifecycle, test store |
 
 The dispatch also names a changed file belonging to a different spec's work (`deliver_test.go`, MUX-171)
-while the active pointer is MUX-163; that is [MUX-150](../backlog/MUX-150-verify-spec-names-last-routed-batch.md),
+while the active pointer is MUX-163; that is [MUX-150](./MUX-150-verify-spec-names-last-routed-batch.md),
 a separate defect that compounds this one.
 
 ### Mechanism — verified in code
@@ -64,7 +64,7 @@ will verify the rest with*.
 ### Scope boundary
 
 In scope: the outcome the gate reads, and a lifecycle row when a fire is withheld. Not in scope: the
-changed-file list naming another spec's work ([MUX-150](../backlog/MUX-150-verify-spec-names-last-routed-batch.md)),
+changed-file list naming another spec's work ([MUX-150](./MUX-150-verify-spec-names-last-routed-batch.md)),
 the reviewed-marker transition itself (it is right that the workflow state moves on any completed
 review), and what plan does once dispatched.
 
@@ -160,7 +160,7 @@ seeds now end `EXIT=0`, because a sentinel-less reply is withheld. Re-run the sa
   and reported by plan rather than acted on; no criterion was ticked on a rejected review.
 - The 16:59 review's own findings (`deliver.go:123`, `:149`) are MUX-171's implementation, in flight
   with edit — unrelated to this defect except as the occasion.
-- Related: [MUX-150](../backlog/MUX-150-verify-spec-names-last-routed-batch.md) (the same dispatch's
+- Related: [MUX-150](./MUX-150-verify-spec-names-last-routed-batch.md) (the same dispatch's
   changed-file list names the last routed batch, not the spec's work — the two compound);
   [MUX-007](../completed/MUX-007-verify-spec-stale-review-refire.md) (the three controls this fire
   already has, all about the pointer, none about the verdict);

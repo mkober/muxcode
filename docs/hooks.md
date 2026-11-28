@@ -256,6 +256,8 @@ Signals that a file was edited. Performs three tasks:
 3. **Event routing**: Sends file-change events to appropriate agents based on file type (uses `--no-notify` — no status bar flash for file-change events)
 4. **Diff cleanup**: In the edit window, waits ~1s for the async preview hook to finish, then closes the diff preview and reloads the file at the changed line. The delay prevents the cleanup from racing ahead of the preview setup.
 
+**A write under `docs/` does neither of the first two** ([MUX-150](requirements/completed/MUX-150-verify-spec-names-last-routed-batch.md)). For a path under the `docs/` directory at the root of its own git checkout (`inCheckoutDocs`, `bus/hook.go`), from any window, the hook makes no workflow transition and writes no trigger; the diff cleanup still runs in the edit window. Root `CLAUDE.md` and `README.md`, and a code directory that is merely named `docs` deeper in a tree, are handled as before. Plan writes docs on every spec verification, and each such write used to regress the workflow to `editing` and become the next `verify-spec`'s file list. It also means the analyze role hears nothing about documentation edits. See [Architecture → File Edit Event Flow](architecture.md#file-edit-event-flow).
+
 **NotebookEdit:** For `NotebookEdit` tool events, `file_path` is extracted from `tool_input.notebook_path`. The diff preview opens the `.ipynb` file at the raw JSON level.
 
 **File routing rules** (configurable via `MUXCODE_ROUTE_RULES`):

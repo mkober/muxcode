@@ -2072,10 +2072,17 @@ type AnalyzeHookResult struct {
 	FilePath       string
 	TriggerWritten bool
 	DiffCleaned    bool
+	DocsSkipped    bool // a docs/ write: no trigger and no workflow transition
 }
 
 // ProcessAnalyzeHook handles a PostToolUse Write/Edit event: writes the trigger file,
 // cleans up nvim diff preview, and routes file-change events.
+//
+// A write under its checkout's docs/ (inCheckoutDocs) writes no trigger and
+// moves no workflow state, whichever window made it (MUX-150): plan writes docs
+// on every verification — ticks, status, time tracking — and each such write
+// regressed reviewed → editing and became the next verify-spec's "changed
+// files". The edit window's diff preview is still cleaned up.
 func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookResult {
 	result := AnalyzeHookResult{}
 
@@ -2093,18 +2100,17 @@ func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookRe
 		return result
 	}
 
-	// Write trigger file for the daemon
-	triggerPath := TriggerFile(session)
-	triggerLine := fmt.Sprintf("%d %s\n", time.Now().Unix(), filePath)
-	if f, err := os.OpenFile(triggerPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-		f.WriteString(triggerLine)
-		f.Close()
-		result.TriggerWritten = true
+	result.DocsSkipped = inCheckoutDocs(filePath)
+	if !result.DocsSkipped {
+		triggerLine := fmt.Sprintf("%d %s\n", time.Now().Unix(), filePath)
+		if f, err := os.OpenFile(TriggerFile(session), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			f.WriteString(triggerLine)
+			f.Close()
+			result.TriggerWritten = true
+		}
+		TransitionWorkflow(session, StateEditing, "hook:analyze:edit",
+			WithFiles([]string{filePath}))
 	}
-
-	// Workflow: file edit regresses state to editing
-	TransitionWorkflow(session, StateEditing, "hook:analyze:edit",
-		WithFiles([]string{filePath}))
 
 	// Clean up nvim diff preview (edit window only)
 	if windowName == "edit" {
@@ -2117,6 +2123,36 @@ func ProcessAnalyzeHook(session, windowName string, ev *ToolEvent) AnalyzeHookRe
 	// agents are only triggered by explicit bus messages, not file changes.
 
 	return result
+}
+
+// inCheckoutDocs reports whether filePath is under the docs/ directory at the
+// root of its own git checkout — the prefix the verify-spec change set and the
+// movement fingerprint skip (MUX-150). A relative path reads as repo-relative,
+// cleaned first so ./docs/x is docs and docs/../bus/x.go is not. An absolute one is resolved against the checkout git reports for its
+// directory, so a code directory that merely happens to be named docs deeper
+// in a tree is not docs; a path no checkout contains is not docs. The
+// "/docs/" pre-check keeps every ordinary code write free of the git call.
+func inCheckoutDocs(filePath string) bool {
+	p := filepath.ToSlash(filepath.Clean(filePath))
+	if !filepath.IsAbs(filePath) {
+		return strings.HasPrefix(p, "docs/")
+	}
+	if !strings.Contains(p, "/docs/") {
+		return false
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(filePath))
+	if err != nil {
+		return false
+	}
+	top := gitOutputIn(dir, "rev-parse", "--show-toplevel")
+	if top == "" {
+		return false
+	}
+	rel, err := filepath.Rel(top, filepath.Join(dir, filepath.Base(filePath)))
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(filepath.ToSlash(rel), "docs/")
 }
 
 // cleanupDiffPreview sends tmux commands to clean up the nvim diff preview.

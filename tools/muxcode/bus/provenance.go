@@ -3,6 +3,7 @@ package bus
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -121,18 +122,7 @@ func VerifyMovementFingerprint(session, repoDir string) string {
 	if strings.TrimSpace(repoDir) != "" {
 		if head := gitOutputIn(repoDir, "rev-parse", "HEAD"); head != "" {
 			parts = append(parts, "head:"+head)
-			for _, line := range gitStatusLines(repoDir) {
-				if len(line) < 4 {
-					continue
-				}
-				path := strings.TrimSpace(line[3:])
-				if i := strings.Index(path, " -> "); i >= 0 {
-					path = path[i+4:]
-				}
-				path = strings.Trim(path, `"`)
-				if strings.HasPrefix(path, "docs/") {
-					continue
-				}
+			for _, path := range dirtyCodePaths(repoDir, "") {
 				if info, err := os.Stat(filepath.Join(repoDir, path)); err == nil {
 					parts = append(parts, fmt.Sprintf("dirty:%s:%d:%d", path, info.Size(), info.ModTime().UnixNano()))
 				} else {
@@ -164,12 +154,174 @@ func VerifyMovementFingerprint(session, repoDir string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// gitStatusLines returns the raw porcelain status lines for repoDir.
+// dirtyCodePaths returns the repo-relative paths git status reports dirty,
+// docs/ excluded. A rename reports its new path. untracked is git's
+// --untracked-files mode, "" for none: the movement fingerprint passes none,
+// so its git call and value are unchanged (MUX-007) and a new directory reads
+// once as dir/; the verify-spec change set asks for "all", every file by name
+// (MUX-150).
+func dirtyCodePaths(repoDir, untracked string) []string {
+	var paths []string
+	for _, line := range gitStatusLines(repoDir, untracked) {
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if i := strings.Index(path, " -> "); i >= 0 {
+			path = path[i+4:]
+		}
+		path = strings.Trim(path, `"`)
+		if !strings.HasPrefix(path, "docs/") {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+// VerifyChangeState is the code state a verification is recorded against
+// (MUX-150): the HEAD it saw and each dirty non-docs file's content hash.
+type VerifyChangeState struct {
+	Head  string            `json:"head"`
+	Files map[string]string `json:"files"`
+}
+
+// CodeChangeState reads repoDir's current VerifyChangeState. Nil when repoDir
+// is not a git checkout with a HEAD — no state can be proven.
+func CodeChangeState(repoDir string) *VerifyChangeState {
+	if strings.TrimSpace(repoDir) == "" {
+		return nil
+	}
+	head := gitOutputIn(repoDir, "rev-parse", "HEAD")
+	if head == "" {
+		return nil
+	}
+	state := &VerifyChangeState{Head: head, Files: map[string]string{}}
+	for _, path := range dirtyCodePaths(repoDir, "all") {
+		state.Files[path] = pathContentHash(repoDir, path)
+	}
+	return state
+}
+
+// pathContentHash hashes a file's bytes, or returns "gone" for a missing one.
+func pathContentHash(repoDir, path string) string {
+	data, err := os.ReadFile(filepath.Join(repoDir, path))
+	if err != nil {
+		return "gone"
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// committedCodePaths lists the non-docs paths that differ between two commits,
+// both sides of a rename; ok is false when either cannot be resolved (a
+// rebased-away or collected HEAD).
+func committedCodePaths(repoDir, from, to string) ([]string, bool) {
+	if from == to {
+		return nil, true
+	}
+	cmd := exec.Command("git", "diff", "--name-only", "--no-renames", "-z", from, to)
+	cmd.Dir = repoDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	var paths []string
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p != "" && !strings.HasPrefix(p, "docs/") {
+			paths = append(paths, p)
+		}
+	}
+	return paths, true
+}
+
+// ChangedSinceVerification lists, sorted, the code files whose state differs
+// from the last verification's. With none on record — or one whose HEAD no
+// longer resolves — it is every dirty file. Otherwise it is each dirty file
+// that is new or whose content moved, plus each file clean now that was dirty
+// then or was committed since, whose content no longer matches what that
+// verification saw: a file clean then and committed since always differs, a
+// commit of content already verified is no change, and a revert is.
+func ChangedSinceVerification(repoDir string, now, prev *VerifyChangeState) []string {
+	if now == nil {
+		return nil
+	}
+	var committed []string
+	ok := prev != nil
+	if ok {
+		committed, ok = committedCodePaths(repoDir, prev.Head, now.Head)
+	}
+	changed := map[string]bool{}
+	for path, hash := range now.Files {
+		if !ok || prev.Files[path] != hash {
+			changed[path] = true
+		}
+	}
+	if ok {
+		for _, path := range append(committed, mapKeys(prev.Files)...) {
+			if _, dirty := now.Files[path]; dirty {
+				continue
+			}
+			if old, seen := prev.Files[path]; !seen || pathContentHash(repoDir, path) != old {
+				changed[path] = true
+			}
+		}
+	}
+	return mapKeys(changed)
+}
+
+// mapKeys returns m's keys, sorted.
+func mapKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// VerifyChangeStatePath returns the file recording CodeChangeState at the last
+// daemon-fired verify-spec, beside the movement marker.
+func VerifyChangeStatePath(session string) string {
+	return filepath.Join(BusDir(session), "verify-movement.files.json")
+}
+
+// ReadVerifyChangeState returns the state recorded at the last daemon-fired
+// verify-spec, or nil when none is on record.
+func ReadVerifyChangeState(session string) *VerifyChangeState {
+	data, err := os.ReadFile(VerifyChangeStatePath(session))
+	if err != nil {
+		return nil
+	}
+	var state VerifyChangeState
+	if json.Unmarshal(data, &state) != nil || state.Head == "" {
+		return nil
+	}
+	return &state
+}
+
+// WriteVerifyChangeState records state for the next verify-spec to compare
+// against. Like the movement marker, a failed write must not withhold the
+// fire: the next list is then everything dirty, never too little.
+func WriteVerifyChangeState(session string, state *VerifyChangeState) error {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(VerifyChangeStatePath(session), data)
+}
+
+// gitStatusLines returns the raw porcelain status lines for repoDir, untracked
+// files in git's --untracked-files mode when untracked is set, git's own
+// default (and the user's configuration) when it is "".
 // gitOutputIn is not usable here: it trims the whole output, which eats the
 // leading space of an unstaged-modification line (" M path") and shifts the
 // path column — the docs exclusion then never matches the first entry.
-func gitStatusLines(repoDir string) []string {
-	cmd := exec.Command("git", "status", "--porcelain")
+func gitStatusLines(repoDir, untracked string) []string {
+	args := []string{"status", "--porcelain"}
+	if untracked != "" {
+		args = append(args, "--untracked-files="+untracked)
+	}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = repoDir
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
